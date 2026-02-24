@@ -42,7 +42,7 @@ RocksDB is the **mandatory** storage engine for ZFS v0.1.0. All access to RocksD
 - **Value:** Connection metadata / stats (e.g. last seen, bytes in/out). Format implementation-defined.
 - **Semantics:** Optional; not required for core store/serve. Use metadata column family if present.
 
-**Key layout:** `PREFIX_ZODE || zode_id_bytes`.
+**Key layout:** `PREFIX_ZODE || zode_id_bytes`. Note: the `Zx` display prefix is for human-readable output only and is **not** stored in keys.
 
 ## RocksDB configuration
 

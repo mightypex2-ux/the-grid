@@ -28,8 +28,8 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ZODE")
-            .with_inner_size([820.0, 640.0])
-            .with_icon(Arc::new(z_icon()))
+            .with_inner_size([820.0, 832.0])
+            .with_icon(Arc::new(load_icon()))
             .with_decorations(false)
             .with_resizable(true),
         ..Default::default()
@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
         "ZODE",
         options,
         Box::new(move |cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             configure_fonts(&cc.egui_ctx);
             configure_theme(&cc.egui_ctx);
             Ok(Box::new(app::ZodeApp::new(rt)))
@@ -66,74 +67,31 @@ fn configure_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-fn z_icon() -> egui::IconData {
-    const S: u32 = 64;
-    let mut rgba = vec![0u8; (S * S * 4) as usize];
-
-    let set = |buf: &mut [u8], x: u32, y: u32, r: u8, g: u8, b: u8, a: u8| {
-        let i = ((y * S + x) * 4) as usize;
-        buf[i] = r;
-        buf[i + 1] = g;
-        buf[i + 2] = b;
-        buf[i + 3] = a;
-    };
-
-    let radius = 12.0f32;
-    for y in 0..S {
-        for x in 0..S {
-            let (fx, fy, s) = (x as f32, y as f32, S as f32);
-            let inside = if fx < radius && fy < radius {
-                (radius - fx).powi(2) + (radius - fy).powi(2) <= radius * radius
-            } else if fx > s - radius && fy < radius {
-                (fx - (s - radius)).powi(2) + (radius - fy).powi(2) <= radius * radius
-            } else if fx < radius && fy > s - radius {
-                (radius - fx).powi(2) + (fy - (s - radius)).powi(2) <= radius * radius
-            } else if fx > s - radius && fy > s - radius {
-                (fx - (s - radius)).powi(2) + (fy - (s - radius)).powi(2) <= radius * radius
-            } else {
-                true
-            };
-            if inside {
-                set(&mut rgba, x, y, 38, 38, 42, 255);
-            }
+fn load_icon() -> egui::IconData {
+    let src = image::load_from_memory(include_bytes!("../assets/icon.png"))
+        .expect("bad icon png")
+        .to_rgba8();
+    let (sw, sh) = (src.width(), src.height());
+    let pad = (sw / 4) as i64;
+    let out_w = sw as i64 + pad * 2;
+    let out_h = sh as i64 + pad * 2;
+    let mut rgba = vec![0u8; (out_w * out_h * 4) as usize];
+    for y in 0..sh {
+        for x in 0..sw {
+            let px = src.get_pixel(x, y);
+            let dst_x = x as i64 + pad;
+            let dst_y = y as i64 + pad;
+            let i = ((dst_y * out_w + dst_x) * 4) as usize;
+            rgba[i] = px[0];
+            rgba[i + 1] = px[1];
+            rgba[i + 2] = px[2];
+            rgba[i + 3] = px[3];
         }
     }
-
-    let pad = 14u32;
-    let thick = 7u32;
-    let (r, g, b) = (255, 255, 255);
-
-    for y in pad..pad + thick {
-        for x in pad..S - pad {
-            set(&mut rgba, x, y, r, g, b, 255);
-        }
-    }
-    for y in S - pad - thick..S - pad {
-        for x in pad..S - pad {
-            set(&mut rgba, x, y, r, g, b, 255);
-        }
-    }
-
-    let diag_top = pad + thick;
-    let diag_bot = S - pad - thick;
-    let diag_h = diag_bot - diag_top;
-    let diag_w = (S - 2 * pad) as f32;
-    for row in 0..diag_h {
-        let y = diag_top + row;
-        let progress = row as f32 / (diag_h - 1) as f32;
-        let cx = (S - pad - 1) as f32 - progress * (diag_w - 1.0);
-        let half = thick as f32 / 2.0;
-        let x_start = (cx - half).max(pad as f32) as u32;
-        let x_end = ((cx + half) as u32).min(S - pad);
-        for x in x_start..x_end {
-            set(&mut rgba, x, y, r, g, b, 255);
-        }
-    }
-
     egui::IconData {
+        width: out_w as u32,
+        height: out_h as u32,
         rgba,
-        width: S,
-        height: S,
     }
 }
 
@@ -158,7 +116,7 @@ fn configure_theme(ctx: &egui::Context) {
     ctx.set_visuals(visuals);
 
     ctx.style_mut(|s| {
-        s.spacing.interact_size.y = 18.0;
+        s.spacing.interact_size.y = 20.0;
         use egui::{FontId, TextStyle};
         s.text_styles.insert(TextStyle::Body, FontId::proportional(11.0));
         s.text_styles.insert(TextStyle::Button, FontId::proportional(11.0));

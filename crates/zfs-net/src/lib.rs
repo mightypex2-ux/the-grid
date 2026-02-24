@@ -43,3 +43,23 @@ pub use libp2p::Multiaddr;
 
 /// A Zode's identity on the network (wraps libp2p `PeerId`).
 pub type ZodeId = libp2p::PeerId;
+
+/// The human-readable prefix for Zode addresses.
+const ZODE_ID_PREFIX: &str = "Zx";
+
+/// Format a [`ZodeId`] for display with the canonical `Zx` prefix.
+///
+/// On the wire and in storage the raw `PeerId` bytes are used; this
+/// prefix is **display-only**.
+pub fn format_zode_id(id: &ZodeId) -> String {
+    format!("{ZODE_ID_PREFIX}{id}")
+}
+
+/// Parse a `Zx`-prefixed Zode address back into a [`ZodeId`].
+///
+/// Accepts both `Zx`-prefixed and bare `PeerId` strings for
+/// backwards-compatibility.
+pub fn parse_zode_id(s: &str) -> Result<ZodeId, libp2p::identity::ParseError> {
+    let raw = s.strip_prefix(ZODE_ID_PREFIX).unwrap_or(s);
+    raw.parse()
+}

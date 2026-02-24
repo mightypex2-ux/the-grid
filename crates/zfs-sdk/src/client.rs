@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use zfs_net::{Multiaddr, NetworkConfig, NetworkEvent, NetworkService, OutboundRequestId, ZodeId};
+use zfs_net::{
+    format_zode_id, Multiaddr, NetworkConfig, NetworkEvent, NetworkService, OutboundRequestId,
+    ZodeId,
+};
 
 use crate::error::SdkError;
 
@@ -66,6 +69,11 @@ impl Client {
     /// The local Zode ID.
     pub async fn local_zode_id(&self) -> ZodeId {
         *self.network.lock().await.local_zode_id()
+    }
+
+    /// The local Zode ID as a `Zx`-prefixed display string.
+    pub async fn local_zode_id_display(&self) -> String {
+        format_zode_id(&self.local_zode_id().await)
     }
 
     /// Dial a specific address (e.g. a known Zode).

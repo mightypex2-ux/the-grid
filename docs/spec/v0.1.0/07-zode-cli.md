@@ -23,7 +23,7 @@ These are the data structures the UI **reads** from the Zode (in-process or RPC)
 | **Program list** | List of program_id (or topic strings) the Zode subscribes to. |
 | **CID list** | Per program_id: list of CIDs (from program index). |
 | **Head metadata** | Per sector_id: Head (sector_id, cid, version, program_id, prev_head_cid, timestamp_ms). |
-| **Zode list** | zode_id, address (multiaddr), connection_state (e.g. connected, dialing). |
+| **Zode list** | zode_id (`Zx`-prefixed), address (multiaddr), connection_state (e.g. connected, dialing). |
 | **Log events** | Event types: Announce, StoreRequest (cid, program_id), ProofResult (ok/fail), Rejection (reason, code). |
 | **Default programs** | Current enabled/disabled state for each default program (ZID, Z Chat). See [06-zode § Default programs](06-zode.md#default-programs). |
 

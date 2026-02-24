@@ -85,7 +85,7 @@ fn build_zode_lines(status: &zfs_zode::ZodeStatus) -> Vec<Line<'static>> {
         kv_line_owned("Zode ID:  ", status.zode_id.clone()),
         kv_line_owned("Peers:    ", format!("{}", status.peer_count)),
         Line::from(""),
-        kv_line_owned("Topics:   ", format!("{}", status.topics.len())),
+        kv_line_owned("Programs: ", format!("{}", status.topics.len())),
         Line::from(
             status
                 .topics
@@ -284,7 +284,7 @@ fn render_info(frame: &mut Frame, app: &mut App, area: Rect) {
         kv_line_owned("Head Count:     ", format!("{}", status.storage.head_count)),
         kv_line_owned("Program Count:  ", format!("{}", status.storage.program_count)),
         Line::from(""),
-        section_header("── Subscribed Topics ──"),
+        section_header("── Subscribed Programs ──"),
     ];
     for topic in &status.topics {
         lines.push(Line::from(format!("  {topic}")));

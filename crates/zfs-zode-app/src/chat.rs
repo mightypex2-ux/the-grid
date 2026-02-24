@@ -348,7 +348,7 @@ fn render_chat_header(app: &ZodeApp, ui: &mut egui::Ui) {
         .collect();
     let ch_display = String::from_utf8_lossy(chat.channel_id.as_bytes()).to_string();
 
-    crate::components::section(ui, "Chat", |ui| {
+    crate::components::section(ui, "INTERLINK", |ui| {
         crate::components::info_grid(ui, "chat_info_grid", |ui| {
             crate::components::kv_row(ui, "Channel", &ch_display);
 

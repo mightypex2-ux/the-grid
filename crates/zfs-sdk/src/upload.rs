@@ -3,7 +3,7 @@ use zero_neural::{ed25519_to_did_key, MachineKeyPair};
 use zfs_core::{
     Cid, ErrorCode, FetchRequest, FetchResponse, Head, ProgramId, SectorId, StoreRequest,
 };
-use zfs_net::ZodeId;
+use zfs_net::{format_zode_id, ZodeId};
 
 use crate::client::{Client, PendingRequest};
 use crate::error::SdkError;
@@ -132,10 +132,10 @@ async fn collect_peer_results(
                 if resp.ok {
                     successes += 1;
                 }
-                peer_results.push((peer.to_string(), resp.ok, resp.error_code));
+                peer_results.push((format_zode_id(&peer), resp.ok, resp.error_code));
             }
             Ok(Err(_)) | Err(_) => {
-                peer_results.push((peer.to_string(), false, None));
+                peer_results.push((format_zode_id(&peer), false, None));
             }
         }
     }

@@ -307,7 +307,12 @@ impl NetworkVisualization {
                         painter.circle_filled(sp, r + 4.0, color.linear_multiply(0.3));
                     }
 
-                    painter.circle_filled(sp, r, color);
+                    if node.is_local {
+                        painter.circle_filled(sp, r, egui::Color32::BLACK);
+                        painter.circle_stroke(sp, r, egui::Stroke::new(2.0, egui::Color32::WHITE));
+                    } else {
+                        painter.circle_filled(sp, r, color);
+                    }
 
                     if node.is_local {
                         painter.text(
@@ -462,7 +467,7 @@ impl NetworkVisualization {
                                 .show(ui, |ui| {
                                     crate::components::section_heading(
                                         ui,
-                                        &format!("Network  \u{2022}  {peer_count} peers"),
+                                        &format!("The Grid  \u{2022}  {peer_count} peers"),
                                     );
                                 });
 

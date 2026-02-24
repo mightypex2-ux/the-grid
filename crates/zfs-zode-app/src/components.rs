@@ -102,13 +102,15 @@ pub(crate) fn kv_row_copyable(ui: &mut egui::Ui, key: &str, value: &str) {
 // ---------------------------------------------------------------------------
 
 const ICON_SIZE: f32 = 16.0;
-pub(crate) const ROW_HEIGHT: f32 = 20.0;
 
-/// Singleline text input sized to `ROW_HEIGHT`.
+pub(crate) const WIDGET_HEIGHT: f32 = 24.0;
+
 pub(crate) fn text_input(buf: &mut String, width: f32) -> egui::TextEdit<'_> {
     egui::TextEdit::singleline(buf)
         .desired_width(width)
-        .min_size(egui::vec2(0.0, ROW_HEIGHT))
+        .margin(egui::Margin::symmetric(4.0, 0.0))
+        .vertical_align(egui::Align::Center)
+        .min_size(egui::vec2(0.0, WIDGET_HEIGHT))
 }
 
 fn styled_button(ui: &mut egui::Ui, label: &str, padding: egui::Vec2, font_size: f32) -> bool {
@@ -123,7 +125,7 @@ fn styled_button(ui: &mut egui::Ui, label: &str, padding: egui::Vec2, font_size:
         .fill(egui::Color32::BLACK)
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(55, 55, 60)))
         .rounding(0.0)
-        .min_size(egui::vec2(0.0, ROW_HEIGHT)),
+        .min_size(egui::vec2(0.0, WIDGET_HEIGHT)),
     );
     ui.spacing_mut().button_padding = old_padding;
     r.clicked()

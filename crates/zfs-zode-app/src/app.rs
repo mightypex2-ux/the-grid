@@ -19,6 +19,7 @@ pub(crate) struct ZodeApp {
     pub shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
     pub chat_state: Option<crate::state::ChatState>,
     pub visualization: crate::visualization::NetworkVisualization,
+    icon_texture: Option<egui::TextureHandle>,
 }
 
 impl ZodeApp {
@@ -33,9 +34,30 @@ impl ZodeApp {
             shutdown_tx: None,
             chat_state: None,
             visualization: Default::default(),
+            icon_texture: None,
         };
         app.boot_zode();
         app
+    }
+
+    fn icon_texture(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+        self.icon_texture
+            .get_or_insert_with(|| {
+                let png = include_bytes!("../assets/icon.png");
+                let img = image::load_from_memory(png).expect("bad icon png");
+                let rgba = img.to_rgba8();
+                let pixels = rgba.as_flat_samples();
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    [rgba.width() as usize, rgba.height() as usize],
+                    pixels.as_slice(),
+                );
+                ctx.load_texture(
+                    "app_icon",
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                )
+            })
+            .clone()
     }
 
     pub fn boot_zode(&mut self) {
@@ -273,14 +295,6 @@ impl eframe::App for ZodeApp {
                     egui::Id::new("title_bar"),
                     egui::Sense::click_and_drag(),
                 );
-                if !on_resize_edge
-                    && title_resp.is_pointer_button_down_on()
-                    && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
-                    && !title_resp.double_clicked()
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
                 if title_resp.double_clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(
                         !maximized,
@@ -289,21 +303,18 @@ impl eframe::App for ZodeApp {
 
                 ui.visuals_mut().widgets.active = ui.visuals().widgets.hovered;
                 ui.horizontal(|ui| {
+                    let tex = self.icon_texture(ui.ctx());
                     ui.add(
-                        egui::Label::new(
-                            egui::RichText::new("Z")
-                                .strong()
-                                .size(18.0)
-                                .color(egui::Color32::WHITE),
-                        )
-                        .selectable(false),
+                        egui::Image::new(&tex)
+                            .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                            .rounding(3.0),
                     );
                     ui.add_space(4.0);
                     ui.selectable_value(&mut self.tab, Tab::Status, "ZODE");
                     ui.selectable_value(&mut self.tab, Tab::Storage, "STORAGE");
                     ui.selectable_value(&mut self.tab, Tab::Peers, "PEERS");
                     ui.selectable_value(&mut self.tab, Tab::Log, "LOG");
-                    ui.selectable_value(&mut self.tab, Tab::Chat, "CHAT");
+                    ui.selectable_value(&mut self.tab, Tab::Chat, "INTERLINK");
                     ui.selectable_value(&mut self.tab, Tab::Info, "INFO");
 
                     ui.with_layout(
@@ -364,6 +375,19 @@ impl eframe::App for ZodeApp {
                         },
                     );
                 });
+
+                // Drag anywhere in the title bar (including over buttons) moves the window.
+                // Uses raw pointer state so it works even when a button captured the press.
+                if !on_resize_edge {
+                    if let Some(press_origin) = ui.input(|i| i.pointer.press_origin()) {
+                        if title_bar_rect.contains(press_origin)
+                            && ui.input(|i| i.pointer.is_decidedly_dragging())
+                        {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                        }
+                    }
+                }
             });
 
         let central_frame = egui::Frame::default()

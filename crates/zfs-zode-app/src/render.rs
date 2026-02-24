@@ -103,7 +103,7 @@ fn render_default_programs(app: &mut ZodeApp, ui: &mut egui::Ui) {
 }
 
 fn render_topics(app: &mut ZodeApp, ui: &mut egui::Ui) {
-    section(ui, "Additional Topics (Program IDs)", |ui| {
+    section(ui, "Additional Programs", |ui| {
         hint_label(ui, "64-character hex program IDs for non-default programs.");
         ui.add_space(8.0);
         editable_list(
@@ -116,13 +116,13 @@ fn render_topics(app: &mut ZodeApp, ui: &mut egui::Ui) {
 }
 
 fn render_discovery_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
-    section(ui, "Discovery (Kademlia DHT)", |ui| {
+    section(ui, "Discovery", |ui| {
         hint_label(
             ui,
             "Automatic peer discovery via Kademlia DHT. Nodes find each other transitively.",
         );
         ui.add_space(8.0);
-        ui.checkbox(&mut app.settings.enable_kademlia, "Enable Kademlia DHT");
+        ui.checkbox(&mut app.settings.enable_kademlia, "Enable DHT Discovery");
 
         if app.settings.enable_kademlia {
             ui.indent("kad_settings", |ui| {
@@ -216,7 +216,7 @@ fn render_zode_status(
             ui.end_row();
 
             kv_row(ui, "Peers", &format!("{}", status.peer_count));
-            kv_row(ui, "Topics", &format!("{}", status.topics.len()));
+            kv_row(ui, "Programs", &format!("{}", status.topics.len()));
         });
     });
 }
@@ -591,7 +591,7 @@ pub(crate) fn render_info(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnapsh
                 });
             });
 
-            section(ui, "Subscribed Topics", |ui| {
+            section(ui, "Subscribed Programs", |ui| {
                 for topic in &status.topics {
                     ui.monospace(format!("  {topic}"));
                 }

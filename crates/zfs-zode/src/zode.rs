@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 use zfs_core::GossipBlock;
-use zfs_net::{NetworkEvent, NetworkService, ZodeId};
+use zfs_net::{format_zode_id, NetworkEvent, NetworkService, ZodeId};
 use zfs_proof::{NoopVerifier, ProofVerifier};
 use zfs_storage::{RocksStorage, StorageBackend, StorageStats};
 
@@ -203,7 +203,7 @@ impl Zode {
             .unwrap_or_default();
         let peer_count = connected_peers.len() as u64;
         ZodeStatus {
-            zode_id: self.zode_id.to_string(),
+            zode_id: format_zode_id(&self.zode_id),
             peer_count,
             connected_peers,
             topics: self.topics.clone(),
@@ -328,7 +328,7 @@ impl Zode {
             }
             NetworkEvent::PeerDiscovered { zode_id, addresses, .. } => {
                 debug!(%zode_id, addr_count = addresses.len(), "zode discovered via DHT");
-                let _ = event_tx.send(LogEvent::PeerDiscovered(zode_id.to_string()));
+                let _ = event_tx.send(LogEvent::PeerDiscovered(format_zode_id(&zode_id)));
             }
             NetworkEvent::StoreResult { .. }
             | NetworkEvent::FetchResult { .. }
@@ -343,7 +343,7 @@ impl Zode {
         event_tx: &broadcast::Sender<LogEvent>,
     ) {
         metrics.inc_peer_count();
-        let peer_str = peer.to_string();
+        let peer_str = format_zode_id(&peer);
         if let Ok(mut peers) = connected_peers.write() {
             if !peers.contains(&peer_str) {
                 peers.push(peer_str.clone());
@@ -360,7 +360,7 @@ impl Zode {
         event_tx: &broadcast::Sender<LogEvent>,
     ) {
         metrics.dec_peer_count();
-        let peer_str = peer.to_string();
+        let peer_str = format_zode_id(&peer);
         if let Ok(mut peers) = connected_peers.write() {
             peers.retain(|p| p != &peer_str);
         }

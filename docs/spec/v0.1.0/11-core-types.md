@@ -19,7 +19,7 @@ The `zfs-core` crate provides shared types and identifiers used by storage, prog
 | `Cid` | Content identifier for a sector payload. | See [CID derivation](#cid-derivation). |
 | `SectorId` | Opaque sector identifier (e.g. logical sector in a program). | Canonical bytes (e.g. CBOR) then hex or raw bytes in APIs. |
 | `ProgramId` | Program identity; see [03-programs-and-topics](03-programs-and-topics.md). | `HASH(program_descriptor_canonical)`; 32 bytes, hex-encoded in APIs. |
-| `ZodeId` | Zode identity on the network (wraps libp2p PeerId). | libp2p PeerId bytes; no hashing in core. |
+| `ZodeId` | Zode identity on the network (wraps libp2p PeerId). | libp2p PeerId bytes; no hashing in core. Human-readable form is `Zx`-prefixed (e.g. `Zx12D3KooW…`). The prefix is display-only — wire and storage use raw PeerId bytes. |
 
 ### CID derivation
 
@@ -57,6 +57,11 @@ pub struct Cid([u8; 32]);
 pub struct SectorId(Vec<u8>);  // or fixed size per program
 pub struct ProgramId([u8; 32]);
 pub type ZodeId = libp2p::PeerId;
+
+/// Format a ZodeId for display with the canonical `Zx` prefix.
+pub fn format_zode_id(id: &ZodeId) -> String;
+/// Parse a `Zx`-prefixed string back into a ZodeId.
+pub fn parse_zode_id(s: &str) -> Result<ZodeId, ParseError>;
 
 impl Cid {
     pub fn from_ciphertext(ciphertext: &[u8]) -> Self;

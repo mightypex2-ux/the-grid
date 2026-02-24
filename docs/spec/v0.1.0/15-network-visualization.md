@@ -25,7 +25,7 @@ The **Network Visualization** panel provides a GPU-accelerated, real-time graph 
 | V-8 | Discovered-but-not-yet-connected peers (from `PeerDiscovered` events) SHOULD be rendered as faded / dashed nodes to distinguish them from fully connected peers. |
 | V-9 | Node positions SHOULD be computed by a force-directed layout (repulsion between all nodes, attraction along edges) running each frame. The layout stabilises quickly for small peer counts (< 50) and remains interactive for up to ~200 nodes. |
 | V-10 | The visualization panel SHOULD be collapsible so the operator can hide it when not needed, reclaiming vertical space for the Node / Storage / Metrics sections. |
-| V-11 | On hover (before click), a node SHOULD highlight and show a minimal tooltip with the short Zode ID (first 16 hex chars). |
+| V-11 | On hover (before click), a node SHOULD highlight and show a minimal tooltip with the short Zode ID (`Zx` prefix + first 16 chars). |
 
 ### May
 
@@ -100,7 +100,7 @@ When a node is clicked, a floating panel appears anchored near the clicked node:
 
 ```
 ┌──────────────────────────┐
-│  ZODE ID   12ab34cd…ef   │  [Copy]
+│  ZODE ID   Zx12ab34cd…ef │  [Copy]
 │  IP        203.0.113.42  │
 │  LOCATION  Berlin, DE    │
 │                    [Close]│
@@ -166,7 +166,7 @@ For small networks (< 50 nodes) this runs comfortably on the CPU each frame. For
 |------|------|
 | Edges | Thin lines (1–2 px) from source to target, anti-aliased. Dashed for discovered-only peers. |
 | Nodes | Filled circles. Local node: 12 px radius, accent color. Remote connected: 8 px radius, white. Discovered-only: 6 px radius, 40% opacity. |
-| Labels | Short Zode ID (first 8 hex chars) rendered below each node at small font size. Hidden when zoom is low to avoid clutter. |
+| Labels | Short Zode ID (`Zx` prefix + first 8 chars) rendered below each node at small font size. Hidden when zoom is low to avoid clutter. |
 | Popup | Standard egui `Window` anchored to screen-space position of the selected node. |
 
 ## Structs
@@ -189,7 +189,7 @@ pub struct GeoResult {
 }
 ```
 
-`geo_cache` maps Zode ID → resolved GeoIP result so lookups are performed only once per peer.
+`geo_cache` maps Zode ID (`Zx`-prefixed string) → resolved GeoIP result so lookups are performed only once per peer.
 
 ## Impact on existing code
 

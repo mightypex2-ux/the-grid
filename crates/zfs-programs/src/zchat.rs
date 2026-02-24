@@ -127,4 +127,4 @@ impl ZChatMessage {
 }
 
 /// Reserved test channel ID for zode-app test traffic.
-pub const TEST_CHANNEL_ID: &str = "zode-test";
+pub const TEST_CHANNEL_ID: &str = "INTERLINK-MAIN";
