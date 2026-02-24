@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/zero-neural",
+  "crates/zfs-core",
+  "crates/zfs-crypto",
+  "crates/zfs-storage",
+  "crates/zfs-programs",
+  "crates/zfs-proof",
+  "crates/zfs-net",
+  "crates/zfs-zode",
+  "crates/zfs-sdk",
+  "crates/zfs-zode-cli",
+  "crates/zfs-zode-app",
+]

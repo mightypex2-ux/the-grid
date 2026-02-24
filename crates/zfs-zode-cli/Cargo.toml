@@ -1,0 +1,23 @@
+[package]
+name = "zfs-zode-cli"
+version = "0.1.0"
+edition = "2021"
+description = "ZFS Zode CLI/TUI — console interface for the Zode storage node"
+
+[[bin]]
+name = "zode-cli"
+path = "src/main.rs"
+
+[dependencies]
+zfs-core = { path = "../zfs-core" }
+zfs-zode = { path = "../zfs-zode" }
+zfs-storage = { path = "../zfs-storage" }
+zfs-programs = { path = "../zfs-programs" }
+zfs-net = { path = "../zfs-net" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

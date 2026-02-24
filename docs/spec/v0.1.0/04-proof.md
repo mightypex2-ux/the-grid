@@ -4,6 +4,14 @@
 
 The `zfs-proof` crate provides **pluggable** Valid-Sector proof verification. Programs may require that stored sectors are accompanied by a proof that the sector is valid for that program. Verification is bound to `cid`, `program_id`, and `version`; verifier keys are loaded from a local program store. No concrete ZK system is mandated—only the trait and integration points.
 
+## Proof semantics (encryption and correct structure)
+
+- **Zodes only see ciphertext.** Per [10-crypto](10-crypto.md), sector payloads are encrypted by the client before upload; Zodes never see plaintext.
+- **Proofs attest to the actual program-specific fields, not just metadata.** Each program defines its own **content schema** (the real data fields: e.g. ZID identity fields vs Z Chat sender/content/timestamp). A Valid-Sector proof is computed by the **client** over the **plaintext** (or a commitment to it)—i.e. over those program-specific fields—and proves that the hidden plaintext has the **correct fields and structure for that program**, without revealing the plaintext. So the Zode learns “this ciphertext decrypts to a valid ZidMessage” or “to a valid ZChatMessage”, etc., depending on `program_id`; it does **not** learn the actual field values. Metadata (`cid`, `program_id`, `version`) is public and bound to the proof; what is proven in zero-knowledge is the **content** (the program’s actual field layout and validity).
+- **Per-program validity.** Validity rules and field schemas differ per program (see [05-standard-programs](05-standard-programs.md)). Verifier keys and proof logic are **per program** because the actual fields being proven are different for each program.
+- **Verification without plaintext.** The Zode verifies using only: `(cid, program_id, version, proof_bytes)` and optional `payload_context`. The verifier does **not** need the plaintext or the decryption key; it only needs the right verifier key for that `program_id`, so it can check that the hidden content conforms to that program’s schema.
+- **Binding.** The proof is bound to `cid` (hash of the ciphertext the Zode stores), so the Zode can confirm the proof applies to the exact payload it received.
+
 ## Requirements
 
 - **Load verifier keys** from a local program store (see [Verifier key storage](#verifier-key-storage)).
@@ -27,8 +35,8 @@ pub trait ProofVerifier: Send + Sync {
 }
 ```
 
-- **payload_context:** Optional extra context (e.g. ciphertext hash or commitment) if the proof system requires it. Opaque to the trait.
-- **VerifiedSector:** Marker or struct indicating successful verification (e.g. `VerifiedSector { cid, program_id, version }`). Used by Zode to accept the block.
+- **payload_context:** Optional extra context (e.g. ciphertext hash or a public commitment to the plaintext) if the proof system requires it. Used to bind verification to the stored payload without revealing plaintext. Opaque to the trait.
+- **VerifiedSector:** Marker or struct indicating successful verification (e.g. `VerifiedSector { cid, program_id, version }`). Used by Zode to accept the block. Successful verification means the Zode can treat the sector as valid for **that program’s actual fields** (e.g. valid ZidMessage or ZChatMessage schema) even though it only ever saw ciphertext and never the plaintext field values.
 
 ### Verifier key loading
 

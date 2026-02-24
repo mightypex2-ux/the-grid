@@ -109,7 +109,7 @@ stateDiagram-v2
     PutBlock --> WriteBlockCF: put(cid, ciphertext)
     WriteBlockCF --> UpdateProgramIndex: add_cid(program_id, cid)
     UpdateProgramIndex --> [*]
-    note right of PutBlock: Optional: put_head(sector_id, head)
+    note right of PutBlock: Optional put_head for sector
 ```
 
 ## Implementation

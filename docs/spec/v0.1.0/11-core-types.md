@@ -43,7 +43,7 @@ Represents the current head of a sector (latest version) for a program.
 | `prev_head_cid` | `Option<Cid>` | Previous head Cid (if any) for lineage. |
 | `timestamp_ms` | `u64` | Unix timestamp in milliseconds (client or Zode set). |
 
-**Serialization:** Canonical CBOR. Used in [02-storage](02-storage.md) for sector head values and in protocol messages.
+**Serialization:** Canonical CBOR. Used in [02-storage](02-storage.md) for sector head values and in protocol messages. The protocol layer ([12-protocol](12-protocol.md)) extends `Head` with an optional `signature: Option<HybridSignature>` field for cryptographic attribution; the canonical CBOR encoding must handle this optional field consistently.
 
 ### ProgramDescriptor (base)
 

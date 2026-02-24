@@ -8,7 +8,7 @@
 
 | Property | Description |
 |----------|-------------|
-| **Encrypted-by-default** | All sector payloads are ciphertext at rest; clients encrypt before upload. Zodes never see plaintext. |
+| **Encrypted-by-default** | All sector payloads are ciphertext at rest; clients encrypt before upload. Zodes never see plaintext. Sharing is supported by deriving or distributing keys so multiple participants can encrypt/decrypt the same sector (see [10-crypto](10-crypto.md)). |
 | **Program-scoped storage** | Storage and subscriptions are scoped by **program** (e.g. ZID, Z Chat). Zodes subscribe to program topics and serve only for those programs. |
 | **Optional ZK proofs** | Programs may require Valid-Sector proofs; verification is pluggable and per-program. |
 | **Client-driven replication** | Clients choose replication factor R and upload to R Zodes; replication is not consensus-based. |
@@ -18,7 +18,7 @@
 
 - Clients can connect to Zodes, encrypt sectors, and upload with configurable replication.
 - Zodes persist blocks and heads in RocksDB, verify proofs when required, and enforce local storage policy.
-- Console UI (zode-ui) and standalone app (zode-app) can run a Zode and show status, programs, peers, and live log.
+- Console CLI (zode-cli) and standalone app (zode-app) can run a Zode and show status, programs, peers, and live log.
 - SDK supports connect, program_id/topic, encrypt, prove (optional), upload, fetch, and head helpers; ZID and Z Chat helpers are available.
 - No RocksDB usage outside `zfs-storage`; no direct libp2p outside `zfs-net`.
 
@@ -53,9 +53,11 @@ flowchart LR
 | [04-proof](04-proof.md) | Valid-Sector proof verification. |
 | [05-standard-programs](05-standard-programs.md) | ZID and Z Chat. |
 | [06-zode](06-zode.md) | Zode node requirements. |
-| [07-zode-ui](07-zode-ui.md) | Console-only Zode UI. |
+| [07-zode-cli](07-zode-cli.md) | Console-only Zode CLI. |
 | [08-zode-app](08-zode-app.md) | Standalone Zode application. |
 | [09-sdk](09-sdk.md) | Client SDK. |
 | [10-crypto](10-crypto.md) | Client-side encryption. |
 | [11-core-types](11-core-types.md) | Shared types and identifiers. |
 | [12-protocol](12-protocol.md) | v1 protocol, wire format, discovery. |
+| [13-mailbox-protocol](13-mailbox-protocol.md) | Metadata-private mailbox protocol. |
+| [14-dht-discovery](14-dht-discovery.md) | Kademlia DHT peer discovery. |

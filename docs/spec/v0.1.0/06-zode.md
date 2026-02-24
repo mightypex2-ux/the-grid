@@ -12,7 +12,7 @@ The Zode is the storage node: it runs libp2p + QUIC, uses GossipSub for topic su
 - **Persist in RocksDB:** All persistence via `zfs-storage` only (BlockStore, HeadStore, ProgramIndex). No direct RocksDB.
 - **Verify proofs when required:** Before persisting a block, if the program requires proof, call `ProofVerifier::verify`; reject with `ProofInvalid` on failure (see [04-proof](04-proof.md), [11-core-types](11-core-types.md)).
 - **Enforce local storage policy:** See [Storage policy](#storage-policy).
-- **Expose metrics/state to UI:** Counters and gauges (e.g. blocks stored, peer count, storage usage) for [07-zode-ui](07-zode-ui.md) and [08-zode-app](08-zode-app.md).
+- **Expose metrics/state to UI:** Counters and gauges (e.g. blocks stored, peer count, storage usage) for [07-zode-cli](07-zode-cli.md) and [08-zode-app](08-zode-app.md).
 
 ## Config schema
 
@@ -21,7 +21,8 @@ Full Zode config (single place for node behavior):
 | Field | Type | Description |
 |-------|------|-------------|
 | **storage** | StorageConfig | Path, max_open_files, compression, max_db_size_bytes (see [02-storage](02-storage.md)). |
-| **topics** | Vec<ProgramId> or Vec<String> | Program topics to subscribe to. |
+| **default_programs** | DefaultProgramsConfig | Toggle default programs on or off (see [Default programs](#default-programs)). |
+| **topics** | Vec\<ProgramId\> or Vec\<String\> | Additional (non-default) program topics to subscribe to. |
 | **limits** | LimitsConfig | Max size per program, max total DB size (for policy). |
 | **proof_policy** | ProofPolicyConfig | When to require proof; path or config for verifier key store (see [04-proof](04-proof.md)). |
 | **network** | NetworkConfig | Listen address, bootstrap_peers, etc. |
@@ -32,13 +33,45 @@ Full Zode config (single place for node behavior):
 
 **Format:** Config file (YAML/TOML) and/or env vars; implementation-defined. Document in crate.
 
+## Default programs
+
+ZFS ships with **default programs** — the standard programs defined in [05-standard-programs](05-standard-programs.md) that a Zode subscribes to out of the box. In v0.1.0 the default programs are **ZID** and **Z Chat**.
+
+Default programs are **enabled by default** but can be individually toggled off in the Zode settings. This lets operators run lean nodes that serve only specific workloads (e.g. ZID-only, or only custom programs via `topics`).
+
+### DefaultProgramsConfig
+
+```rust
+pub struct DefaultProgramsConfig {
+    pub zid: bool,    // default: true
+    pub zchat: bool,  // default: true
+}
+```
+
+When a default program is **enabled**, the Zode automatically subscribes to its topic and accepts store/fetch requests for it — the operator does not need to add its `program_id` to the `topics` list manually. When **disabled**, the Zode does not subscribe and rejects requests for that program.
+
+### Effective topic list
+
+At startup the Zode computes the effective set of subscribed programs:
+
+```
+effective_topics = { p.program_id() | p ∈ default_programs, p.enabled }
+                 ∪ { t | t ∈ config.topics }
+```
+
+The `topics` field is reserved for **additional** (non-default) programs. An operator who only wants the defaults can leave `topics` empty.
+
+### Settings persistence
+
+Changes to `default_programs` are persisted to the config file (or equivalent store). Both the CLI and the standalone app expose a **Settings** screen where these toggles are presented (see [07-zode-cli](07-zode-cli.md) and [08-zode-app](08-zode-app.md)).
+
 ## Storage policy
 
 Concrete rules the Zode enforces (reject with `PolicyReject` or `StorageFull` when violated):
 
 | Rule | Description |
 |------|-------------|
-| **Program allowlist** | Only accept store/fetch for **subscribed** program topics (config `topics`). Reject with `PolicyReject` for other programs. |
+| **Program allowlist** | Only accept store/fetch for programs in the **effective topic list** (enabled default programs + config `topics`). Reject with `PolicyReject` for other programs. |
 | **Max size per program** | Optional cap (bytes or block count) per program_id; reject with `StorageFull` or `PolicyReject` when exceeded. |
 | **Max total DB size** | Optional cap (max_db_size_bytes in storage config); reject with `StorageFull` when at capacity. |
 | **Eviction** | v0.1.0 does not mandate eviction; if implemented, document (e.g. LRU per program or global). |
@@ -49,7 +82,7 @@ Policy is enforced in the Zode request handler **before** or **after** proof ver
 
 - **Zode config:** Struct as above; load from file/env.
 - **Hooks:** Storage (via `zfs-storage`), proof (via `ProofVerifier`), policy (check program + limits before/after persist).
-- **Metrics surface:** Counters (e.g. `blocks_stored_total`, `store_rejections_total` by reason), gauges (e.g. `peer_count`, `db_size_bytes`). Exposed for UI (see [07-zode-ui](07-zode-ui.md)).
+- **Metrics surface:** Counters (e.g. `blocks_stored_total`, `store_rejections_total` by reason), gauges (e.g. `peer_count`, `db_size_bytes`). Exposed for UI (see [07-zode-cli](07-zode-cli.md)).
 
 ## State machine (lifecycle)
 

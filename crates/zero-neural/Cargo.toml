@@ -1,0 +1,27 @@
+[package]
+name = "zero-neural"
+version = "0.1.0"
+edition = "2021"
+description = "PQ-Hybrid key generation, HKDF derivation, Ed25519 + ML-DSA-65 signing, ML-KEM-768 encapsulation (zero-id compatible)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "zero_neural"
+
+[dependencies]
+ed25519-dalek = { version = "2", features = ["hazmat", "zeroize"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ml-dsa = { version = "0.0.4", features = ["zeroize"] }
+ml-kem = { version = "0.2", features = ["deterministic"] }
+hkdf = "0.12"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+bitflags = "2"
+bs58 = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+thiserror = "2"
+
+[dev-dependencies]
+rand = "0.8"
