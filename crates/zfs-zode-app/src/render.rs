@@ -7,7 +7,7 @@ use zfs_storage::{BlockStore, HeadStore, ProgramIndex};
 use crate::app::ZodeApp;
 use crate::components::{
     action_button, action_panel, colors, copy_button, editable_list, error_label, field_label,
-    hint_label, info_grid, kv_row, kv_row_copyable, muted_label, section,
+    hint_label, info_grid, kv_row, kv_row_copyable, muted_label, section, text_input,
 };
 use crate::helpers::{format_bytes, format_timestamp_ms};
 use crate::state::StateSnapshot;
@@ -71,14 +71,10 @@ fn render_settings_general(app: &mut ZodeApp, ui: &mut egui::Ui, running: bool) 
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 field_label(ui, "Data Directory");
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.data_dir).desired_width(400.0),
-                );
+                ui.add(text_input(&mut app.settings.data_dir, 400.0));
                 ui.end_row();
                 field_label(ui, "Listen Address");
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.listen_addr).desired_width(400.0),
-                );
+                ui.add(text_input(&mut app.settings.listen_addr, 400.0));
                 ui.end_row();
             });
     });
@@ -278,7 +274,7 @@ pub(crate) fn render_storage(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnap
         .collect();
 
     section(ui, "Program Storage", |ui| {
-        ui.set_min_height(ui.available_height() - 8.0);
+        ui.set_min_height(ui.available_height());
         if status.topics.is_empty() {
             muted_label(ui, "No subscribed programs.");
             return;
@@ -500,19 +496,21 @@ pub(crate) fn render_peers(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnaps
     };
 
     section(ui, "Connected Peers", |ui| {
-        ui.set_min_height(ui.available_height() - 8.0);
+        ui.set_min_height(ui.available_height());
         info_grid(ui, "peer_info", |ui| {
             kv_row(ui, "Local Zode", &status.zode_id);
             kv_row(ui, "Connected", &format!("{}", status.peer_count));
         });
 
+        ui.add_space(4.0);
+        hint_label(ui, "Peer discovery via GossipSub / bootstrap peers / Kademlia DHT.");
         ui.add_space(8.0);
 
         if status.connected_peers.is_empty() {
             muted_label(ui, "No connected Zodes.");
         } else {
             egui::ScrollArea::vertical()
-                .auto_shrink([false, true])
+                .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     for peer in &status.connected_peers {
                         ui.horizontal(|ui| {
@@ -522,9 +520,6 @@ pub(crate) fn render_peers(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnaps
                     }
                 });
         }
-
-        ui.add_space(8.0);
-        hint_label(ui, "Peer discovery via GossipSub / bootstrap peers / Kademlia DHT.");
     });
 }
 
@@ -537,7 +532,7 @@ pub(crate) fn render_log(ui: &mut egui::Ui, state: &StateSnapshot) {
         ui,
         &format!("Live Log ({})", state.log_entries.len()),
         |ui| {
-            ui.set_min_height(ui.available_height() - 8.0);
+            ui.set_min_height(ui.available_height());
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)

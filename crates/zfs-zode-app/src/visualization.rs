@@ -323,8 +323,8 @@ impl NetworkVisualization {
                             sp + egui::vec2(0.0, r + 8.0),
                             egui::Align2::CENTER_TOP,
                             short,
-                            egui::FontId::proportional(9.0),
-                            egui::Color32::from_rgb(120, 120, 120),
+                            egui::FontId::proportional(13.0),
+                            egui::Color32::WHITE,
                         );
                     }
                 }
@@ -447,29 +447,37 @@ impl NetworkVisualization {
 
                 // Overlay controls
                 let overlay_pos = rect.left_top() + egui::vec2(12.0, 8.0);
+                let overlay_w = rect.width() - 24.0;
                 egui::Area::new(egui::Id::new("viz_overlay"))
                     .fixed_pos(overlay_pos)
                     .interactable(true)
                     .order(egui::Order::Foreground)
                     .show(ui.ctx(), |ui| {
-                        egui::Frame::default()
-                            .fill(egui::Color32::from_rgba_unmultiplied(10, 10, 12, 200))
-                            .rounding(6.0)
-                            .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("NETWORK  \u{2022}  {peer_count} peers"))
-                                            .strong()
-                                            .size(13.0)
-                                            .color(egui::Color32::WHITE),
+                        ui.set_width(overlay_w);
+                        ui.horizontal(|ui| {
+                            egui::Frame::default()
+                                .fill(egui::Color32::from_rgba_unmultiplied(10, 10, 12, 200))
+                                .rounding(6.0)
+                                .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                                .show(ui, |ui| {
+                                    crate::components::section_heading(
+                                        ui,
+                                        &format!("Network  \u{2022}  {peer_count} peers"),
                                     );
-                                    ui.add_space(12.0);
-                                    if crate::components::icon_button(ui, egui_phosphor::regular::ARROWS_IN).clicked() {
-                                        self.camera = Camera::default();
-                                    }
                                 });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                egui::Frame::default()
+                                    .fill(egui::Color32::from_rgba_unmultiplied(10, 10, 12, 200))
+                                    .rounding(6.0)
+                                    .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                                    .show(ui, |ui| {
+                                        if crate::components::icon_button(ui, egui_phosphor::regular::ARROWS_IN).clicked() {
+                                            self.camera = Camera::default();
+                                        }
+                                    });
                             });
+                        });
                     });
 
                 let energy: f32 = self.nodes.iter().map(|n| n.vel.length_sq()).sum();

@@ -12,6 +12,8 @@ pub(crate) mod colors {
     pub const BORDER: Color32 = Color32::from_rgb(48, 48, 52);
     pub const ERROR: Color32 = Color32::from_rgb(255, 80, 80);
     pub const WARN: Color32 = Color32::from_rgb(255, 200, 100);
+    pub const CONNECTED: Color32 = Color32::from_rgb(46, 230, 176);
+    pub const DISCONNECTED: Color32 = Color32::from_rgb(100, 100, 105);
 }
 
 // ---------------------------------------------------------------------------
@@ -37,8 +39,8 @@ pub(crate) fn section_heading(ui: &mut egui::Ui, title: &str) {
     ui.label(
         egui::RichText::new(title.to_uppercase())
             .strong()
-            .size(15.0)
-            .color(egui::Color32::WHITE),
+            .size(10.0)
+            .color(egui::Color32::from_rgb(140, 140, 145)),
     );
 }
 
@@ -51,20 +53,16 @@ pub(crate) fn action_panel(
     id: impl Into<egui::Id>,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    let resp = egui::TopBottomPanel::bottom(id)
+    egui::TopBottomPanel::bottom(id)
         .frame(
             egui::Frame::default()
                 .fill(colors::SURFACE_DIM)
-                .inner_margin(egui::Margin::symmetric(16.0, 12.0)),
+                .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                .stroke(egui::Stroke::new(1.0, colors::BORDER)),
         )
         .show_inside(ui, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_contents);
         });
-    let r = resp.response.rect;
-    ui.painter().line_segment(
-        [r.left_top(), r.right_top()],
-        egui::Stroke::new(1.0, colors::BORDER),
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +102,14 @@ pub(crate) fn kv_row_copyable(ui: &mut egui::Ui, key: &str, value: &str) {
 // ---------------------------------------------------------------------------
 
 const ICON_SIZE: f32 = 16.0;
+pub(crate) const ROW_HEIGHT: f32 = 20.0;
+
+/// Singleline text input sized to `ROW_HEIGHT`.
+pub(crate) fn text_input(buf: &mut String, width: f32) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(buf)
+        .desired_width(width)
+        .min_size(egui::vec2(0.0, ROW_HEIGHT))
+}
 
 fn styled_button(ui: &mut egui::Ui, label: &str, padding: egui::Vec2, font_size: f32) -> bool {
     let old_padding = ui.spacing().button_padding;
@@ -116,25 +122,26 @@ fn styled_button(ui: &mut egui::Ui, label: &str, padding: egui::Vec2, font_size:
         )
         .fill(egui::Color32::BLACK)
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(55, 55, 60)))
-        .rounding(4.0),
+        .rounding(0.0)
+        .min_size(egui::vec2(0.0, ROW_HEIGHT)),
     );
     ui.spacing_mut().button_padding = old_padding;
     r.clicked()
 }
 
-/// Standard button — black bg, white uppercase text, comfortable padding.
+/// Standard button — black bg, white uppercase text, compact padding.
 pub(crate) fn std_button(ui: &mut egui::Ui, label: &str) -> bool {
-    styled_button(ui, label, egui::vec2(18.0, 8.0), 13.0)
+    styled_button(ui, label, egui::vec2(10.0, 4.0), 10.0)
 }
 
 /// Small button — same look, tighter padding for constrained spaces.
 pub(crate) fn std_button_small(ui: &mut egui::Ui, label: &str) -> bool {
-    styled_button(ui, label, egui::vec2(10.0, 4.0), 12.0)
+    styled_button(ui, label, egui::vec2(6.0, 3.0), 9.0)
 }
 
-/// Primary action button — uses standard style at 14 pt.
+/// Primary action button — uses standard style, slightly larger.
 pub(crate) fn action_button(ui: &mut egui::Ui, label: &str) -> bool {
-    styled_button(ui, label, egui::vec2(20.0, 10.0), 14.0)
+    styled_button(ui, label, egui::vec2(12.0, 5.0), 11.0)
 }
 
 /// Frameless icon button, vertically centered on the current line.
@@ -208,9 +215,7 @@ pub(crate) fn editable_list(
     input_width: f32,
 ) {
     ui.horizontal(|ui| {
-        let resp = ui.add(
-            egui::TextEdit::singleline(input).desired_width(input_width),
-        );
+        let resp = ui.add(text_input(input, input_width));
         if (std_button_small(ui, "Add")
             || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
             && !input.trim().is_empty()

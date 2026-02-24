@@ -149,9 +149,20 @@ fn configure_theme(ctx: &egui::Context) {
     visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
     visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(50, 50, 55);
     visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+    visuals.widgets.hovered.expansion = 0.0;
     visuals.widgets.active.bg_fill = egui::Color32::BLACK;
     visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+    visuals.widgets.active.expansion = 0.0;
     visuals.selection.bg_fill = egui::Color32::WHITE;
     visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::BLACK);
     ctx.set_visuals(visuals);
+
+    ctx.style_mut(|s| {
+        s.spacing.interact_size.y = 18.0;
+        use egui::{FontId, TextStyle};
+        s.text_styles.insert(TextStyle::Body, FontId::proportional(11.0));
+        s.text_styles.insert(TextStyle::Button, FontId::proportional(11.0));
+        s.text_styles.insert(TextStyle::Small, FontId::proportional(9.0));
+        s.text_styles.insert(TextStyle::Monospace, FontId::monospace(10.0));
+    });
 }

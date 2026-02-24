@@ -200,6 +200,33 @@ impl ZodeApp {
     }
 }
 
+fn title_bar_icon(ui: &mut egui::Ui, icon: &str, active: bool) -> egui::Response {
+    let font_id = egui::FontId::proportional(16.0);
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(icon.to_string(), font_id, egui::Color32::PLACEHOLDER)
+    });
+    let bp = ui.spacing().button_padding;
+    let desired = egui::vec2(
+        galley.size().x + bp.x * 2.0,
+        ui.spacing().interact_size.y,
+    );
+    let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+    let vis = ui.style().interact_selectable(&resp, active);
+    if active || resp.hovered() {
+        ui.painter().rect_filled(rect, vis.rounding, vis.bg_fill);
+    }
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(
+            icon.to_string(),
+            egui::FontId::proportional(16.0),
+            vis.text_color(),
+        )
+    });
+    let text_pos = rect.center() - galley.size() / 2.0;
+    ui.painter().galley(text_pos, galley, vis.text_color());
+    resp
+}
+
 impl eframe::App for ZodeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let state = self
@@ -282,14 +309,7 @@ impl eframe::App for ZodeApp {
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            let close = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(egui_phosphor::regular::X)
-                                        .size(14.0),
-                                )
-                                .frame(false),
-                            );
-                            if close.clicked() {
+                            if title_bar_icon(ui, egui_phosphor::regular::X, false).clicked() {
                                 ui.ctx()
                                     .send_viewport_cmd(egui::ViewportCommand::Close);
                             }
@@ -301,26 +321,13 @@ impl eframe::App for ZodeApp {
                             } else {
                                 egui_phosphor::regular::CORNERS_OUT
                             };
-                            let max_btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(max_icon).size(14.0),
-                                )
-                                .frame(false),
-                            );
-                            if max_btn.clicked() {
+                            if title_bar_icon(ui, max_icon, false).clicked() {
                                 ui.ctx().send_viewport_cmd(
                                     egui::ViewportCommand::Maximized(!maximized),
                                 );
                             }
 
-                            let min_btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(egui_phosphor::regular::MINUS)
-                                        .size(14.0),
-                                )
-                                .frame(false),
-                            );
-                            if min_btn.clicked() {
+                            if title_bar_icon(ui, egui_phosphor::regular::MINUS, false).clicked() {
                                 ui.ctx().send_viewport_cmd(
                                     egui::ViewportCommand::Minimized(true),
                                 );
@@ -329,48 +336,31 @@ impl eframe::App for ZodeApp {
                             ui.add_space(4.0);
 
                             let is_settings = self.tab == Tab::Settings;
-                            let font_id = egui::FontId::proportional(16.0);
-                            let icon_str = egui_phosphor::regular::GEAR_SIX;
-                            let galley = ui.fonts(|f| {
-                                f.layout_no_wrap(
-                                    icon_str.to_string(),
-                                    font_id,
-                                    egui::Color32::PLACEHOLDER,
-                                )
-                            });
-                            let bp = ui.spacing().button_padding;
-                            let desired = egui::vec2(
-                                galley.size().x + bp.x * 2.0,
-                                ui.spacing().interact_size.y,
-                            );
-                            let (rect, resp) =
-                                ui.allocate_exact_size(desired, egui::Sense::click());
-                            if resp.clicked() {
+                            if title_bar_icon(ui, egui_phosphor::regular::GEAR_SIX, is_settings).clicked() {
                                 self.tab = Tab::Settings;
                             }
-                            let vis =
-                                ui.style().interact_selectable(&resp, is_settings);
-                            if is_settings || resp.hovered() {
-                                ui.painter().rect_filled(
-                                    rect,
-                                    vis.rounding,
-                                    vis.bg_fill,
-                                );
-                            }
-                            let galley = ui.fonts(|f| {
-                                f.layout_no_wrap(
-                                    icon_str.to_string(),
-                                    egui::FontId::proportional(16.0),
-                                    vis.text_color(),
-                                )
-                            });
-                            let text_pos =
-                                rect.center() - galley.size() / 2.0;
-                            ui.painter().galley(
-                                text_pos,
-                                galley,
-                                vis.text_color(),
+
+                            let connected = self.zode.is_some();
+                            let dot_color = if connected {
+                                crate::components::colors::CONNECTED
+                            } else {
+                                crate::components::colors::DISCONNECTED
+                            };
+                            let dot_radius = 3.5;
+                            let (dot_rect, dot_resp) = ui.allocate_exact_size(
+                                egui::vec2(dot_radius * 2.0 + 2.0, dot_radius * 2.0),
+                                egui::Sense::hover(),
                             );
+                            ui.painter().circle_filled(
+                                dot_rect.center(),
+                                dot_radius,
+                                dot_color,
+                            );
+                            dot_resp.on_hover_text(if connected {
+                                "Zode is running"
+                            } else {
+                                "Zode is stopped"
+                            });
                         },
                     );
                 });
@@ -378,12 +368,7 @@ impl eframe::App for ZodeApp {
 
         let central_frame = egui::Frame::default()
             .fill(egui::Color32::BLACK)
-            .inner_margin(egui::Margin {
-                left: 8.0,
-                right: 8.0,
-                top: 8.0,
-                bottom: 0.0,
-            });
+            .inner_margin(8.0);
 
         egui::CentralPanel::default()
             .frame(central_frame)

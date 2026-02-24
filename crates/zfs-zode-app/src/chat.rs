@@ -433,8 +433,7 @@ fn render_chat_compose(app: &mut ZodeApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let chat = app.chat_state.as_mut().unwrap();
         let resp = ui.add(
-            egui::TextEdit::singleline(&mut chat.compose)
-                .desired_width(ui.available_width() - 70.0)
+            crate::components::text_input(&mut chat.compose, ui.available_width() - 70.0)
                 .hint_text("Type a message..."),
         );
         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
