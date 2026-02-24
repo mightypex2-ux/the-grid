@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{debug, error, info, warn};
+use zfs_core::GossipBlock;
 use zfs_net::{NetworkEvent, NetworkService, PeerId};
 use zfs_proof::{NoopVerifier, ProofVerifier};
 use zfs_storage::{RocksStorage, StorageBackend, StorageStats};
@@ -31,6 +32,12 @@ pub enum LogEvent {
     },
     /// A fetch request was received and processed.
     FetchProcessed { program_id: String, found: bool },
+    /// A block was received and stored via GossipSub.
+    GossipReceived {
+        program_id: String,
+        cid: String,
+        accepted: bool,
+    },
     /// The Zode is shutting down.
     ShuttingDown,
 }
@@ -64,8 +71,10 @@ pub struct Zode {
     network: Arc<Mutex<NetworkService>>,
     peer_id: PeerId,
     topics: Vec<String>,
+    connected_peers: Arc<RwLock<Vec<String>>>,
     event_tx: broadcast::Sender<LogEvent>,
     shutdown_tx: mpsc::Sender<()>,
+    publish_tx: mpsc::Sender<(String, Vec<u8>)>,
 }
 
 impl Zode {
@@ -104,10 +113,12 @@ impl Zode {
             debug!(program_id = %pid.to_hex(), "subscribed to topic");
         }
 
-        // 4. Set up event broadcasting and shutdown channel
+        // 4. Set up event broadcasting, shutdown, and publish channels
         let (event_tx, _) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let (publish_tx, publish_rx) = mpsc::channel(64);
         let metrics = Arc::new(ZodeMetrics::default());
+        let connected_peers: Arc<RwLock<Vec<String>>> = Arc::default();
 
         // Update initial DB size metric
         if let Ok(stats) = storage.stats() {
@@ -129,13 +140,16 @@ impl Zode {
         let event_loop_tx = event_tx.clone();
         let event_loop_net = Arc::clone(&network);
         let event_loop_metrics = Arc::clone(&metrics);
+        let event_loop_peers = Arc::clone(&connected_peers);
         tokio::spawn(async move {
             Self::event_loop(
                 handler,
                 event_loop_net,
                 event_loop_tx,
                 event_loop_metrics,
+                event_loop_peers,
                 shutdown_rx,
+                publish_rx,
             )
             .await;
         });
@@ -146,19 +160,22 @@ impl Zode {
             network,
             peer_id,
             topics: topic_strings,
+            connected_peers,
             event_tx,
             shutdown_tx,
+            publish_tx,
         })
     }
 
-    /// Get a status snapshot of the running Zode.
-    pub async fn status(&self) -> ZodeStatus {
+    /// Get a status snapshot of the running Zode (lock-free, never blocks).
+    pub fn status(&self) -> ZodeStatus {
         let storage_stats = self.storage.stats().unwrap_or_default();
         let metrics = self.metrics.snapshot();
-        let connected_peers: Vec<String> = {
-            let net = self.network.lock().await;
-            net.connected_peers().iter().map(|p| p.to_string()).collect()
-        };
+        let connected_peers = self
+            .connected_peers
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         let peer_count = connected_peers.len() as u64;
         ZodeStatus {
             peer_id: self.peer_id.to_string(),
@@ -185,6 +202,19 @@ impl Zode {
         &self.storage
     }
 
+    /// Lock-free access to subscribed topic strings (e.g. `"prog/{hex}"`).
+    pub fn topics(&self) -> &[String] {
+        &self.topics
+    }
+
+    /// Queue a GossipSub publish.  The event loop will send it on the
+    /// next iteration (non-blocking from the caller's perspective).
+    pub fn publish(&self, topic: String, data: Vec<u8>) {
+        if let Err(e) = self.publish_tx.try_send((topic, data)) {
+            warn!(error = %e, "publish channel full or closed");
+        }
+    }
+
     /// Access the network service (for advanced operations).
     pub fn network(&self) -> &Arc<Mutex<NetworkService>> {
         &self.network
@@ -202,9 +232,14 @@ impl Zode {
         network: Arc<Mutex<NetworkService>>,
         event_tx: broadcast::Sender<LogEvent>,
         metrics: Arc<ZodeMetrics>,
+        connected_peers: Arc<RwLock<Vec<String>>>,
         mut shutdown_rx: mpsc::Receiver<()>,
+        mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
     ) {
         loop {
+            // Hold the network lock only while polling for the next event
+            // AND for any queued publishes, so callers never need to
+            // contend for the lock.
             let event = {
                 let mut net = network.lock().await;
                 tokio::select! {
@@ -212,6 +247,12 @@ impl Zode {
                     _ = shutdown_rx.recv() => {
                         info!("event loop shutting down");
                         return;
+                    }
+                    Some((topic, data)) = publish_rx.recv() => {
+                        if let Err(e) = net.publish(&topic, data) {
+                            warn!(error = %e, "gossip publish failed");
+                        }
+                        continue;
                     }
                 }
             };
@@ -224,13 +265,23 @@ impl Zode {
             match event {
                 NetworkEvent::PeerConnected(peer) => {
                     metrics.inc_peer_count();
+                    let peer_str = peer.to_string();
+                    if let Ok(mut peers) = connected_peers.write() {
+                        if !peers.contains(&peer_str) {
+                            peers.push(peer_str.clone());
+                        }
+                    }
                     debug!(%peer, "peer connected");
-                    let _ = event_tx.send(LogEvent::PeerConnected(peer.to_string()));
+                    let _ = event_tx.send(LogEvent::PeerConnected(peer_str));
                 }
                 NetworkEvent::PeerDisconnected(peer) => {
                     metrics.dec_peer_count();
+                    let peer_str = peer.to_string();
+                    if let Ok(mut peers) = connected_peers.write() {
+                        peers.retain(|p| p != &peer_str);
+                    }
                     debug!(%peer, "peer disconnected");
-                    let _ = event_tx.send(LogEvent::PeerDisconnected(peer.to_string()));
+                    let _ = event_tx.send(LogEvent::PeerDisconnected(peer_str));
                 }
                 NetworkEvent::IncomingStore {
                     peer,
@@ -286,6 +337,21 @@ impl Zode {
                 }
                 NetworkEvent::GossipMessage { topic, data, .. } => {
                     debug!(%topic, bytes = data.len(), "gossip message received");
+                    match zfs_core::decode_canonical::<GossipBlock>(&data) {
+                        Ok(block) => {
+                            let program_id = block.program_id.to_hex();
+                            let cid = block.cid.to_hex();
+                            let accepted = handler.handle_gossip(&block);
+                            let _ = event_tx.send(LogEvent::GossipReceived {
+                                program_id,
+                                cid,
+                                accepted,
+                            });
+                        }
+                        Err(e) => {
+                            debug!(error = %e, "failed to decode gossip block");
+                        }
+                    }
                 }
                 NetworkEvent::PeerDiscovered {
                     peer_id, addresses, ..
@@ -295,9 +361,7 @@ impl Zode {
                 }
                 NetworkEvent::StoreResult { .. }
                 | NetworkEvent::FetchResult { .. }
-                | NetworkEvent::OutboundFailure { .. } => {
-                    // Outbound results are for SDK clients, not the Zode event loop.
-                }
+                | NetworkEvent::OutboundFailure { .. } => {}
             }
         }
     }

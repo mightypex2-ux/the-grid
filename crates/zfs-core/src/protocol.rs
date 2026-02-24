@@ -47,6 +47,20 @@ pub struct FetchRequest {
     pub signature: Option<HybridSignature>,
 }
 
+/// Lightweight block announcement for GossipSub propagation.
+///
+/// Carries just the data needed to store a block — no signatures or proofs,
+/// since those are enforced by the request-response protocol, not gossip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GossipBlock {
+    pub program_id: ProgramId,
+    pub cid: Cid,
+    #[serde(with = "serde_bytes")]
+    pub ciphertext: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub head: Option<Head>,
+}
+
 /// Zode → Client: response to a fetch request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FetchResponse {

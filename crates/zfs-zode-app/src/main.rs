@@ -10,12 +10,12 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
-use zfs_core::{Cid, Head, ProgramId, SectorId};
+use zfs_core::{Cid, GossipBlock, Head, ProgramId, SectorId};
 use zfs_crypto::{decrypt_sector, encrypt_sector, SectorKey};
 use zfs_net::NetworkConfig;
 use zfs_programs::zchat::{ChannelId, ZChatDescriptor, ZChatMessage, TEST_CHANNEL_ID};
-use zfs_storage::{BlockStore, HeadStore, ProgramIndex, StorageBackend, StorageConfig};
-use zfs_zode::{DefaultProgramsConfig, LogEvent, Zode, ZodeConfig, ZodeError, ZodeStatus};
+use zfs_storage::{BlockStore, HeadStore, ProgramIndex, StorageConfig};
+use zfs_zode::{DefaultProgramsConfig, LogEvent, Zode, ZodeConfig, ZodeStatus};
 use zero_neural::{
     derive_machine_keypair, ed25519_to_did_key, MachineKeyCapabilities, NeuralKey,
 };
@@ -191,6 +191,13 @@ struct DisplayMessage {
     timestamp_ms: u64,
 }
 
+struct ChatUpdate {
+    messages: Vec<DisplayMessage>,
+    last_head_cid: Option<Cid>,
+    version: u64,
+    error: Option<String>,
+}
+
 struct ChatState {
     messages: Vec<DisplayMessage>,
     compose: String,
@@ -203,6 +210,8 @@ struct ChatState {
     version: u64,
     error: Option<String>,
     initialized: bool,
+    update_rx: tokio::sync::mpsc::Receiver<ChatUpdate>,
+    refresh_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 fn derive_test_sector_key() -> SectorKey {
@@ -213,8 +222,13 @@ fn derive_test_sector_key() -> SectorKey {
     SectorKey::from_bytes(key_bytes)
 }
 
-fn derive_test_machine_did() -> String {
-    let nk = NeuralKey::from_bytes([0x42; 32]);
+fn derive_test_machine_did(peer_id: &str) -> String {
+    use sha2::Digest;
+    let hash: [u8; 32] = sha2::Sha256::digest(
+        format!("zode-test-machine:{peer_id}").as_bytes(),
+    )
+    .into();
+    let nk = NeuralKey::from_bytes(hash);
     let identity_id = [0x01; 16];
     let machine_id = [0x02; 16];
     let caps = MachineKeyCapabilities::SIGN | MachineKeyCapabilities::ENCRYPT;
@@ -271,26 +285,18 @@ impl ZodeApp {
         let shared = Arc::new(Mutex::new(AppState::default()));
         self.shared = Arc::clone(&shared);
 
-        // Start the Zode and immediately grab peer_id + topics via the
-        // network lock before the event loop's spawned task can acquire it.
         let start_result = self.rt.block_on(async {
-            let zode = Zode::start(config).await?;
-            let peer_id = zode.network().lock().await.local_peer_id().to_string();
-            Ok::<_, ZodeError>((zode, peer_id))
+            Zode::start(config).await
         });
         match start_result {
-            Ok((zode, boot_peer_id)) => {
+            Ok(zode) => {
                 let zode = Arc::new(zode);
                 self.zode = Some(Arc::clone(&zode));
 
                 let (stop_tx, stop_rx) = tokio::sync::mpsc::channel::<()>(1);
                 self.shutdown_tx = Some(stop_tx);
 
-                // Status poller — The Zode event loop holds the network
-                // mutex while awaiting events, which can starve status()
-                // indefinitely when no peers are connected. We build a
-                // fallback status from lock-free accessors and the
-                // peer_id/topics captured at boot.
+                // Status poller — status() is now lock-free so no timeout needed.
                 let bg_zode = Arc::clone(&zode);
                 let bg_shared = Arc::clone(&shared);
                 let mut stop_poll = stop_rx;
@@ -300,28 +306,7 @@ impl ZodeApp {
                             _ = stop_poll.recv() => return,
                             _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {}
                         }
-                        let timeout = std::time::Duration::from_millis(250);
-                        let status = match tokio::time::timeout(
-                            timeout,
-                            bg_zode.status(),
-                        )
-                        .await
-                        {
-                            Ok(full) => full,
-                            Err(_) => {
-                                let storage_stats =
-                                    bg_zode.storage().stats().unwrap_or_default();
-                                let metrics = bg_zode.metrics().snapshot();
-                                ZodeStatus {
-                                    peer_id: boot_peer_id.clone(),
-                                    peer_count: metrics.peer_count,
-                                    connected_peers: Vec::new(),
-                                    topics: Vec::new(),
-                                    storage: storage_stats,
-                                    metrics,
-                                }
-                            }
-                        };
+                        let status = bg_zode.status();
                         bg_shared.lock().await.status = Some(status);
                     }
                 });
@@ -791,6 +776,8 @@ impl ZodeApp {
                 for entry in &state.log_entries {
                     let color = if entry.starts_with("[STORE REJECT") {
                         egui::Color32::from_rgb(255, 100, 100)
+                    } else if entry.starts_with("[GOSSIP") {
+                        egui::Color32::from_rgb(100, 200, 255)
                     } else if entry.starts_with("[DHT") {
                         egui::Color32::from_rgb(100, 150, 255)
                     } else if entry.starts_with("[PEER+") {
@@ -862,10 +849,15 @@ impl ZodeApp {
 impl ZodeApp {
     fn init_chat(&mut self) {
         let sector_key = derive_test_sector_key();
+        let peer_id = self
+            .zode
+            .as_ref()
+            .map(|z| z.status().peer_id)
+            .unwrap_or_default();
         // PQ key derivation (ML-DSA-65 / ML-KEM-768) needs more stack than
         // the main thread provides on Windows debug builds, and we can't use
         // rt.block_on here because update() already holds a block_on context.
-        let machine_did = std::thread::spawn(derive_test_machine_did)
+        let machine_did = std::thread::spawn(move || derive_test_machine_did(&peer_id))
             .join()
             .expect("key derivation thread panicked");
         let channel_id = ChannelId::from_str_id(TEST_CHANNEL_ID);
@@ -874,7 +866,39 @@ impl ZodeApp {
             .program_id()
             .expect("ZChat descriptor is valid");
 
-        let mut chat = ChatState {
+        let (update_tx, update_rx) = tokio::sync::mpsc::channel::<ChatUpdate>(4);
+        let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::channel::<()>(4);
+
+        if let Some(ref zode) = self.zode {
+            let bg_storage = Arc::clone(zode.storage());
+            let bg_key = sector_key.clone();
+            let bg_pid = program_id;
+            let bg_sid = sector_id.clone();
+            self.rt.spawn(async move {
+                let mut known = 0usize;
+                loop {
+                    let cur = bg_storage
+                        .list_cids(&bg_pid)
+                        .map(|v| v.len())
+                        .unwrap_or(known);
+                    if cur != known {
+                        known = cur;
+                        let upd = Self::build_chat_update(
+                            &bg_storage, &bg_key, &bg_pid, &bg_sid,
+                        );
+                        if update_tx.send(upd).await.is_err() {
+                            return;
+                        }
+                    }
+                    tokio::select! {
+                        _ = refresh_rx.recv() => {}
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                    }
+                }
+            });
+        }
+
+        let chat = ChatState {
             messages: Vec::new(),
             compose: String::new(),
             sector_key,
@@ -886,54 +910,58 @@ impl ZodeApp {
             version: 0,
             error: None,
             initialized: true,
+            update_rx,
+            refresh_tx,
         };
-
-        if let Some(ref zode) = self.zode {
-            Self::load_messages(zode.storage(), &mut chat);
-        }
-
         self.chat_state = Some(chat);
     }
 
-    fn load_messages(
+    fn build_chat_update(
         storage: &Arc<zfs_storage::RocksStorage>,
-        chat: &mut ChatState,
-    ) {
-        let aad = build_aad(&chat.program_id, &chat.sector_id);
+        sector_key: &SectorKey,
+        program_id: &ProgramId,
+        sector_id: &SectorId,
+    ) -> ChatUpdate {
+        let aad = build_aad(program_id, sector_id);
 
-        // Restore latest head metadata (version, last_head_cid)
-        match storage.get_head(&chat.sector_id) {
-            Ok(Some(h)) => {
-                chat.last_head_cid = Some(h.cid);
-                chat.version = h.version;
-            }
+        let (last_head_cid, version) = match storage.get_head(sector_id) {
+            Ok(Some(h)) => (Some(h.cid), h.version),
             Ok(None) => {
-                chat.messages = Vec::new();
-                chat.last_head_cid = None;
-                chat.version = 0;
-                chat.error = None;
-                return;
+                return ChatUpdate {
+                    messages: Vec::new(),
+                    last_head_cid: None,
+                    version: 0,
+                    error: None,
+                };
             }
             Err(e) => {
-                chat.error = Some(format!("Failed to read head: {e}"));
-                return;
+                return ChatUpdate {
+                    messages: Vec::new(),
+                    last_head_cid: None,
+                    version: 0,
+                    error: Some(format!("Failed to read head: {e}")),
+                };
             }
-        }
+        };
 
-        // Load all blocks via the program index
-        let cids = match storage.list_cids(&chat.program_id) {
+        let cids = match storage.list_cids(program_id) {
             Ok(c) => c,
             Err(e) => {
-                chat.error = Some(format!("Failed to list CIDs: {e}"));
-                return;
+                return ChatUpdate {
+                    messages: Vec::new(),
+                    last_head_cid,
+                    version,
+                    error: Some(format!("Failed to list CIDs: {e}")),
+                };
             }
         };
 
         let mut msgs = Vec::new();
+        let mut error = None;
         for cid in &cids {
             match storage.get(cid) {
                 Ok(Some(ciphertext)) => {
-                    match decrypt_sector(&ciphertext, &chat.sector_key, &aad) {
+                    match decrypt_sector(&ciphertext, sector_key, &aad) {
                         Ok(plaintext) => match ZChatMessage::decode_canonical(&plaintext) {
                             Ok(msg) => {
                                 msgs.push(DisplayMessage {
@@ -967,15 +995,19 @@ impl ZodeApp {
                     });
                 }
                 Err(e) => {
-                    chat.error = Some(format!("Storage read error: {e}"));
+                    error = Some(format!("Storage read error: {e}"));
                     break;
                 }
             }
         }
 
         msgs.sort_by_key(|m| m.timestamp_ms);
-        chat.messages = msgs;
-        chat.error = None;
+        ChatUpdate {
+            messages: msgs,
+            last_head_cid,
+            version,
+            error,
+        }
     }
 
     fn send_message(&mut self) {
@@ -1056,6 +1088,19 @@ impl ZodeApp {
             timestamp_ms: now_ms,
         });
         chat.error = None;
+
+        let gossip = GossipBlock {
+            program_id: chat.program_id,
+            cid,
+            ciphertext,
+            head: Some(head),
+        };
+        let topic = zfs_programs::program_topic(&gossip.program_id);
+        if let Ok(data) = zfs_core::encode_canonical(&gossip) {
+            zode.publish(topic, data);
+        }
+
+        let _ = chat.refresh_tx.try_send(());
     }
 
     fn render_test_chat(&mut self, ui: &mut egui::Ui) {
@@ -1113,13 +1158,20 @@ impl ZodeApp {
             ui.add_space(4.0);
         }
 
-        // Refresh button
-        if ui.button("Refresh").clicked() {
-            if let Some(ref zode) = self.zode {
-                let storage = Arc::clone(zode.storage());
-                let chat = self.chat_state.as_mut().unwrap();
-                Self::load_messages(&storage, chat);
+        // Drain background updates (non-blocking).
+        {
+            let chat = self.chat_state.as_mut().unwrap();
+            while let Ok(upd) = chat.update_rx.try_recv() {
+                chat.last_head_cid = upd.last_head_cid;
+                chat.version = upd.version;
+                chat.error = upd.error;
+                chat.messages = upd.messages;
             }
+        }
+
+        if ui.button("Refresh").clicked() {
+            let chat = self.chat_state.as_ref().unwrap();
+            let _ = chat.refresh_tx.try_send(());
         }
         ui.add_space(4.0);
         ui.separator();
@@ -1140,11 +1192,6 @@ impl ZodeApp {
                 } else {
                     for msg in &chat.messages {
                         let time = format_timestamp_ms(msg.timestamp_ms);
-                        let sender_short = if msg.sender.len() > 16 {
-                            &msg.sender[..16]
-                        } else {
-                            &msg.sender
-                        };
                         ui.horizontal_wrapped(|ui| {
                             ui.label(
                                 egui::RichText::new(format!("[{time}]"))
@@ -1152,7 +1199,7 @@ impl ZodeApp {
                                     .weak(),
                             );
                             ui.label(
-                                egui::RichText::new(format!("{sender_short}:"))
+                                egui::RichText::new(format!("{}:", &msg.sender))
                                     .monospace()
                                     .strong(),
                             );
@@ -1237,6 +1284,18 @@ fn format_log_event(event: &LogEvent) -> String {
             )
         }
         LogEvent::PeerDiscovered(peer) => format!("[DHT] discovered {peer}"),
+        LogEvent::GossipReceived {
+            program_id,
+            cid,
+            accepted,
+        } => {
+            let status = if *accepted { "OK" } else { "DROP" };
+            format!(
+                "[GOSSIP {status}] prog={} cid={}",
+                &program_id[..8.min(program_id.len())],
+                &cid[..8.min(cid.len())]
+            )
+        }
         LogEvent::ShuttingDown => "[SHUTDOWN] Zode shutting down".to_string(),
     }
 }

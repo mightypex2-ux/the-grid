@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use tracing::{debug, warn};
-use zfs_core::{Cid, FetchRequest, FetchResponse, ProgramId, StoreRequest, StoreResponse};
+use zfs_core::{
+    Cid, FetchRequest, FetchResponse, GossipBlock, ProgramId, StoreRequest, StoreResponse,
+};
 use zfs_proof::ProofVerifier;
 use zfs_storage::StorageBackend;
 
@@ -137,6 +139,50 @@ impl<S: StorageBackend> RequestHandler<S> {
         }
 
         Ok(())
+    }
+
+    /// Process a block received via GossipSub.  Returns `true` if stored.
+    pub(crate) fn handle_gossip(&self, block: &GossipBlock) -> bool {
+        if !self.topics.contains(&block.program_id) {
+            self.metrics.inc_policy_rejection();
+            return false;
+        }
+
+        let expected_cid = Cid::from_ciphertext(&block.ciphertext);
+        if block.cid != expected_cid {
+            debug!("gossip block CID mismatch, dropping");
+            return false;
+        }
+
+        if let Some(max_block) = self.limits.max_block_size_bytes {
+            if block.ciphertext.len() as u64 > max_block {
+                self.metrics.inc_limit_rejection();
+                return false;
+            }
+        }
+
+        if let Some(max_total) = self.limits.max_total_db_bytes {
+            if let Ok(stats) = self.storage.stats() {
+                if stats.db_size_bytes + block.ciphertext.len() as u64 > max_total {
+                    self.metrics.inc_limit_rejection();
+                    return false;
+                }
+            }
+        }
+
+        if self.storage.put(&block.cid, &block.ciphertext).is_err() {
+            return false;
+        }
+        if let Some(ref head) = block.head {
+            let _ = self.storage.put_head(&head.sector_id, head);
+        }
+        let _ = self.storage.add_cid(&block.program_id, &block.cid);
+
+        if let Ok(stats) = self.storage.stats() {
+            self.metrics.set_db_size(stats.db_size_bytes);
+        }
+        self.metrics.inc_blocks_stored();
+        true
     }
 
     /// Process a fetch request. Returns the response to send back.

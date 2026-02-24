@@ -18,5 +18,5 @@ pub use head::Head;
 pub use key_envelope::{KeyEnvelope, KeyEnvelopeEntry};
 pub use program_descriptor::ProgramDescriptor;
 pub use program_id::ProgramId;
-pub use protocol::{FetchRequest, FetchResponse, StoreRequest, StoreResponse};
+pub use protocol::{FetchRequest, FetchResponse, GossipBlock, StoreRequest, StoreResponse};
 pub use sector_id::SectorId;

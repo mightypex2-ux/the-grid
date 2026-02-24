@@ -14,7 +14,7 @@
 //!
 //! let config = ZodeConfig::default();
 //! let zode = Zode::start(config).await?;
-//! let status = zode.status().await;
+//! let status = zode.status();
 //! println!("peer count: {}", status.peer_count);
 //! zode.shutdown().await;
 //! # Ok(())
