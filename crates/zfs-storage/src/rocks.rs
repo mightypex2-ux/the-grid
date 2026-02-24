@@ -98,6 +98,19 @@ impl HeadStore for RocksStorage {
             None => Ok(None),
         }
     }
+
+    fn list_all_heads(&self) -> Result<Vec<Head>, StorageError> {
+        let cf = self.cf_handle(CF_HEADS)?;
+        let mut heads = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_key, value) = item?;
+            let head: Head = zfs_core::decode_canonical(&value)
+                .map_err(|e| StorageError::Decode(e.to_string()))?;
+            heads.push(head);
+        }
+        Ok(heads)
+    }
 }
 
 impl ProgramIndex for RocksStorage {

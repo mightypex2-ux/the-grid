@@ -1,54 +1,55 @@
 use libp2p::request_response::{OutboundRequestId, ResponseChannel};
-use libp2p::{Multiaddr, PeerId};
+use libp2p::Multiaddr;
 use zfs_core::{FetchRequest, FetchResponse, StoreRequest, StoreResponse};
 
 use crate::protocol::ZfsResponse;
+use crate::ZodeId;
 
 /// Events produced by the [`NetworkService`](crate::NetworkService) event loop.
 pub enum NetworkEvent {
-    /// A new peer connection was established.
-    PeerConnected(PeerId),
+    /// A new Zode connection was established.
+    PeerConnected(ZodeId),
 
-    /// A peer connection was closed.
-    PeerDisconnected(PeerId),
+    /// A Zode connection was closed.
+    PeerDisconnected(ZodeId),
 
-    /// A new peer was discovered via DHT or mDNS (not yet necessarily connected).
+    /// A new Zode was discovered via DHT or mDNS (not yet necessarily connected).
     PeerDiscovered {
-        peer_id: PeerId,
+        zode_id: ZodeId,
         addresses: Vec<Multiaddr>,
     },
 
-    /// An incoming store request from a remote peer.
+    /// An incoming store request from a remote Zode.
     IncomingStore {
-        peer: PeerId,
+        peer: ZodeId,
         request: Box<StoreRequest>,
         channel: ResponseChannel<ZfsResponse>,
     },
 
-    /// An incoming fetch request from a remote peer.
+    /// An incoming fetch request from a remote Zode.
     IncomingFetch {
-        peer: PeerId,
+        peer: ZodeId,
         request: FetchRequest,
         channel: ResponseChannel<ZfsResponse>,
     },
 
     /// Response received for an outbound store request.
     StoreResult {
-        peer: PeerId,
+        peer: ZodeId,
         request_id: OutboundRequestId,
         response: StoreResponse,
     },
 
     /// Response received for an outbound fetch request.
     FetchResult {
-        peer: PeerId,
+        peer: ZodeId,
         request_id: OutboundRequestId,
         response: FetchResponse,
     },
 
     /// A GossipSub message received on a subscribed topic.
     GossipMessage {
-        source: Option<PeerId>,
+        source: Option<ZodeId>,
         topic: String,
         data: Vec<u8>,
     },
@@ -58,7 +59,7 @@ pub enum NetworkEvent {
 
     /// An outbound request failed.
     OutboundFailure {
-        peer: PeerId,
+        peer: ZodeId,
         request_id: OutboundRequestId,
         error: String,
     },

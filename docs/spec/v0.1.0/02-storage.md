@@ -36,13 +36,13 @@ RocksDB is the **mandatory** storage engine for ZFS v0.1.0. All access to RocksD
 
 **Key layout:** `PREFIX_PROGRAM || program_id.as_bytes()`.
 
-### 4. Peer metadata (optional)
+### 4. Zode metadata (optional)
 
-- **Key:** `PeerId` (or equivalent bytes). Use a fixed prefix.
+- **Key:** `ZodeId` (or equivalent bytes). Use a fixed prefix.
 - **Value:** Connection metadata / stats (e.g. last seen, bytes in/out). Format implementation-defined.
 - **Semantics:** Optional; not required for core store/serve. Use metadata column family if present.
 
-**Key layout:** `PREFIX_PEER || peer_id_bytes`.
+**Key layout:** `PREFIX_ZODE || zode_id_bytes`.
 
 ## RocksDB configuration
 

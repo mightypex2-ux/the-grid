@@ -13,6 +13,7 @@ pub trait BlockStore {
 pub trait HeadStore {
     fn put_head(&self, sector_id: &SectorId, head: &Head) -> Result<(), StorageError>;
     fn get_head(&self, sector_id: &SectorId) -> Result<Option<Head>, StorageError>;
+    fn list_all_heads(&self) -> Result<Vec<Head>, StorageError>;
 }
 
 /// Index from program to CIDs stored for that program.

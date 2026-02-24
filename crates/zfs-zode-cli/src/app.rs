@@ -93,14 +93,14 @@ impl<'z> App<'z> {
 
     /// Refresh cached data from the Zode.
     pub async fn refresh(&mut self) {
-        let status = self.zode.status().await;
+        let status = self.zode.status();
         self.storage_stats = Some(status.storage.clone());
         self.metrics = Some(status.metrics.clone());
 
         self.programs = status
             .topics
             .iter()
-            .filter_map(|t| {
+            .filter_map(|t: &String| {
                 let hex = t.strip_prefix("prog/")?;
                 ProgramId::from_hex(hex).ok()
             })
@@ -215,6 +215,18 @@ fn format_log_event(event: &LogEvent) -> String {
             format!("[FETCH {status}] prog={}", &program_id[..8.min(program_id.len())])
         }
         LogEvent::PeerDiscovered(peer) => format!("[DHT] discovered {peer}"),
+        LogEvent::GossipReceived {
+            program_id,
+            cid,
+            accepted,
+        } => {
+            let status = if *accepted { "OK" } else { "DROP" };
+            format!(
+                "[GOSSIP {status}] prog={} cid={}",
+                &program_id[..8.min(program_id.len())],
+                &cid[..8.min(cid.len())]
+            )
+        }
         LogEvent::ShuttingDown => "[SHUTDOWN] Zode shutting down".to_string(),
     }
 }

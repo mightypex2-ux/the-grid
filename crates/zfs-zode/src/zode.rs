@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 use zfs_core::GossipBlock;
-use zfs_net::{NetworkEvent, NetworkService, PeerId};
+use zfs_net::{NetworkEvent, NetworkService, ZodeId};
 use zfs_proof::{NoopVerifier, ProofVerifier};
 use zfs_storage::{RocksStorage, StorageBackend, StorageStats};
 
@@ -45,11 +45,11 @@ pub enum LogEvent {
 /// Status snapshot of the running Zode.
 #[derive(Debug, Clone)]
 pub struct ZodeStatus {
-    /// The local peer ID.
-    pub peer_id: String,
-    /// Number of connected peers.
+    /// The local Zode ID.
+    pub zode_id: String,
+    /// Number of connected Zodes.
     pub peer_count: u64,
-    /// Connected peer IDs.
+    /// Connected Zode IDs.
     pub connected_peers: Vec<String>,
     /// Subscribed program topics.
     pub topics: Vec<String>,
@@ -59,7 +59,7 @@ pub struct ZodeStatus {
     pub metrics: MetricsSnapshot,
 }
 
-/// The Zode node — ties together storage, network, proof, and programs.
+/// The Zode — ties together storage, network, proof, and programs.
 ///
 /// Created via [`Zode::start`]. The event loop runs in a background tokio
 /// task; the caller interacts via [`status`](Zode::status),
@@ -69,7 +69,7 @@ pub struct Zode {
     metrics: Arc<ZodeMetrics>,
     storage: Arc<RocksStorage>,
     network: Arc<Mutex<NetworkService>>,
-    peer_id: PeerId,
+    zode_id: ZodeId,
     topics: Vec<String>,
     connected_peers: Arc<RwLock<Vec<String>>>,
     event_tx: broadcast::Sender<LogEvent>,
@@ -78,7 +78,7 @@ pub struct Zode {
 }
 
 impl Zode {
-    /// Start the Zode node with the given configuration.
+    /// Start the Zode with the given configuration.
     ///
     /// Opens storage, starts the network, subscribes to topics, and begins
     /// the event loop in a background task.
@@ -91,36 +91,19 @@ impl Zode {
         config: ZodeConfig,
         verifier: Arc<dyn ProofVerifier>,
     ) -> Result<Self, ZodeError> {
-        // 1. Open storage
         let storage =
             Arc::new(RocksStorage::open(config.storage.clone()).map_err(ZodeError::Storage)?);
         info!(path = ?config.storage.path, "storage opened");
 
-        // 2. Start network
-        let mut network = NetworkService::new(config.network.clone())
-            .await
-            .map_err(ZodeError::Network)?;
-        let peer_id = *network.local_peer_id();
-        info!(%peer_id, "network started");
+        let (network, zode_id, topic_strings, effective) =
+            Self::start_network(&config).await?;
 
-        // 3. Subscribe to program topics (effective = enabled defaults ∪ explicit topics)
-        let effective = config.effective_topics();
-        let mut topic_strings = Vec::new();
-        for pid in &effective {
-            let topic = zfs_programs::program_topic(pid);
-            network.subscribe(&topic).map_err(ZodeError::Network)?;
-            topic_strings.push(topic);
-            debug!(program_id = %pid.to_hex(), "subscribed to topic");
-        }
-
-        // 4. Set up event broadcasting, shutdown, and publish channels
         let (event_tx, _) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let (publish_tx, publish_rx) = mpsc::channel(64);
         let metrics = Arc::new(ZodeMetrics::default());
         let connected_peers: Arc<RwLock<Vec<String>>> = Arc::default();
 
-        // Update initial DB size metric
         if let Ok(stats) = storage.stats() {
             metrics.set_db_size(stats.db_size_bytes);
         }
@@ -135,36 +118,78 @@ impl Zode {
         );
 
         let network = Arc::new(Mutex::new(network));
-
-        // 5. Spawn the event loop
-        let event_loop_tx = event_tx.clone();
-        let event_loop_net = Arc::clone(&network);
-        let event_loop_metrics = Arc::clone(&metrics);
-        let event_loop_peers = Arc::clone(&connected_peers);
-        tokio::spawn(async move {
-            Self::event_loop(
-                handler,
-                event_loop_net,
-                event_loop_tx,
-                event_loop_metrics,
-                event_loop_peers,
-                shutdown_rx,
-                publish_rx,
-            )
-            .await;
-        });
+        Self::spawn_event_loop(
+            handler,
+            Arc::clone(&network),
+            event_tx.clone(),
+            Arc::clone(&metrics),
+            Arc::clone(&connected_peers),
+            shutdown_rx,
+            publish_rx,
+        );
 
         Ok(Self {
             metrics,
             storage,
             network,
-            peer_id,
+            zode_id,
             topics: topic_strings,
             connected_peers,
             event_tx,
             shutdown_tx,
             publish_tx,
         })
+    }
+
+    async fn start_network(
+        config: &ZodeConfig,
+    ) -> Result<
+        (
+            NetworkService,
+            ZodeId,
+            Vec<String>,
+            std::collections::HashSet<zfs_core::ProgramId>,
+        ),
+        ZodeError,
+    > {
+        let mut network = NetworkService::new(config.network.clone())
+            .await
+            .map_err(ZodeError::Network)?;
+        let zode_id = *network.local_zode_id();
+        info!(%zode_id, "network started");
+
+        let effective = config.effective_topics();
+        let mut topic_strings = Vec::new();
+        for pid in &effective {
+            let topic = zfs_programs::program_topic(pid);
+            network.subscribe(&topic).map_err(ZodeError::Network)?;
+            topic_strings.push(topic);
+            debug!(program_id = %pid.to_hex(), "subscribed to topic");
+        }
+        Ok((network, zode_id, topic_strings, effective))
+    }
+
+    fn spawn_event_loop<S: StorageBackend + Send + Sync + 'static>(
+        handler: RequestHandler<S>,
+        network: Arc<Mutex<NetworkService>>,
+        event_tx: broadcast::Sender<LogEvent>,
+        metrics: Arc<ZodeMetrics>,
+        connected_peers: Arc<RwLock<Vec<String>>>,
+        shutdown_rx: mpsc::Receiver<()>,
+        publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+    ) {
+        tokio::spawn(async move {
+            Self::event_loop(
+                handler,
+                network,
+                event_tx,
+                metrics,
+                connected_peers,
+                shutdown_rx,
+                publish_rx,
+            )
+            .await;
+        });
     }
 
     /// Get a status snapshot of the running Zode (lock-free, never blocks).
@@ -178,7 +203,7 @@ impl Zode {
             .unwrap_or_default();
         let peer_count = connected_peers.len() as u64;
         ZodeStatus {
-            peer_id: self.peer_id.to_string(),
+            zode_id: self.zode_id.to_string(),
             peer_count,
             connected_peers,
             topics: self.topics.clone(),
@@ -237,9 +262,6 @@ impl Zode {
         mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
     ) {
         loop {
-            // Hold the network lock only while polling for the next event
-            // AND for any queued publishes, so callers never need to
-            // contend for the lock.
             let event = {
                 let mut net = network.lock().await;
                 tokio::select! {
@@ -262,106 +284,164 @@ impl Zode {
                 return;
             };
 
-            match event {
-                NetworkEvent::PeerConnected(peer) => {
-                    metrics.inc_peer_count();
-                    let peer_str = peer.to_string();
-                    if let Ok(mut peers) = connected_peers.write() {
-                        if !peers.contains(&peer_str) {
-                            peers.push(peer_str.clone());
-                        }
-                    }
-                    debug!(%peer, "peer connected");
-                    let _ = event_tx.send(LogEvent::PeerConnected(peer_str));
-                }
-                NetworkEvent::PeerDisconnected(peer) => {
-                    metrics.dec_peer_count();
-                    let peer_str = peer.to_string();
-                    if let Ok(mut peers) = connected_peers.write() {
-                        peers.retain(|p| p != &peer_str);
-                    }
-                    debug!(%peer, "peer disconnected");
-                    let _ = event_tx.send(LogEvent::PeerDisconnected(peer_str));
-                }
-                NetworkEvent::IncomingStore {
-                    peer,
-                    request,
-                    channel,
-                } => {
-                    let program_hex = request.program_id.to_hex();
-                    let cid_hex = request.cid.to_hex();
-                    debug!(%peer, program = %program_hex, cid = %cid_hex, "incoming store");
+            Self::dispatch_event(
+                event,
+                &handler,
+                &network,
+                &event_tx,
+                &metrics,
+                &connected_peers,
+            )
+            .await;
+        }
+    }
 
-                    let response = handler.handle_store(&request);
-                    let accepted = response.ok;
-                    let reason = response.error_code.map(|c| c.to_string());
+    async fn dispatch_event<S: StorageBackend>(
+        event: NetworkEvent,
+        handler: &RequestHandler<S>,
+        network: &Arc<Mutex<NetworkService>>,
+        event_tx: &broadcast::Sender<LogEvent>,
+        metrics: &Arc<ZodeMetrics>,
+        connected_peers: &Arc<RwLock<Vec<String>>>,
+    ) {
+        match event {
+            NetworkEvent::PeerConnected(peer) => {
+                Self::handle_peer_connected(peer, metrics, connected_peers, event_tx);
+            }
+            NetworkEvent::PeerDisconnected(peer) => {
+                Self::handle_peer_disconnected(peer, metrics, connected_peers, event_tx);
+            }
+            NetworkEvent::IncomingStore { peer, request, channel } => {
+                Self::handle_incoming_store(handler, network, event_tx, peer, request, channel)
+                    .await;
+            }
+            NetworkEvent::IncomingFetch { peer, request, channel } => {
+                Self::handle_incoming_fetch(handler, network, event_tx, peer, request, channel)
+                    .await;
+            }
+            NetworkEvent::ListenAddress(addr) => {
+                info!(%addr, "listening");
+                let _ = event_tx.send(LogEvent::Started { listen_addr: addr.to_string() });
+            }
+            NetworkEvent::GossipMessage { topic, data, .. } => {
+                Self::handle_gossip_message(handler, event_tx, &topic, &data);
+            }
+            NetworkEvent::PeerDiscovered { zode_id, addresses, .. } => {
+                debug!(%zode_id, addr_count = addresses.len(), "zode discovered via DHT");
+                let _ = event_tx.send(LogEvent::PeerDiscovered(zode_id.to_string()));
+            }
+            NetworkEvent::StoreResult { .. }
+            | NetworkEvent::FetchResult { .. }
+            | NetworkEvent::OutboundFailure { .. } => {}
+        }
+    }
 
-                    let _ = event_tx.send(LogEvent::StoreProcessed {
-                        program_id: program_hex,
-                        cid: cid_hex,
-                        accepted,
-                        reason,
-                    });
+    fn handle_peer_connected(
+        peer: ZodeId,
+        metrics: &Arc<ZodeMetrics>,
+        connected_peers: &Arc<RwLock<Vec<String>>>,
+        event_tx: &broadcast::Sender<LogEvent>,
+    ) {
+        metrics.inc_peer_count();
+        let peer_str = peer.to_string();
+        if let Ok(mut peers) = connected_peers.write() {
+            if !peers.contains(&peer_str) {
+                peers.push(peer_str.clone());
+            }
+        }
+        debug!(%peer, "peer connected");
+        let _ = event_tx.send(LogEvent::PeerConnected(peer_str));
+    }
 
-                    let mut net = network.lock().await;
-                    if let Err(e) = net.send_store_response(channel, response) {
-                        error!(error = %e, "failed to send store response");
-                    }
-                }
-                NetworkEvent::IncomingFetch {
-                    peer,
-                    request,
-                    channel,
-                } => {
-                    let program_hex = request.program_id.to_hex();
-                    debug!(%peer, program = %program_hex, "incoming fetch");
+    fn handle_peer_disconnected(
+        peer: ZodeId,
+        metrics: &Arc<ZodeMetrics>,
+        connected_peers: &Arc<RwLock<Vec<String>>>,
+        event_tx: &broadcast::Sender<LogEvent>,
+    ) {
+        metrics.dec_peer_count();
+        let peer_str = peer.to_string();
+        if let Ok(mut peers) = connected_peers.write() {
+            peers.retain(|p| p != &peer_str);
+        }
+        debug!(%peer, "peer disconnected");
+        let _ = event_tx.send(LogEvent::PeerDisconnected(peer_str));
+    }
 
-                    let response = handler.handle_fetch(&request);
-                    let found = response.error_code.is_none();
+    async fn handle_incoming_store<S: StorageBackend>(
+        handler: &RequestHandler<S>,
+        network: &Arc<Mutex<NetworkService>>,
+        event_tx: &broadcast::Sender<LogEvent>,
+        peer: ZodeId,
+        request: Box<zfs_core::StoreRequest>,
+        channel: zfs_net::ResponseChannel<zfs_net::ZfsResponse>,
+    ) {
+        let program_hex = request.program_id.to_hex();
+        let cid_hex = request.cid.to_hex();
+        debug!(%peer, program = %program_hex, cid = %cid_hex, "incoming store");
 
-                    let _ = event_tx.send(LogEvent::FetchProcessed {
-                        program_id: program_hex,
-                        found,
-                    });
+        let response = handler.handle_store(&request);
+        let accepted = response.ok;
+        let reason = response.error_code.map(|c| c.to_string());
 
-                    let mut net = network.lock().await;
-                    if let Err(e) = net.send_fetch_response(channel, response) {
-                        error!(error = %e, "failed to send fetch response");
-                    }
-                }
-                NetworkEvent::ListenAddress(addr) => {
-                    info!(%addr, "listening");
-                    let _ = event_tx.send(LogEvent::Started {
-                        listen_addr: addr.to_string(),
-                    });
-                }
-                NetworkEvent::GossipMessage { topic, data, .. } => {
-                    debug!(%topic, bytes = data.len(), "gossip message received");
-                    match zfs_core::decode_canonical::<GossipBlock>(&data) {
-                        Ok(block) => {
-                            let program_id = block.program_id.to_hex();
-                            let cid = block.cid.to_hex();
-                            let accepted = handler.handle_gossip(&block);
-                            let _ = event_tx.send(LogEvent::GossipReceived {
-                                program_id,
-                                cid,
-                                accepted,
-                            });
-                        }
-                        Err(e) => {
-                            debug!(error = %e, "failed to decode gossip block");
-                        }
-                    }
-                }
-                NetworkEvent::PeerDiscovered {
-                    peer_id, addresses, ..
-                } => {
-                    debug!(%peer_id, addr_count = addresses.len(), "peer discovered via DHT");
-                    let _ = event_tx.send(LogEvent::PeerDiscovered(peer_id.to_string()));
-                }
-                NetworkEvent::StoreResult { .. }
-                | NetworkEvent::FetchResult { .. }
-                | NetworkEvent::OutboundFailure { .. } => {}
+        let _ = event_tx.send(LogEvent::StoreProcessed {
+            program_id: program_hex,
+            cid: cid_hex,
+            accepted,
+            reason,
+        });
+
+        let mut net = network.lock().await;
+        if let Err(e) = net.send_store_response(channel, response) {
+            error!(error = %e, "failed to send store response");
+        }
+    }
+
+    async fn handle_incoming_fetch<S: StorageBackend>(
+        handler: &RequestHandler<S>,
+        network: &Arc<Mutex<NetworkService>>,
+        event_tx: &broadcast::Sender<LogEvent>,
+        peer: ZodeId,
+        request: zfs_core::FetchRequest,
+        channel: zfs_net::ResponseChannel<zfs_net::ZfsResponse>,
+    ) {
+        let program_hex = request.program_id.to_hex();
+        debug!(%peer, program = %program_hex, "incoming fetch");
+
+        let response = handler.handle_fetch(&request);
+        let found = response.error_code.is_none();
+
+        let _ = event_tx.send(LogEvent::FetchProcessed {
+            program_id: program_hex,
+            found,
+        });
+
+        let mut net = network.lock().await;
+        if let Err(e) = net.send_fetch_response(channel, response) {
+            error!(error = %e, "failed to send fetch response");
+        }
+    }
+
+    fn handle_gossip_message<S: StorageBackend>(
+        handler: &RequestHandler<S>,
+        event_tx: &broadcast::Sender<LogEvent>,
+        topic: &str,
+        data: &[u8],
+    ) {
+        debug!(%topic, bytes = data.len(), "gossip message received");
+        match zfs_core::decode_canonical::<GossipBlock>(data) {
+            Ok(block) => {
+                let program_id = block.program_id.to_hex();
+                let cid = block.cid.to_hex();
+                let accepted = handler.handle_gossip(&block);
+                let _ = event_tx.send(LogEvent::GossipReceived {
+                    program_id,
+                    cid,
+                    accepted,
+                });
+            }
+            Err(e) => {
+                debug!(error = %e, "failed to decode gossip block");
             }
         }
     }

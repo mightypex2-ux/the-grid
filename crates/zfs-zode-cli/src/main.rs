@@ -21,7 +21,7 @@ use zfs_zode::{DefaultProgramsConfig, Zode, ZodeConfig};
 
 use crate::app::{App, Screen};
 
-/// ZFS Zode CLI — console-only Zode node with TUI.
+/// ZFS Zode CLI — console-only Zode with TUI.
 #[derive(Parser, Debug)]
 #[command(name = "zode-cli", version, about)]
 struct Cli {
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
     let config = build_config(&cli)?;
     let zode = Zode::start(config)
         .await
-        .context("failed to start Zode node")?;
+        .context("failed to start Zode")?;
 
     let result = run_tui(&zode).await;
 

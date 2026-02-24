@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use zfs_net::{Multiaddr, NetworkConfig, NetworkEvent, NetworkService, OutboundRequestId, PeerId};
+use zfs_net::{Multiaddr, NetworkConfig, NetworkEvent, NetworkService, OutboundRequestId, ZodeId};
 
 use crate::error::SdkError;
 
@@ -25,7 +25,7 @@ pub(crate) enum PendingRequest {
 /// and tracks connected peers for upload/fetch operations.
 pub struct Client {
     pub(crate) network: Arc<Mutex<NetworkService>>,
-    pub(crate) peers: Arc<Mutex<Vec<PeerId>>>,
+    pub(crate) peers: Arc<Mutex<Vec<ZodeId>>>,
     pub(crate) pending: Arc<Mutex<HashMap<OutboundRequestId, PendingRequest>>>,
     shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
@@ -58,14 +58,14 @@ impl Client {
         })
     }
 
-    /// Return the list of currently connected peer IDs.
-    pub async fn connected_peers(&self) -> Vec<PeerId> {
+    /// Return the list of currently connected Zode IDs.
+    pub async fn connected_peers(&self) -> Vec<ZodeId> {
         self.peers.lock().await.clone()
     }
 
-    /// The local peer ID.
-    pub async fn local_peer_id(&self) -> PeerId {
-        *self.network.lock().await.local_peer_id()
+    /// The local Zode ID.
+    pub async fn local_zode_id(&self) -> ZodeId {
+        *self.network.lock().await.local_zode_id()
     }
 
     /// Dial a specific address (e.g. a known Zode).
@@ -84,7 +84,7 @@ impl Client {
 
     async fn event_loop(
         network: Arc<Mutex<NetworkService>>,
-        peers: Arc<Mutex<Vec<PeerId>>>,
+        peers: Arc<Mutex<Vec<ZodeId>>>,
         pending: Arc<Mutex<HashMap<OutboundRequestId, PendingRequest>>>,
         mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,
     ) {

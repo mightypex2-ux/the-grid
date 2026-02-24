@@ -38,9 +38,9 @@ pub struct DiscoveryConfig {
 /// Kademlia operating mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KademliaMode {
-    /// This node responds to DHT queries from other peers (long-lived Zodes).
+    /// This Zode responds to DHT queries from other peers (long-lived Zodes).
     Server,
-    /// This node queries the DHT but does not serve routing info (short-lived SDK clients).
+    /// This Zode queries the DHT but does not serve routing info (short-lived SDK clients).
     Client,
 }
 

@@ -8,9 +8,9 @@ The **zfs-zode-cli** crate provides a **console-only** Zode experience: CLI/TUI 
 
 - **Status:** Listening port, peer count, connected peers, topics, storage usage (RocksDB stats from Zode).
 - **Traverse by program:** List programs, CIDs per program, head metadata.
-- **Connected Zodes:** peer_id, address, connection state.
+- **Connected Zodes:** zode_id, address, connection state.
 - **Live data log:** Announce events, StoreRequests, proof results, rejections with reasons.
-- **Zode info:** peer_id, node key fingerprint, storage path, total DB size, limits.
+- **Zode info:** zode_id, node key fingerprint, storage path, total DB size, limits.
 - **Settings:** View and toggle default programs (ZID, Z Chat) on or off (see [06-zode § Default programs](06-zode.md#default-programs)).
 
 ## UI data contracts
@@ -23,7 +23,7 @@ These are the data structures the UI **reads** from the Zode (in-process or RPC)
 | **Program list** | List of program_id (or topic strings) the Zode subscribes to. |
 | **CID list** | Per program_id: list of CIDs (from program index). |
 | **Head metadata** | Per sector_id: Head (sector_id, cid, version, program_id, prev_head_cid, timestamp_ms). |
-| **Peer list** | peer_id, address (multiaddr), connection_state (e.g. connected, dialing). |
+| **Zode list** | zode_id, address (multiaddr), connection_state (e.g. connected, dialing). |
 | **Log events** | Event types: Announce, StoreRequest (cid, program_id), ProofResult (ok/fail), Rejection (reason, code). |
 | **Default programs** | Current enabled/disabled state for each default program (ZID, Z Chat). See [06-zode § Default programs](06-zode.md#default-programs). |
 
@@ -40,7 +40,7 @@ pub struct ZodeStatus {
 }
 
 pub struct PeerInfo {
-    pub peer_id: PeerId,
+    pub zode_id: ZodeId,
     pub address: Option<Multiaddr>,
     pub connection_state: ConnectionState,
 }
@@ -61,7 +61,7 @@ pub enum LogEvent {
 
 - **ZodeStatus:** Returned by Zode for status screen.
 - **Program list / CID list / Head metadata:** From Zode (via storage abstraction or Zode API); UI does not call RocksDB.
-- **Peer list:** From Zode (zfs-net); PeerInfo list.
+- **Zode list:** From Zode (zfs-net); PeerInfo list.
 - **Log events:** Stream or poll from Zode; event types as above.
 
 ## Diagrams (optional)

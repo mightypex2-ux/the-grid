@@ -2,7 +2,7 @@
 name = "zfs-zode"
 version = "0.1.0"
 edition = "2021"
-description = "ZFS Zode node — ties together storage, network, proof, and programs"
+description = "ZFS Zode — ties together storage, network, proof, and programs"
 
 [dependencies]
 zfs-core = { path = "../zfs-core" }

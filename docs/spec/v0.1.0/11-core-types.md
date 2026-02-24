@@ -19,7 +19,7 @@ The `zfs-core` crate provides shared types and identifiers used by storage, prog
 | `Cid` | Content identifier for a sector payload. | See [CID derivation](#cid-derivation). |
 | `SectorId` | Opaque sector identifier (e.g. logical sector in a program). | Canonical bytes (e.g. CBOR) then hex or raw bytes in APIs. |
 | `ProgramId` | Program identity; see [03-programs-and-topics](03-programs-and-topics.md). | `HASH(program_descriptor_canonical)`; 32 bytes, hex-encoded in APIs. |
-| `PeerId` | libp2p peer identity. | libp2p PeerId bytes; no hashing in core. |
+| `ZodeId` | Zode identity on the network (wraps libp2p PeerId). | libp2p PeerId bytes; no hashing in core. |
 
 ### CID derivation
 
@@ -56,7 +56,7 @@ Base descriptor used to derive `ProgramId`. See [03-programs-and-topics](03-prog
 pub struct Cid([u8; 32]);
 pub struct SectorId(Vec<u8>);  // or fixed size per program
 pub struct ProgramId([u8; 32]);
-pub struct PeerId(/* libp2p PeerId */);
+pub type ZodeId = libp2p::PeerId;
 
 impl Cid {
     pub fn from_ciphertext(ciphertext: &[u8]) -> Self;

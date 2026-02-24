@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
-//! ZFS Zode node — ties together storage, network, proof, and programs.
+//! ZFS Zode — ties together storage, network, proof, and programs.
 //!
-//! The Zode is the storage node: it runs libp2p + QUIC via `zfs-net`,
+//! The Zode is the storage Zode: it runs libp2p + QUIC via `zfs-net`,
 //! subscribes to program topics via GossipSub, persists blocks and heads
 //! in RocksDB via `zfs-storage`, verifies proofs when required, and
 //! enforces local storage policy.

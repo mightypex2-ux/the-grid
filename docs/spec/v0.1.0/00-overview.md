@@ -61,3 +61,4 @@ flowchart LR
 | [12-protocol](12-protocol.md) | v1 protocol, wire format, discovery. |
 | [13-mailbox-protocol](13-mailbox-protocol.md) | Metadata-private mailbox protocol. |
 | [14-dht-discovery](14-dht-discovery.md) | Kademlia DHT peer discovery. |
+| [15-network-visualization](15-network-visualization.md) | GPU-accelerated network graph in Zode app. |

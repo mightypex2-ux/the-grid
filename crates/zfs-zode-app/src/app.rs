@@ -1,0 +1,414 @@
+use std::sync::Arc;
+
+use eframe::egui;
+use tokio::runtime::Runtime;
+use tokio::sync::Mutex;
+use zfs_zode::{LogEvent, Zode};
+
+use crate::helpers::format_log_event;
+use crate::settings::Settings;
+use crate::state::{AppState, Tab, MAX_LOG_ENTRIES};
+
+pub(crate) struct ZodeApp {
+    pub rt: Runtime,
+    pub settings: Settings,
+    pub zode: Option<Arc<Zode>>,
+    pub shared: Arc<Mutex<AppState>>,
+    pub tab: Tab,
+    pub settings_error: Option<String>,
+    pub shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    pub chat_state: Option<crate::state::ChatState>,
+    pub visualization: crate::visualization::NetworkVisualization,
+}
+
+impl ZodeApp {
+    pub fn new(rt: Runtime) -> Self {
+        let mut app = Self {
+            rt,
+            settings: Settings::default(),
+            zode: None,
+            shared: Arc::new(Mutex::new(AppState::default())),
+            tab: Tab::Status,
+            settings_error: None,
+            shutdown_tx: None,
+            chat_state: None,
+            visualization: Default::default(),
+        };
+        app.boot_zode();
+        app
+    }
+
+    pub fn boot_zode(&mut self) {
+        let config = match self.settings.build_config() {
+            Ok(c) => c,
+            Err(e) => {
+                self.settings_error = Some(e);
+                return;
+            }
+        };
+        self.settings_error = None;
+        self.stop_zode();
+
+        let shared = Arc::new(Mutex::new(AppState::default()));
+        self.shared = Arc::clone(&shared);
+
+        let start_result = self.rt.block_on(async { Zode::start(config).await });
+        match start_result {
+            Ok(zode) => {
+                let zode = Arc::new(zode);
+                self.zode = Some(Arc::clone(&zode));
+                let (stop_tx, stop_rx) = tokio::sync::mpsc::channel::<()>(1);
+                self.shutdown_tx = Some(stop_tx);
+                Self::spawn_status_poller(&self.rt, &zode, &shared, stop_rx);
+                Self::spawn_log_listener(&self.rt, &zode, &shared);
+            }
+            Err(e) => {
+                self.settings_error = Some(format!("Start failed: {e}"));
+            }
+        }
+    }
+
+    fn spawn_status_poller(
+        rt: &Runtime,
+        zode: &Arc<Zode>,
+        shared: &Arc<Mutex<AppState>>,
+        mut stop_rx: tokio::sync::mpsc::Receiver<()>,
+    ) {
+        let bg_zode = Arc::clone(zode);
+        let bg_shared = Arc::clone(shared);
+        rt.spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = stop_rx.recv() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {}
+                }
+                let status = bg_zode.status();
+                bg_shared.lock().await.status = Some(status);
+            }
+        });
+    }
+
+    fn spawn_log_listener(
+        rt: &Runtime,
+        zode: &Arc<Zode>,
+        shared: &Arc<Mutex<AppState>>,
+    ) {
+        let log_shared = Arc::clone(shared);
+        let mut event_rx = zode.subscribe_events();
+        rt.spawn(async move {
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        let line = format_log_event(&event);
+                        let mut state = log_shared.lock().await;
+                        if let LogEvent::Started { ref listen_addr } = event {
+                            state.listen_addr = Some(listen_addr.clone());
+                        }
+                        match &event {
+                            LogEvent::PeerConnected(id) => {
+                                state.peer_events.push_back(
+                                    crate::state::PeerEvent::Connected(id.clone()),
+                                );
+                            }
+                            LogEvent::PeerDisconnected(id) => {
+                                state.peer_events.push_back(
+                                    crate::state::PeerEvent::Disconnected(id.clone()),
+                                );
+                            }
+                            LogEvent::PeerDiscovered(id) => {
+                                state.peer_events.push_back(
+                                    crate::state::PeerEvent::Discovered(id.clone()),
+                                );
+                            }
+                            _ => {}
+                        }
+                        if state.log_entries.len() >= MAX_LOG_ENTRIES {
+                            state.log_entries.pop_front();
+                        }
+                        state.log_entries.push_back(line);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        let mut state = log_shared.lock().await;
+                        state
+                            .log_entries
+                            .push_back(format!("[WARN] lagged {n} events"));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    pub fn stop_zode(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.try_send(());
+        }
+        if let Some(ref zode) = self.zode {
+            self.rt.block_on(zode.shutdown());
+        }
+        self.zode = None;
+    }
+
+    fn handle_resize_edges(ctx: &egui::Context) -> bool {
+        const BORDER: f32 = 6.0;
+        let screen = ctx.screen_rect();
+        let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else {
+            return false;
+        };
+
+        let left = pos.x - screen.left() < BORDER;
+        let right = screen.right() - pos.x < BORDER;
+        let top = pos.y - screen.top() < BORDER;
+        let bottom = screen.bottom() - pos.y < BORDER;
+
+        use egui::viewport::ResizeDirection;
+        let dir = match (left, right, top, bottom) {
+            (true, _, true, _) => Some(ResizeDirection::NorthWest),
+            (_, true, true, _) => Some(ResizeDirection::NorthEast),
+            (true, _, _, true) => Some(ResizeDirection::SouthWest),
+            (_, true, _, true) => Some(ResizeDirection::SouthEast),
+            (true, _, _, _) => Some(ResizeDirection::West),
+            (_, true, _, _) => Some(ResizeDirection::East),
+            (_, _, true, _) => Some(ResizeDirection::North),
+            (_, _, _, true) => Some(ResizeDirection::South),
+            _ => None,
+        };
+
+        let Some(dir) = dir else { return false };
+
+        let cursor = match dir {
+            ResizeDirection::North | ResizeDirection::South => {
+                egui::CursorIcon::ResizeVertical
+            }
+            ResizeDirection::East | ResizeDirection::West => {
+                egui::CursorIcon::ResizeHorizontal
+            }
+            ResizeDirection::NorthWest | ResizeDirection::SouthEast => {
+                egui::CursorIcon::ResizeNwSe
+            }
+            ResizeDirection::NorthEast | ResizeDirection::SouthWest => {
+                egui::CursorIcon::ResizeNeSw
+            }
+        };
+        ctx.set_cursor_icon(cursor);
+
+        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+        }
+
+        true
+    }
+}
+
+impl eframe::App for ZodeApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let state = self
+            .rt
+            .block_on(async { self.shared.lock().await.snapshot() });
+
+        for event in &state.peer_events {
+            match event {
+                crate::state::PeerEvent::Connected(id) => {
+                    self.visualization.on_peer_connected(id);
+                }
+                crate::state::PeerEvent::Disconnected(id) => {
+                    self.visualization.on_peer_disconnected(id);
+                }
+                crate::state::PeerEvent::Discovered(id) => {
+                    self.visualization.on_peer_discovered(id);
+                }
+            }
+        }
+        if let Some(ref status) = state.status {
+            self.visualization
+                .reconcile(&status.zode_id, &status.connected_peers);
+        }
+
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+
+        let on_resize_edge = if !maximized {
+            Self::handle_resize_edges(ctx)
+        } else {
+            false
+        };
+
+        egui::TopBottomPanel::top("tabs")
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::BLACK)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                    .stroke(egui::Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                let title_bar_rect = ui.max_rect();
+                let title_resp = ui.interact(
+                    title_bar_rect,
+                    egui::Id::new("title_bar"),
+                    egui::Sense::click_and_drag(),
+                );
+                if !on_resize_edge
+                    && title_resp.is_pointer_button_down_on()
+                    && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+                    && !title_resp.double_clicked()
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if title_resp.double_clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(
+                        !maximized,
+                    ));
+                }
+
+                ui.visuals_mut().widgets.active = ui.visuals().widgets.hovered;
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new("Z")
+                                .strong()
+                                .size(18.0)
+                                .color(egui::Color32::WHITE),
+                        )
+                        .selectable(false),
+                    );
+                    ui.add_space(4.0);
+                    ui.selectable_value(&mut self.tab, Tab::Status, "ZODE");
+                    ui.selectable_value(&mut self.tab, Tab::Storage, "STORAGE");
+                    ui.selectable_value(&mut self.tab, Tab::Peers, "PEERS");
+                    ui.selectable_value(&mut self.tab, Tab::Log, "LOG");
+                    ui.selectable_value(&mut self.tab, Tab::Chat, "CHAT");
+                    ui.selectable_value(&mut self.tab, Tab::Info, "INFO");
+
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            let close = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(egui_phosphor::regular::X)
+                                        .size(14.0),
+                                )
+                                .frame(false),
+                            );
+                            if close.clicked() {
+                                ui.ctx()
+                                    .send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+
+                            let maximized =
+                                ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                            let max_icon = if maximized {
+                                egui_phosphor::regular::CORNERS_IN
+                            } else {
+                                egui_phosphor::regular::CORNERS_OUT
+                            };
+                            let max_btn = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(max_icon).size(14.0),
+                                )
+                                .frame(false),
+                            );
+                            if max_btn.clicked() {
+                                ui.ctx().send_viewport_cmd(
+                                    egui::ViewportCommand::Maximized(!maximized),
+                                );
+                            }
+
+                            let min_btn = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(egui_phosphor::regular::MINUS)
+                                        .size(14.0),
+                                )
+                                .frame(false),
+                            );
+                            if min_btn.clicked() {
+                                ui.ctx().send_viewport_cmd(
+                                    egui::ViewportCommand::Minimized(true),
+                                );
+                            }
+
+                            ui.add_space(4.0);
+
+                            let is_settings = self.tab == Tab::Settings;
+                            let font_id = egui::FontId::proportional(16.0);
+                            let icon_str = egui_phosphor::regular::GEAR_SIX;
+                            let galley = ui.fonts(|f| {
+                                f.layout_no_wrap(
+                                    icon_str.to_string(),
+                                    font_id,
+                                    egui::Color32::PLACEHOLDER,
+                                )
+                            });
+                            let bp = ui.spacing().button_padding;
+                            let desired = egui::vec2(
+                                galley.size().x + bp.x * 2.0,
+                                ui.spacing().interact_size.y,
+                            );
+                            let (rect, resp) =
+                                ui.allocate_exact_size(desired, egui::Sense::click());
+                            if resp.clicked() {
+                                self.tab = Tab::Settings;
+                            }
+                            let vis =
+                                ui.style().interact_selectable(&resp, is_settings);
+                            if is_settings || resp.hovered() {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    vis.rounding,
+                                    vis.bg_fill,
+                                );
+                            }
+                            let galley = ui.fonts(|f| {
+                                f.layout_no_wrap(
+                                    icon_str.to_string(),
+                                    egui::FontId::proportional(16.0),
+                                    vis.text_color(),
+                                )
+                            });
+                            let text_pos =
+                                rect.center() - galley.size() / 2.0;
+                            ui.painter().galley(
+                                text_pos,
+                                galley,
+                                vis.text_color(),
+                            );
+                        },
+                    );
+                });
+            });
+
+        let central_frame = egui::Frame::default()
+            .fill(egui::Color32::BLACK)
+            .inner_margin(egui::Margin {
+                left: 8.0,
+                right: 8.0,
+                top: 8.0,
+                bottom: 0.0,
+            });
+
+        egui::CentralPanel::default()
+            .frame(central_frame)
+            .show(ctx, |ui| match self.tab {
+            Tab::Status => crate::render::render_status(self, ui, &state),
+            Tab::Storage => crate::render::render_storage(self, ui, &state),
+            Tab::Peers => crate::render::render_peers(self, ui, &state),
+            Tab::Log => crate::render::render_log(ui, &state),
+            Tab::Chat => crate::chat::render_chat(self, ui),
+            Tab::Info => crate::render::render_info(self, ui, &state),
+            Tab::Settings => crate::render::render_settings(self, ui),
+        });
+
+        if !maximized {
+            let fg = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("window_border"),
+            ));
+            fg.rect_stroke(
+                ctx.screen_rect(),
+                0.0,
+                egui::Stroke::new(1.0, crate::components::colors::BORDER),
+            );
+        }
+
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+}

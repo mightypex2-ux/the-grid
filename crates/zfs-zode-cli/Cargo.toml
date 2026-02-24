@@ -2,7 +2,7 @@
 name = "zfs-zode-cli"
 version = "0.1.0"
 edition = "2021"
-description = "ZFS Zode CLI/TUI — console interface for the Zode storage node"
+description = "ZFS Zode CLI/TUI — console interface for the Zode"
 
 [[bin]]
 name = "zode-cli"

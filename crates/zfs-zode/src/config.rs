@@ -46,7 +46,7 @@ impl DefaultProgramsConfig {
     }
 }
 
-/// Full Zode node configuration.
+/// Full Zode configuration.
 #[derive(Debug, Clone)]
 pub struct ZodeConfig {
     /// RocksDB storage configuration.

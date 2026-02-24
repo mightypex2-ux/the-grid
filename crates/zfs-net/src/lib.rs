@@ -39,4 +39,7 @@ pub use service::NetworkService;
 // Re-export libp2p types that appear in the public API so consumers
 // do not need a direct libp2p dependency.
 pub use libp2p::request_response::{OutboundRequestId, ResponseChannel};
-pub use libp2p::{Multiaddr, PeerId};
+pub use libp2p::Multiaddr;
+
+/// A Zode's identity on the network (wraps libp2p `PeerId`).
+pub type ZodeId = libp2p::PeerId;

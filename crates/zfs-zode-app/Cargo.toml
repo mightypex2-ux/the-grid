@@ -2,7 +2,7 @@
 name = "zfs-zode-app"
 version = "0.1.0"
 edition = "2021"
-description = "ZFS Zode App — standalone desktop GUI for the Zode storage node"
+description = "ZFS Zode App — standalone desktop GUI for the Zode"
 
 [[bin]]
 name = "zode-app"
@@ -17,6 +17,7 @@ zfs-net = { path = "../zfs-net" }
 zfs-crypto = { path = "../zfs-crypto" }
 zero-neural = { path = "../zero-neural" }
 eframe = "0.30"
+egui-phosphor = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

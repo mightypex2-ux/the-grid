@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Errors from the Zode node.
+/// Errors from the Zode.
 #[derive(Debug, Error)]
 pub enum ZodeError {
     #[error("storage error: {0}")]

@@ -17,7 +17,7 @@ This document specifies **Kademlia DHT-based peer discovery** for `zfs-net`, ena
 | D-3 | On startup, if bootstrap peers are configured, add them to the Kademlia routing table and trigger an initial bootstrap (`kad::Behaviour::bootstrap()`). |
 | D-4 | Perform periodic random walks (`kad::Behaviour::get_closest_peers(random_key)`) to keep the routing table populated and discover new peers joining the network. |
 | D-5 | DHT discovery must be **opt-in** via `NetworkConfig`. Existing bootstrap-only behaviour must remain the default for backward compatibility. |
-| D-6 | Expose a `NetworkEvent::PeerDiscovered { peer_id, addresses }` event so `zfs-zode` and `zfs-sdk` can observe newly discovered peers. |
+| D-6 | Expose a `NetworkEvent::PeerDiscovered { zode_id, addresses }` event so `zfs-zode` and `zfs-sdk` can observe newly discovered Zodes. |
 | D-7 | Newly discovered peers must be automatically dialed so that GossipSub and request-response can operate over the expanded peer set. |
 
 ### Should
@@ -125,8 +125,8 @@ This forces the node to query its routing table, contact known peers, and learn 
 
 When Kademlia reports a discovered peer (via `KademliaEvent::RoutingUpdated` or query results):
 
-1. Emit `NetworkEvent::PeerDiscovered { peer_id, addresses }`.
-2. If the peer is not already connected, dial it (subject to `max_concurrent_discovery_dials` limit).
+1. Emit `NetworkEvent::PeerDiscovered { zode_id, addresses }`.
+2. If the Zode is not already connected, dial it (subject to `max_concurrent_discovery_dials` limit).
 3. Once connected, GossipSub and request-response automatically work with the new peer.
 
 ### Event mapping
@@ -146,9 +146,9 @@ New swarm events to handle in `NetworkService::next_event`:
 pub enum NetworkEvent {
     // ... existing variants ...
 
-    /// A new peer was discovered via DHT or mDNS (not yet necessarily connected).
+    /// A new Zode was discovered via DHT or mDNS (not yet necessarily connected).
     PeerDiscovered {
-        peer_id: PeerId,
+        zode_id: ZodeId,
         addresses: Vec<Multiaddr>,
     },
 }
@@ -165,13 +165,13 @@ pub enum NetworkEvent {
 ### zfs-sdk
 
 - **`SdkConfig`**: No changes required; inherits `NetworkConfig` expansion.
-- **Client event loop**: Handle `PeerDiscovered` — discovered Zodes can be added to the peer list for upload/fetch.
+- **Client event loop**: Handle `PeerDiscovered` — discovered Zodes can be added to the zode list for upload/fetch.
 - **Client mode Kademlia**: SDK clients should default to `KademliaMode::Client` so they don't serve as DHT routers.
 
 ### zfs-zode-cli / zfs-zode-app
 
 - Display "Known peers" (routing table size) in addition to "Connected peers" in Status/Peers screens.
-- Show `[DHT] discovered <peer_id>` events in the live log.
+- Show `[DHT] discovered <zode_id>` events in the live log.
 - Settings: add a toggle for enabling Kademlia discovery.
 
 ## Diagrams

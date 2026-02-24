@@ -3,7 +3,7 @@ use zero_neural::{ed25519_to_did_key, MachineKeyPair};
 use zfs_core::{
     Cid, ErrorCode, FetchRequest, FetchResponse, Head, ProgramId, SectorId, StoreRequest,
 };
-use zfs_net::PeerId;
+use zfs_net::ZodeId;
 
 use crate::client::{Client, PendingRequest};
 use crate::error::SdkError;
@@ -17,7 +17,7 @@ pub struct StoreResult {
     pub successes: usize,
     /// Number of Zodes targeted (replication factor).
     pub replication_factor: usize,
-    /// Per-peer results (peer_id, ok, error_code).
+    /// Per-Zode results (zode_id, ok, error_code).
     pub peer_results: Vec<(String, bool, Option<ErrorCode>)>,
 }
 
@@ -44,64 +44,11 @@ pub async fn upload(
     replication_factor: usize,
 ) -> Result<StoreResult, SdkError> {
     let cid = Cid::from_ciphertext(ciphertext);
-    let machine_did = ed25519_to_did_key(&machine_key.public_key().ed25519_bytes());
+    let request = build_store_request(machine_key, program_id, &cid, ciphertext, head, proof);
 
-    let sign_payload = build_store_sign_payload(program_id, &cid, ciphertext);
-    let signature = machine_key.sign(&sign_payload);
-
-    let request = StoreRequest {
-        program_id: *program_id,
-        cid,
-        ciphertext: ciphertext.to_vec(),
-        head: head.cloned(),
-        proof: proof.map(|p| p.to_vec()),
-        key_envelope: None,
-        machine_did,
-        signature,
-    };
-
-    let peers = client.connected_peers().await;
-    if peers.is_empty() {
-        return Err(SdkError::NoPeers);
-    }
-
-    let target_count = replication_factor.min(peers.len());
-    let targets: Vec<PeerId> = peers.into_iter().take(target_count).collect();
-
-    let mut receivers = Vec::with_capacity(target_count);
-
-    for peer in &targets {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let request_id = {
-            let mut net = client.network.lock().await;
-            net.send_store(peer, request.clone())
-        };
-        {
-            let mut pending = client.pending.lock().await;
-            pending.insert(request_id, PendingRequest::Store(tx));
-        }
-        receivers.push((*peer, rx));
-    }
-
-    let mut peer_results = Vec::with_capacity(target_count);
-    let mut successes = 0usize;
-
-    for (peer, rx) in receivers {
-        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
-            Ok(Ok(resp)) => {
-                if resp.ok {
-                    successes += 1;
-                }
-                peer_results.push((peer.to_string(), resp.ok, resp.error_code));
-            }
-            Ok(Err(_)) => {
-                peer_results.push((peer.to_string(), false, None));
-            }
-            Err(_) => {
-                peer_results.push((peer.to_string(), false, None));
-            }
-        }
-    }
+    let targets = select_targets(client, replication_factor).await?;
+    let receivers = send_to_peers(client, &request, &targets).await;
+    let (peer_results, successes) = collect_peer_results(receivers).await;
 
     if successes == 0 {
         return Err(SdkError::InsufficientReplication {
@@ -116,6 +63,83 @@ pub async fn upload(
         replication_factor,
         peer_results,
     })
+}
+
+fn build_store_request(
+    machine_key: &MachineKeyPair,
+    program_id: &ProgramId,
+    cid: &Cid,
+    ciphertext: &[u8],
+    head: Option<&Head>,
+    proof: Option<&[u8]>,
+) -> StoreRequest {
+    let machine_did = ed25519_to_did_key(&machine_key.public_key().ed25519_bytes());
+    let sign_payload = build_store_sign_payload(program_id, cid, ciphertext);
+    let signature = machine_key.sign(&sign_payload);
+    StoreRequest {
+        program_id: *program_id,
+        cid: *cid,
+        ciphertext: ciphertext.to_vec(),
+        head: head.cloned(),
+        proof: proof.map(|p| p.to_vec()),
+        key_envelope: None,
+        machine_did,
+        signature,
+    }
+}
+
+async fn select_targets(
+    client: &Client,
+    replication_factor: usize,
+) -> Result<Vec<ZodeId>, SdkError> {
+    let peers = client.connected_peers().await;
+    if peers.is_empty() {
+        return Err(SdkError::NoPeers);
+    }
+    let count = replication_factor.min(peers.len());
+    Ok(peers.into_iter().take(count).collect())
+}
+
+async fn send_to_peers(
+    client: &Client,
+    request: &StoreRequest,
+    targets: &[ZodeId],
+) -> Vec<(ZodeId, tokio::sync::oneshot::Receiver<zfs_core::StoreResponse>)> {
+    let mut receivers = Vec::with_capacity(targets.len());
+    for peer in targets {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let request_id = {
+            let mut net = client.network.lock().await;
+            net.send_store(peer, request.clone())
+        };
+        {
+            let mut pending = client.pending.lock().await;
+            pending.insert(request_id, PendingRequest::Store(tx));
+        }
+        receivers.push((*peer, rx));
+    }
+    receivers
+}
+
+async fn collect_peer_results(
+    receivers: Vec<(ZodeId, tokio::sync::oneshot::Receiver<zfs_core::StoreResponse>)>,
+) -> (Vec<(String, bool, Option<ErrorCode>)>, usize) {
+    let mut peer_results = Vec::with_capacity(receivers.len());
+    let mut successes = 0usize;
+    for (peer, rx) in receivers {
+        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(resp)) => {
+                if resp.ok {
+                    successes += 1;
+                }
+                peer_results.push((peer.to_string(), resp.ok, resp.error_code));
+            }
+            Ok(Err(_)) | Err(_) => {
+                peer_results.push((peer.to_string(), false, None));
+            }
+        }
+    }
+    (peer_results, successes)
 }
 
 /// Fetch ciphertext by CID from a connected Zode.

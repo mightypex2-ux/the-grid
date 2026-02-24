@@ -43,62 +43,8 @@ impl NetworkService {
         let max_discovery_dials = config.discovery.max_concurrent_discovery_dials;
         let kademlia_mode = config.discovery.kademlia_mode;
 
-        let message_id_fn = |message: &gossipsub::Message| {
-            let mut s = DefaultHasher::new();
-            message.data.hash(&mut s);
-            gossipsub::MessageId::from(s.finish().to_string())
-        };
+        let mut swarm = build_swarm()?;
 
-        let gossipsub_config = gossipsub::ConfigBuilder::default()
-            .heartbeat_interval(Duration::from_secs(10))
-            .validation_mode(gossipsub::ValidationMode::Permissive)
-            .message_id_fn(message_id_fn)
-            .build()
-            .map_err(|e| NetworkError::Config(format!("{e}")))?;
-
-        let mut swarm = libp2p::SwarmBuilder::with_new_identity()
-            .with_tokio()
-            .with_tcp(
-                libp2p::tcp::Config::default(),
-                libp2p::noise::Config::new,
-                libp2p::yamux::Config::default,
-            )
-            .map_err(|e| NetworkError::Transport(format!("{e}")))?
-            .with_quic()
-            .with_behaviour(|key| {
-                let gossipsub = gossipsub::Behaviour::new(
-                    gossipsub::MessageAuthenticity::Signed(key.clone()),
-                    gossipsub_config,
-                )?;
-
-                let request_response = request_response::cbor::Behaviour::new(
-                    [(
-                        StreamProtocol::new(ZFS_PROTOCOL),
-                        request_response::ProtocolSupport::Full,
-                    )],
-                    request_response::Config::default(),
-                );
-
-                let peer_id = key.public().to_peer_id();
-                let mut kad_config = kad::Config::new(
-                    StreamProtocol::try_from_owned(ZFS_KAD_PROTOCOL.to_string())
-                        .expect("valid protocol name"),
-                );
-                kad_config.set_query_timeout(Duration::from_secs(60));
-
-                let store = kad::store::MemoryStore::new(peer_id);
-                let kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
-
-                Ok(ZfsBehaviour {
-                    gossipsub,
-                    request_response,
-                    kademlia,
-                })
-            })
-            .map_err(|e| NetworkError::Transport(format!("{e}")))?
-            .build();
-
-        // Set Kademlia mode
         if kademlia_enabled {
             let mode = match kademlia_mode {
                 KademliaMode::Server => kad::Mode::Server,
@@ -111,24 +57,8 @@ impl NetworkService {
             .listen_on(config.listen_addr)
             .map_err(|e| NetworkError::Transport(e.to_string()))?;
 
-        // Add bootstrap peers to Kademlia routing table and dial them.
-        for peer_addr in &config.bootstrap_peers {
-            if kademlia_enabled {
-                if let Some(peer_id) = extract_peer_id(peer_addr) {
-                    swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .add_address(&peer_id, peer_addr.clone());
-                    debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
-                }
-            }
+        dial_bootstrap_peers(&mut swarm, &config.bootstrap_peers, kademlia_enabled)?;
 
-            swarm
-                .dial(peer_addr.clone())
-                .map_err(|e| NetworkError::Dial(e.to_string()))?;
-        }
-
-        // Trigger initial Kademlia bootstrap to populate routing table.
         if kademlia_enabled {
             if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
                 debug!("kademlia bootstrap not started (need at least one peer): {e:?}");
@@ -145,8 +75,8 @@ impl NetworkService {
         })
     }
 
-    /// The local peer ID of this node.
-    pub fn local_peer_id(&self) -> &PeerId {
+    /// The local Zode ID.
+    pub fn local_zode_id(&self) -> &PeerId {
         self.swarm.local_peer_id()
     }
 
@@ -254,44 +184,8 @@ impl NetworkService {
         loop {
             tokio::select! {
                 event = self.swarm.select_next_some() => {
-                    match event {
-                        SwarmEvent::Behaviour(event) => {
-                            if let Some(net_event) = self.map_behaviour_event(event) {
-                                return Some(net_event);
-                            }
-                        }
-                        SwarmEvent::ConnectionEstablished { peer_id, num_established, endpoint, .. } => {
-                            if self.pending_discovery_dials > 0 {
-                                self.pending_discovery_dials -= 1;
-                            }
-                            debug!(%peer_id, num = %num_established, "connection established");
-
-                            if self.kademlia_enabled {
-                                let addr = endpoint.get_remote_address().clone();
-                                self.swarm
-                                    .behaviour_mut()
-                                    .kademlia
-                                    .add_address(&peer_id, addr);
-                            }
-
-                            if num_established.get() == 1 {
-                                return Some(NetworkEvent::PeerConnected(peer_id));
-                            }
-                        }
-                        SwarmEvent::ConnectionClosed { peer_id, num_established, .. } => {
-                            if self.pending_discovery_dials > 0 {
-                                self.pending_discovery_dials -= 1;
-                            }
-                            debug!(%peer_id, num = %num_established, "connection closed");
-                            if num_established == 0 {
-                                return Some(NetworkEvent::PeerDisconnected(peer_id));
-                            }
-                        }
-                        SwarmEvent::NewListenAddr { address, .. } => {
-                            info!(%address, "listening");
-                            return Some(NetworkEvent::ListenAddress(address));
-                        }
-                        _ => {}
+                    if let Some(net_event) = self.handle_swarm_event(event) {
+                        return Some(net_event);
                     }
                 }
                 () = &mut sleep, if self.kademlia_enabled => {
@@ -299,6 +193,50 @@ impl NetworkService {
                     sleep.as_mut().reset(tokio::time::Instant::now() + self.random_walk_interval);
                 }
             }
+        }
+    }
+
+    fn handle_swarm_event(
+        &mut self,
+        event: SwarmEvent<ZfsBehaviourEvent>,
+    ) -> Option<NetworkEvent> {
+        match event {
+            SwarmEvent::Behaviour(event) => self.map_behaviour_event(event),
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                num_established,
+                endpoint,
+                ..
+            } => {
+                if self.pending_discovery_dials > 0 {
+                    self.pending_discovery_dials -= 1;
+                }
+                debug!(%peer_id, num = %num_established, "connection established");
+                if self.kademlia_enabled {
+                    let addr = endpoint.get_remote_address().clone();
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, addr);
+                }
+                (num_established.get() == 1).then(|| NetworkEvent::PeerConnected(peer_id))
+            }
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            } => {
+                if self.pending_discovery_dials > 0 {
+                    self.pending_discovery_dials -= 1;
+                }
+                debug!(%peer_id, num = %num_established, "connection closed");
+                (num_established == 0).then(|| NetworkEvent::PeerDisconnected(peer_id))
+            }
+            SwarmEvent::NewListenAddr { address, .. } => {
+                info!(%address, "listening");
+                Some(NetworkEvent::ListenAddress(address))
+            }
+            _ => None,
         }
     }
 
@@ -345,21 +283,32 @@ impl NetworkService {
 
     fn map_behaviour_event(&mut self, event: ZfsBehaviourEvent) -> Option<NetworkEvent> {
         match event {
-            ZfsBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+            ZfsBehaviourEvent::Gossipsub(ev) => Self::map_gossip_event(ev),
+            ZfsBehaviourEvent::RequestResponse(ev) => Self::map_reqresp_event(ev),
+            ZfsBehaviourEvent::Kademlia(ev) => self.map_kademlia_event(ev),
+        }
+    }
+
+    fn map_gossip_event(event: gossipsub::Event) -> Option<NetworkEvent> {
+        match event {
+            gossipsub::Event::Message {
                 propagation_source,
                 message,
                 ..
-            }) => Some(NetworkEvent::GossipMessage {
+            } => Some(NetworkEvent::GossipMessage {
                 source: message.source.or(Some(propagation_source)),
                 topic: message.topic.to_string(),
                 data: message.data,
             }),
+            _ => None,
+        }
+    }
 
-            ZfsBehaviourEvent::RequestResponse(request_response::Event::Message {
-                peer,
-                message,
-                ..
-            }) => match message {
+    fn map_reqresp_event(
+        event: request_response::Event<ZfsRequest, ZfsResponse>,
+    ) -> Option<NetworkEvent> {
+        match event {
+            request_response::Event::Message { peer, message, .. } => match message {
                 request_response::Message::Request {
                     request, channel, ..
                 } => match request {
@@ -390,82 +339,157 @@ impl NetworkService {
                     }),
                 },
             },
-
-            ZfsBehaviourEvent::RequestResponse(request_response::Event::OutboundFailure {
+            request_response::Event::OutboundFailure {
                 peer,
                 request_id,
                 error,
                 ..
-            }) => Some(NetworkEvent::OutboundFailure {
+            } => Some(NetworkEvent::OutboundFailure {
                 peer,
                 request_id,
                 error: error.to_string(),
             }),
+            _ => None,
+        }
+    }
 
-            // Kademlia: routing table updated with a new or refreshed peer.
-            ZfsBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
+    fn map_kademlia_event(&mut self, event: kad::Event) -> Option<NetworkEvent> {
+        match event {
+            kad::Event::RoutingUpdated {
                 peer, addresses, ..
-            }) => {
+            } => {
                 let addrs: Vec<Multiaddr> = addresses.iter().cloned().collect();
-                let is_new = self.discovered_peers.insert(peer);
-
-                if is_new {
+                if self.discovered_peers.insert(peer) {
                     self.try_discovery_dial(&peer, &addrs);
                     Some(NetworkEvent::PeerDiscovered {
-                        peer_id: peer,
+                        zode_id: peer,
                         addresses: addrs,
                     })
                 } else {
                     None
                 }
             }
-
-            // Kademlia: GetClosestPeers query completed — discover new peers.
-            ZfsBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
+            kad::Event::OutboundQueryProgressed {
                 result: kad::QueryResult::GetClosestPeers(Ok(ok)),
                 ..
-            }) => {
-                let mut first_new_peer = None;
-                for peer in &ok.peers {
-                    let peer_id = peer.peer_id;
-                    if self.discovered_peers.insert(peer_id) {
-                        let addrs: Vec<Multiaddr> = peer.addrs.clone();
-                        self.try_discovery_dial(&peer_id, &addrs);
-                        if first_new_peer.is_none() {
-                            first_new_peer = Some(NetworkEvent::PeerDiscovered {
-                                peer_id,
-                                addresses: addrs,
-                            });
-                        }
-                    }
-                }
-                first_new_peer
-            }
-
-            // Kademlia: bootstrap completed.
-            ZfsBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
+            } => self.handle_closest_peers(ok),
+            kad::Event::OutboundQueryProgressed {
                 result: kad::QueryResult::Bootstrap(Ok(result)),
                 ..
-            }) => {
-                debug!(
-                    num_remaining = result.num_remaining,
-                    "kademlia bootstrap progressed"
-                );
+            } => {
+                debug!(num_remaining = result.num_remaining, "kademlia bootstrap progressed");
                 None
             }
-
-            // Kademlia: catch-all for other events.
-            ZfsBehaviourEvent::Kademlia(event) => {
-                debug!(?event, "kademlia event");
+            other => {
+                debug!(?other, "kademlia event");
                 None
             }
-
-            _ => None,
         }
+    }
+
+    fn handle_closest_peers(
+        &mut self,
+        ok: kad::GetClosestPeersOk,
+    ) -> Option<NetworkEvent> {
+        let mut first_new_peer = None;
+        for peer in &ok.peers {
+            let peer_id = peer.peer_id;
+            if self.discovered_peers.insert(peer_id) {
+                let addrs: Vec<Multiaddr> = peer.addrs.clone();
+                self.try_discovery_dial(&peer_id, &addrs);
+                if first_new_peer.is_none() {
+                    first_new_peer = Some(NetworkEvent::PeerDiscovered {
+                        zode_id: peer_id,
+                        addresses: addrs,
+                    });
+                }
+            }
+        }
+        first_new_peer
     }
 }
 
-/// Extract a `PeerId` from a multiaddr that ends with `/p2p/<peer_id>`.
+fn build_swarm() -> Result<libp2p::Swarm<ZfsBehaviour>, NetworkError> {
+    let message_id_fn = |message: &gossipsub::Message| {
+        let mut s = DefaultHasher::new();
+        message.data.hash(&mut s);
+        gossipsub::MessageId::from(s.finish().to_string())
+    };
+
+    let gossipsub_config = gossipsub::ConfigBuilder::default()
+        .heartbeat_interval(Duration::from_secs(10))
+        .validation_mode(gossipsub::ValidationMode::Permissive)
+        .message_id_fn(message_id_fn)
+        .build()
+        .map_err(|e| NetworkError::Config(format!("{e}")))?;
+
+    let swarm = libp2p::SwarmBuilder::with_new_identity()
+        .with_tokio()
+        .with_tcp(
+            libp2p::tcp::Config::default(),
+            libp2p::noise::Config::new,
+            libp2p::yamux::Config::default,
+        )
+        .map_err(|e| NetworkError::Transport(format!("{e}")))?
+        .with_quic()
+        .with_behaviour(|key| build_behaviour(key, gossipsub_config))
+        .map_err(|e| NetworkError::Transport(format!("{e}")))?
+        .build();
+    Ok(swarm)
+}
+
+fn build_behaviour(
+    key: &libp2p::identity::Keypair,
+    gossipsub_config: gossipsub::Config,
+) -> Result<ZfsBehaviour, Box<dyn std::error::Error + Send + Sync>> {
+    let gossipsub = gossipsub::Behaviour::new(
+        gossipsub::MessageAuthenticity::Signed(key.clone()),
+        gossipsub_config,
+    )?;
+    let request_response = request_response::cbor::Behaviour::new(
+        [(
+            StreamProtocol::new(ZFS_PROTOCOL),
+            request_response::ProtocolSupport::Full,
+        )],
+        request_response::Config::default(),
+    );
+    let peer_id = key.public().to_peer_id();
+    let mut kad_config = kad::Config::new(
+        StreamProtocol::try_from_owned(ZFS_KAD_PROTOCOL.to_string())
+            .expect("valid protocol name"),
+    );
+    kad_config.set_query_timeout(Duration::from_secs(60));
+    let store = kad::store::MemoryStore::new(peer_id);
+    let kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
+    Ok(ZfsBehaviour {
+        gossipsub,
+        request_response,
+        kademlia,
+    })
+}
+
+fn dial_bootstrap_peers(
+    swarm: &mut libp2p::Swarm<ZfsBehaviour>,
+    peers: &[Multiaddr],
+    kademlia_enabled: bool,
+) -> Result<(), NetworkError> {
+    for peer_addr in peers {
+        if kademlia_enabled {
+            if let Some(peer_id) = extract_peer_id(peer_addr) {
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, peer_addr.clone());
+                debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
+            }
+        }
+        swarm
+            .dial(peer_addr.clone())
+            .map_err(|e| NetworkError::Dial(e.to_string()))?;
+    }
+    Ok(())
+}
+
 fn extract_peer_id(addr: &Multiaddr) -> Option<PeerId> {
     addr.iter().find_map(|proto| match proto {
         libp2p::multiaddr::Protocol::P2p(peer_id) => Some(peer_id),

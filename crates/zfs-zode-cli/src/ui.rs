@@ -10,9 +10,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // tab bar
-            Constraint::Min(0),   // content
-            Constraint::Length(1), // help bar
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
         ])
         .split(frame.area());
 
@@ -33,10 +33,7 @@ fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
     let titles: Vec<Line> = Screen::ALL
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            let label = format!(" {} {} ", i + 1, s.label());
-            Line::from(label)
-        })
+        .map(|(i, s)| Line::from(format!(" {} {} ", i + 1, s.label())))
         .collect();
 
     let tabs = Tabs::new(titles)
@@ -74,22 +71,21 @@ fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
 
-    let metrics = &status.metrics;
+    let mut lines = build_zode_lines(status);
+    lines.extend(build_storage_lines(status));
+    lines.extend(build_metrics_lines(&status.metrics));
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Peer ID:  ", Style::default().fg(Color::Yellow)),
-            Span::raw(&status.peer_id),
-        ]),
-        Line::from(vec![
-            Span::styled("Peers:    ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.peer_count)),
-        ]),
+    app.list_len = 0;
+    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn build_zode_lines(status: &zfs_zode::ZodeStatus) -> Vec<Line<'static>> {
+    vec![
+        kv_line_owned("Zode ID:  ", status.zode_id.clone()),
+        kv_line_owned("Peers:    ", format!("{}", status.peer_count)),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Topics:   ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.topics.len())),
-        ]),
+        kv_line_owned("Topics:   ", format!("{}", status.topics.len())),
         Line::from(
             status
                 .topics
@@ -98,151 +94,114 @@ fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
                 .collect::<Vec<_>>()
                 .join("\n"),
         ),
-        Line::from(""),
-        Line::from(Span::styled(
-            "── Storage ──",
-            Style::default().fg(Color::Cyan),
-        )),
-        Line::from(vec![
-            Span::styled("DB size:  ", Style::default().fg(Color::Yellow)),
-            Span::raw(format_bytes(status.storage.db_size_bytes)),
-        ]),
-        Line::from(vec![
-            Span::styled("Blocks:   ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.storage.block_count)),
-        ]),
-        Line::from(vec![
-            Span::styled("Heads:    ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.storage.head_count)),
-        ]),
-        Line::from(vec![
-            Span::styled("Programs: ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.storage.program_count)),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "── Metrics ──",
-            Style::default().fg(Color::Cyan),
-        )),
-        Line::from(vec![
-            Span::styled("Stored:     ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", metrics.blocks_stored_total)),
-        ]),
-        Line::from(vec![
-            Span::styled("Rejections: ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!(
-                "{} (policy: {}, proof: {}, limit: {})",
-                metrics.store_rejections_total,
-                metrics.policy_rejections,
-                metrics.proof_rejections,
-                metrics.limit_rejections,
-            )),
-        ]),
-    ];
+    ]
+}
 
-    app.list_len = 0;
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
+fn build_storage_lines(status: &zfs_zode::ZodeStatus) -> Vec<Line<'static>> {
+    vec![
+        Line::from(""),
+        section_header("── Storage ──"),
+        kv_line_owned("DB size:  ", format_bytes(status.storage.db_size_bytes)),
+        kv_line_owned("Blocks:   ", format!("{}", status.storage.block_count)),
+        kv_line_owned("Heads:    ", format!("{}", status.storage.head_count)),
+        kv_line_owned("Programs: ", format!("{}", status.storage.program_count)),
+    ]
+}
+
+fn build_metrics_lines(m: &zfs_zode::MetricsSnapshot) -> Vec<Line<'static>> {
+    vec![
+        Line::from(""),
+        section_header("── Metrics ──"),
+        kv_line_owned("Stored:     ", format!("{}", m.blocks_stored_total)),
+        kv_line_owned(
+            "Rejections: ",
+            format!(
+                "{} (policy: {}, proof: {}, limit: {})",
+                m.store_rejections_total, m.policy_rejections, m.proof_rejections, m.limit_rejections,
+            ),
+        ),
+    ]
 }
 
 fn render_traverse(frame: &mut Frame, app: &mut App, area: Rect) {
-    match &app.traverse {
-        TraverseView::ProgramList => {
-            let items: Vec<ListItem> = app
-                .programs
-                .iter()
-                .enumerate()
-                .map(|(i, pid)| {
-                    let style = if i == app.scroll_offset {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
-                    ListItem::new(Line::from(Span::styled(pid.to_hex(), style)))
-                })
-                .collect();
-
-            app.list_len = items.len();
-
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" Programs ({}) ", items.len()));
-
-            let list = List::new(items).block(block);
-            frame.render_widget(list, area);
-        }
-        TraverseView::CidList { program_id } => {
-            let items: Vec<ListItem> = app
-                .cids
-                .iter()
-                .enumerate()
-                .map(|(i, cid)| {
-                    let style = if i == app.scroll_offset {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
-                    ListItem::new(Line::from(Span::styled(cid.to_hex(), style)))
-                })
-                .collect();
-
-            app.list_len = items.len();
-
-            let title = format!(
-                " CIDs for {}.. ({}) ",
-                &program_id.to_hex()[..8],
-                items.len()
-            );
-            let block = Block::default().borders(Borders::ALL).title(title);
-            let list = List::new(items).block(block);
-            frame.render_widget(list, area);
-        }
-        TraverseView::HeadDetail { head } => {
-            app.list_len = 0;
-
-            let lines = vec![
-                Line::from(vec![
-                    Span::styled("Sector ID:    ", Style::default().fg(Color::Yellow)),
-                    Span::raw(head.sector_id.to_hex()),
-                ]),
-                Line::from(vec![
-                    Span::styled("CID:          ", Style::default().fg(Color::Yellow)),
-                    Span::raw(head.cid.to_hex()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Version:      ", Style::default().fg(Color::Yellow)),
-                    Span::raw(format!("{}", head.version)),
-                ]),
-                Line::from(vec![
-                    Span::styled("Program ID:   ", Style::default().fg(Color::Yellow)),
-                    Span::raw(head.program_id.to_hex()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Prev Head:    ", Style::default().fg(Color::Yellow)),
-                    Span::raw(
-                        head.prev_head_cid
-                            .as_ref()
-                            .map(|c| c.to_hex())
-                            .unwrap_or_else(|| "(none)".into()),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("Timestamp:    ", Style::default().fg(Color::Yellow)),
-                    Span::raw(format!("{} ms", head.timestamp_ms)),
-                ]),
-            ];
-
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(" Head Detail ");
-            let paragraph = Paragraph::new(lines).block(block);
-            frame.render_widget(paragraph, area);
-        }
+    let view = app.traverse.clone();
+    match view {
+        TraverseView::ProgramList => render_program_list(frame, app, area),
+        TraverseView::CidList { program_id } => render_cid_list(frame, app, &program_id, area),
+        TraverseView::HeadDetail { head } => render_head_detail(frame, app, &head, area),
     }
+}
+
+fn render_program_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<ListItem> = app
+        .programs
+        .iter()
+        .enumerate()
+        .map(|(i, pid)| {
+            let style = highlight_style(i == app.scroll_offset);
+            ListItem::new(Line::from(Span::styled(pid.to_hex(), style)))
+        })
+        .collect();
+
+    app.list_len = items.len();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Programs ({}) ", items.len()));
+    frame.render_widget(List::new(items).block(block), area);
+}
+
+fn render_cid_list(
+    frame: &mut Frame,
+    app: &mut App,
+    program_id: &zfs_core::ProgramId,
+    area: Rect,
+) {
+    let items: Vec<ListItem> = app
+        .cids
+        .iter()
+        .enumerate()
+        .map(|(i, cid)| {
+            let style = highlight_style(i == app.scroll_offset);
+            ListItem::new(Line::from(Span::styled(cid.to_hex(), style)))
+        })
+        .collect();
+
+    app.list_len = items.len();
+    let title = format!(
+        " CIDs for {}.. ({}) ",
+        &program_id.to_hex()[..8],
+        items.len()
+    );
+    let block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(List::new(items).block(block), area);
+}
+
+fn render_head_detail(
+    frame: &mut Frame,
+    app: &mut App,
+    head: &zfs_core::Head,
+    area: Rect,
+) {
+    app.list_len = 0;
+    let prev = head
+        .prev_head_cid
+        .as_ref()
+        .map(|c| c.to_hex())
+        .unwrap_or_else(|| "(none)".into());
+
+    let lines = vec![
+        kv_line_owned("Sector ID:    ", head.sector_id.to_hex()),
+        kv_line_owned("CID:          ", head.cid.to_hex()),
+        kv_line_owned("Version:      ", format!("{}", head.version)),
+        kv_line_owned("Program ID:   ", head.program_id.to_hex()),
+        kv_line_owned("Prev Head:    ", prev),
+        kv_line_owned("Timestamp:    ", format!("{} ms", head.timestamp_ms)),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Head Detail ");
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_peers(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -256,31 +215,19 @@ fn render_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let mut lines = vec![
-        Line::from(vec![
-            Span::styled("Local Peer: ", Style::default().fg(Color::Yellow)),
-            Span::raw(&status.peer_id),
-        ]),
-        Line::from(vec![
-            Span::styled("Connected:  ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.peer_count)),
-        ]),
+        kv_line_owned("Local Zode: ", status.zode_id.clone()),
+        kv_line_owned("Connected:  ", format!("{}", status.peer_count)),
         Line::from(""),
     ];
 
     if status.connected_peers.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  No connected peers.",
+            "  No connected Zodes.",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
         for (i, peer) in status.connected_peers.iter().enumerate() {
-            let style = if i == app.scroll_offset {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+            let style = highlight_style(i == app.scroll_offset);
             lines.push(Line::from(Span::styled(format!("  {peer}"), style)));
         }
     }
@@ -292,8 +239,7 @@ fn render_peers(frame: &mut Frame, app: &mut App, area: Rect) {
     )));
 
     app.list_len = status.connected_peers.len();
-    let paragraph = Paragraph::new(lines).block(block);
-    frame.render_widget(paragraph, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_log(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -304,7 +250,6 @@ fn render_log(frame: &mut Frame, app: &mut App, area: Rect) {
     let visible_height = area.height.saturating_sub(2) as usize;
     let total = app.log_entries.len();
     app.list_len = total;
-
     let start = total.saturating_sub(visible_height);
 
     let items: Vec<ListItem> = app
@@ -312,25 +257,14 @@ fn render_log(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .skip(start)
         .map(|entry| {
-            let style = if entry.starts_with("[REJECT") || entry.starts_with("[STORE REJECT") {
-                Style::default().fg(Color::Red)
-            } else if entry.starts_with("[DHT") {
-                Style::default().fg(Color::Blue)
-            } else if entry.starts_with("[PEER+") {
-                Style::default().fg(Color::Green)
-            } else if entry.starts_with("[PEER-") {
-                Style::default().fg(Color::Yellow)
-            } else if entry.starts_with("[SHUTDOWN") {
-                Style::default().fg(Color::Magenta)
-            } else {
-                Style::default()
-            };
-            ListItem::new(Line::from(Span::styled(entry.as_str(), style)))
+            ListItem::new(Line::from(Span::styled(
+                entry.as_str(),
+                log_entry_style(entry),
+            )))
         })
         .collect();
 
-    let list = List::new(items).block(block);
-    frame.render_widget(list, area);
+    frame.render_widget(List::new(items).block(block), area);
 }
 
 fn render_info(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -343,53 +277,67 @@ fn render_info(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Peer ID:        ", Style::default().fg(Color::Yellow)),
-            Span::raw(&status.peer_id),
-        ]),
-        Line::from(vec![
-            Span::styled("DB Size:        ", Style::default().fg(Color::Yellow)),
-            Span::raw(format_bytes(status.storage.db_size_bytes)),
-        ]),
-        Line::from(vec![
-            Span::styled("Block Count:    ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.storage.block_count)),
-        ]),
-        Line::from(vec![
-            Span::styled("Head Count:     ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.storage.head_count)),
-        ]),
-        Line::from(vec![
-            Span::styled("Program Count:  ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}", status.storage.program_count)),
-        ]),
+    let mut lines = vec![
+        kv_line_owned("Zode ID:        ", status.zode_id.clone()),
+        kv_line_owned("DB Size:        ", format_bytes(status.storage.db_size_bytes)),
+        kv_line_owned("Block Count:    ", format!("{}", status.storage.block_count)),
+        kv_line_owned("Head Count:     ", format!("{}", status.storage.head_count)),
+        kv_line_owned("Program Count:  ", format!("{}", status.storage.program_count)),
         Line::from(""),
-        Line::from(Span::styled(
-            "── Subscribed Topics ──",
-            Style::default().fg(Color::Cyan),
-        )),
+        section_header("── Subscribed Topics ──"),
     ];
-
-    let mut all_lines = lines;
     for topic in &status.topics {
-        all_lines.push(Line::from(format!("  {topic}")));
+        lines.push(Line::from(format!("  {topic}")));
     }
-    all_lines.push(Line::from(""));
-    all_lines.push(Line::from(Span::styled(
-        "── Version ──",
-        Style::default().fg(Color::Cyan),
-    )));
-    all_lines.push(Line::from(format!(
+    lines.push(Line::from(""));
+    lines.push(section_header("── Version ──"));
+    lines.push(Line::from(format!(
         "  zfs-zode-cli v{}",
         env!("CARGO_PKG_VERSION")
     )));
 
     app.list_len = 0;
-    let paragraph = Paragraph::new(all_lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+// ---- shared helpers ----
+
+fn kv_line_owned(label: &'static str, value: String) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(label, Style::default().fg(Color::Yellow)),
+        Span::raw(value),
+    ])
+}
+
+fn section_header(title: &'static str) -> Line<'static> {
+    Line::from(Span::styled(title, Style::default().fg(Color::Cyan)))
+}
+
+fn highlight_style(selected: bool) -> Style {
+    if selected {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
+
+fn log_entry_style(entry: &str) -> Style {
+    if entry.starts_with("[REJECT") || entry.starts_with("[STORE REJECT") {
+        Style::default().fg(Color::Red)
+    } else if entry.starts_with("[DHT") {
+        Style::default().fg(Color::Blue)
+    } else if entry.starts_with("[PEER+") {
+        Style::default().fg(Color::Green)
+    } else if entry.starts_with("[PEER-") {
+        Style::default().fg(Color::Yellow)
+    } else if entry.starts_with("[SHUTDOWN") {
+        Style::default().fg(Color::Magenta)
+    } else {
+        Style::default()
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
