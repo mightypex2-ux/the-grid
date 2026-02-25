@@ -209,11 +209,11 @@ pub(crate) fn editable_list(
     ui: &mut egui::Ui,
     items: &mut Vec<String>,
     input: &mut String,
-    input_width: f32,
+    _input_width: f32,
 ) {
     ui.horizontal(|ui| {
-        let max_w = (ui.available_width() - 55.0).max(80.0);
-        let w = input_width.min(max_w);
+        let button_space = 55.0;
+        let w = (ui.available_width() - button_space).max(80.0);
         let resp = ui.add(text_input(input, w));
         if (std_button_small(ui, "Add")
             || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))

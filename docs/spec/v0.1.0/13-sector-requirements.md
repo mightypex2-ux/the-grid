@@ -165,7 +165,7 @@ Delete is **local-only** for Zode garbage collection — not exposed on the wire
 
 ## 8. Replication
 
-Zode-to-Zode via GossipSub. On accepting a client store, the Zode stores locally and publishes a `GossipSector` message to the program's GossipSub topic (`prog/{program_id_hex}`). Receiving Zodes store automatically.
+Zode-to-Zode via GossipSub. On accepting a client store, the Zode stores locally and publishes a `GossipSector` message to the program's GossipSub topic (`prog/{program_id_hex}`). Receiving Zodes store automatically. Clients do not subscribe to GossipSub topics — they discover new writes by polling.
 
 ### 8.1 GossipSector Message
 
@@ -197,13 +197,13 @@ The sector protocol is **pull-based** in v0.1.0. Clients discover new writes by 
 
 ### 9.1 Polling Guidance
 
-- SHOULD use exponential backoff when no new data is found (max ~30s).
-- SHOULD include decoy sector IDs in batch fetch requests to mask interest.
-- SHOULD avoid high-frequency polling from a single connection to limit timing correlation.
+- Clients SHOULD use exponential backoff when no new data is found, up to a maximum interval (e.g., 30 seconds).
+- Clients SHOULD include decoy sector IDs in batch fetch requests to mask which IDs they are actually interested in.
+- Clients SHOULD avoid polling from a single connection at high frequency to limit timing correlation.
 
 ### 9.2 Future: Push Notifications (Deferred)
 
-A future version MAY add `SectorSubscribeRequest` for Zode-pushed slot-update events (sector ID + timestamp only, no payload). Deferred because subscriptions reveal which sector IDs a client cares about.
+A future version MAY add a lightweight notification mechanism where Zodes push slot-update events (sector ID + timestamp only, no payload) to subscribed clients. Deferred from v0.1.0 because push subscriptions reveal which sector IDs a client is interested in, creating a metadata correlation vector.
 
 ## 10. Protocol Coexistence
 
@@ -214,7 +214,7 @@ Both `/zfs/1.0.0` and `/zfs/sector/1.0.0` are registered as separate libp2p requ
 ### 10.2 Shared Infrastructure
 
 - **Swarm**: Shared.
-- **GossipSub topics**: Shared (`prog/{program_id_hex}`). Base publishes `GossipBlock`; sector publishes `GossipSector`. Distinguished by CBOR tag.
+- **GossipSub topics**: Shared (`prog/{program_id_hex}`). Base publishes `GossipBlock`; sector publishes `GossipSector`. Distinguished by CBOR tag. Only Zodes subscribe; clients use request-response polling.
 - **RocksDB**: Shared instance. Sector uses its own `sectors` column family.
 - **Policy engine**: Shared. Program allowlist and quotas apply uniformly.
 - **Metrics**: Separate counters (`sector_puts_total`, `sector_gets_total`, etc.).
@@ -258,7 +258,7 @@ A Zode MAY advertise multiple versions. Clients select the highest mutually supp
 - Epoch-based ID rotation to prevent long-lived slot tracking.
 - Private information retrieval (fetch without revealing sector ID).
 - Write authorization tokens (blind-signature-based).
-- Push notifications via `SectorSubscribeRequest`.
+- Push notifications for slot-update events.
 
 ## 15. Implementation Crate Responsibilities
 
