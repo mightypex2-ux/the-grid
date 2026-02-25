@@ -83,7 +83,8 @@ impl Settings {
         self.bootstrap_peers
             .iter()
             .map(|s| {
-                s.parse()
+                zfs_net::strip_zx_multiaddr(s)
+                    .parse()
                     .map_err(|e| format!("Bad bootstrap addr '{s}': {e}"))
             })
             .collect()
@@ -96,3 +97,4 @@ impl Settings {
             .collect()
     }
 }
+

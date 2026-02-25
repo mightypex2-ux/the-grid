@@ -324,12 +324,6 @@ fn error_chat_update(error: String) -> ChatUpdate {
 }
 
 pub(crate) fn render_chat(app: &mut ZodeApp, ui: &mut egui::Ui) {
-    if app.zode.is_none() {
-        ui.spinner();
-        ui.label("Zode is stopped. Go to Settings to start.");
-        return;
-    }
-
     if app.chat_state.is_none() || !app.chat_state.as_ref().unwrap().initialized {
         app.init_chat();
     }

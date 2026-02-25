@@ -75,6 +75,7 @@ pub struct Zode {
     event_tx: broadcast::Sender<LogEvent>,
     shutdown_tx: mpsc::Sender<()>,
     publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+    event_loop_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Zode {
@@ -118,7 +119,7 @@ impl Zode {
         );
 
         let network = Arc::new(Mutex::new(network));
-        Self::spawn_event_loop(
+        let event_loop_handle = Self::spawn_event_loop(
             handler,
             Arc::clone(&network),
             event_tx.clone(),
@@ -138,6 +139,7 @@ impl Zode {
             event_tx,
             shutdown_tx,
             publish_tx,
+            event_loop_handle: Mutex::new(Some(event_loop_handle)),
         })
     }
 
@@ -177,7 +179,7 @@ impl Zode {
         connected_peers: Arc<RwLock<Vec<String>>>,
         shutdown_rx: mpsc::Receiver<()>,
         publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             Self::event_loop(
                 handler,
@@ -189,7 +191,7 @@ impl Zode {
                 publish_rx,
             )
             .await;
-        });
+        })
     }
 
     /// Get a status snapshot of the running Zode (lock-free, never blocks).
@@ -245,11 +247,14 @@ impl Zode {
         &self.network
     }
 
-    /// Gracefully shut down the Zode.
+    /// Gracefully shut down the Zode and wait for the event loop to exit.
     pub async fn shutdown(&self) {
         let _ = self.event_tx.send(LogEvent::ShuttingDown);
         let _ = self.shutdown_tx.send(()).await;
-        info!("zode shutdown requested");
+        if let Some(handle) = self.event_loop_handle.lock().await.take() {
+            let _ = handle.await;
+        }
+        info!("zode shutdown complete");
     }
 
     async fn event_loop<S: StorageBackend>(

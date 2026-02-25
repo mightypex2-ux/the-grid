@@ -17,6 +17,7 @@ pub(crate) struct ZodeApp {
     pub tab: Tab,
     pub settings_error: Option<String>,
     pub shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    pub poller_handle: Option<tokio::task::JoinHandle<()>>,
     pub chat_state: Option<crate::state::ChatState>,
     pub visualization: crate::visualization::NetworkVisualization,
     icon_texture: Option<egui::TextureHandle>,
@@ -32,6 +33,7 @@ impl ZodeApp {
             tab: Tab::Status,
             settings_error: None,
             shutdown_tx: None,
+            poller_handle: None,
             chat_state: None,
             visualization: Default::default(),
             icon_texture: None,
@@ -81,7 +83,8 @@ impl ZodeApp {
                 self.zode = Some(Arc::clone(&zode));
                 let (stop_tx, stop_rx) = tokio::sync::mpsc::channel::<()>(1);
                 self.shutdown_tx = Some(stop_tx);
-                Self::spawn_status_poller(&self.rt, &zode, &shared, stop_rx);
+                self.poller_handle =
+                    Some(Self::spawn_status_poller(&self.rt, &zode, &shared, stop_rx));
                 Self::spawn_log_listener(&self.rt, &zode, &shared);
             }
             Err(e) => {
@@ -95,7 +98,7 @@ impl ZodeApp {
         zode: &Arc<Zode>,
         shared: &Arc<Mutex<AppState>>,
         mut stop_rx: tokio::sync::mpsc::Receiver<()>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let bg_zode = Arc::clone(zode);
         let bg_shared = Arc::clone(shared);
         rt.spawn(async move {
@@ -107,7 +110,7 @@ impl ZodeApp {
                 let status = bg_zode.status();
                 bg_shared.lock().await.status = Some(status);
             }
-        });
+        })
     }
 
     fn spawn_log_listener(
@@ -167,6 +170,9 @@ impl ZodeApp {
         }
         if let Some(ref zode) = self.zode {
             self.rt.block_on(zode.shutdown());
+        }
+        if let Some(handle) = self.poller_handle.take() {
+            let _ = self.rt.block_on(handle);
         }
         self.zode = None;
     }
@@ -374,7 +380,11 @@ impl eframe::App for ZodeApp {
                                 crate::components::colors::DISCONNECTED
                             };
                             let status_label = if connected { "connected" } else { "stopped" };
-                            let status_text_color = egui::Color32::from_rgb(0x01, 0xF4, 0xCB);
+                            let status_text_color = if connected {
+                                crate::components::colors::CONNECTED
+                            } else {
+                                crate::components::colors::DISCONNECTED
+                            };
                             ui.monospace(
                                 egui::RichText::new(status_label)
                                     .color(status_text_color),
@@ -421,14 +431,26 @@ impl eframe::App for ZodeApp {
 
         egui::CentralPanel::default()
             .frame(central_frame)
-            .show(ctx, |ui| match self.tab {
-            Tab::Status => crate::render::render_status(self, ui, &state),
-            Tab::Storage => crate::render::render_storage(self, ui, &state),
-            Tab::Peers => crate::render::render_peers(self, ui, &state),
-            Tab::Log => crate::render::render_log(ui, &state),
-            Tab::Chat => crate::chat::render_chat(self, ui),
-            Tab::Info => crate::render::render_info(self, ui, &state),
-            Tab::Settings => crate::render::render_settings(self, ui),
+            .show(ctx, |ui| {
+            if self.tab != Tab::Settings && self.zode.is_none() {
+                let rect = ui.max_rect();
+                ui.vertical_centered(|ui| {
+                    ui.add_space((rect.height() / 2.0 - 25.0).max(0.0));
+                    ui.spinner();
+                    ui.add_space(4.0);
+                    ui.label("Zode is stopped. Go to Settings to start.");
+                });
+                return;
+            }
+            match self.tab {
+                Tab::Status => crate::render::render_status(self, ui, &state),
+                Tab::Storage => crate::render::render_storage(self, ui, &state),
+                Tab::Peers => crate::render::render_peers(self, ui, &state),
+                Tab::Log => crate::render::render_log(ui, &state),
+                Tab::Chat => crate::chat::render_chat(self, ui),
+                Tab::Info => crate::render::render_info(self, ui, &state),
+                Tab::Settings => crate::render::render_settings(self, ui),
+            }
         });
 
         if !maximized {

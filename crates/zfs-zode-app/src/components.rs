@@ -13,7 +13,7 @@ pub(crate) mod colors {
     pub const ERROR: Color32 = Color32::from_rgb(255, 80, 80);
     pub const WARN: Color32 = Color32::from_rgb(255, 200, 100);
     pub const CONNECTED: Color32 = Color32::from_rgb(46, 230, 176);
-    pub const DISCONNECTED: Color32 = Color32::from_rgb(100, 100, 105);
+    pub const DISCONNECTED: Color32 = Color32::from_rgb(255, 80, 80);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,11 +176,6 @@ pub(crate) fn copy_button(ui: &mut egui::Ui, text: &str) {
     }
 }
 
-/// X-icon button for removing an item from a list. Returns `true` on click.
-pub(crate) fn remove_button(ui: &mut egui::Ui) -> bool {
-    icon_button(ui, egui_phosphor::regular::X).clicked()
-}
-
 // ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
@@ -217,7 +212,9 @@ pub(crate) fn editable_list(
     input_width: f32,
 ) {
     ui.horizontal(|ui| {
-        let resp = ui.add(text_input(input, input_width));
+        let max_w = (ui.available_width() - 55.0).max(80.0);
+        let w = input_width.min(max_w);
+        let resp = ui.add(text_input(input, w));
         if (std_button_small(ui, "Add")
             || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
             && !input.trim().is_empty()
@@ -230,13 +227,15 @@ pub(crate) fn editable_list(
     let mut remove_idx = None;
     for (i, item) in items.iter().enumerate() {
         ui.horizontal(|ui| {
-            if remove_button(ui) {
-                remove_idx = Some(i);
-            }
             ui.add(
                 egui::Label::new(egui::RichText::new(item).monospace()).truncate(),
             )
             .on_hover_text(item);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if std_button_small(ui, "×") {
+                    remove_idx = Some(i);
+                }
+            });
         });
     }
     if let Some(idx) = remove_idx {

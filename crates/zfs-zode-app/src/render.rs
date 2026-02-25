@@ -150,11 +150,11 @@ fn render_discovery_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
 
 pub(crate) fn render_status(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
     let Some(ref status) = state.status else {
-        ui.spinner();
-        ui.label(if app.zode.is_some() {
-            "Starting Zode..."
-        } else {
-            "Zode is stopped. Go to Settings to start."
+        ui.vertical_centered(|ui| {
+            let avail = ui.available_height();
+            ui.add_space((avail / 2.0 - 20.0).max(0.0));
+            ui.spinner();
+            ui.label("Starting Zode...");
         });
         return;
     };
@@ -215,7 +215,7 @@ fn render_zode_status(
             });
             ui.end_row();
 
-            kv_row(ui, "Peers", &format!("{}", status.peer_count));
+            kv_row(ui, if status.peer_count == 1 { "Peer" } else { "Peers" }, &format!("{}", status.peer_count));
             kv_row(ui, "Programs", &format!("{}", status.topics.len()));
         });
     });
@@ -257,7 +257,12 @@ fn render_metrics_status(ui: &mut egui::Ui, m: &zfs_zode::MetricsSnapshot) {
 
 pub(crate) fn render_storage(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
     let Some(ref status) = state.status else {
-        ui.spinner();
+        ui.vertical_centered(|ui| {
+            let avail = ui.available_height();
+            ui.add_space((avail / 2.0 - 20.0).max(0.0));
+            ui.spinner();
+            ui.label("Loading...");
+        });
         return;
     };
 
@@ -505,7 +510,12 @@ fn format_hex_dump(data: &[u8]) -> String {
 
 pub(crate) fn render_peers(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
     let Some(ref status) = state.status else {
-        ui.spinner();
+        ui.vertical_centered(|ui| {
+            let avail = ui.available_height();
+            ui.add_space((avail / 2.0 - 20.0).max(0.0));
+            ui.spinner();
+            ui.label("Loading...");
+        });
         return;
     };
 
@@ -584,7 +594,12 @@ fn log_entry_color(entry: &str) -> egui::Color32 {
 
 pub(crate) fn render_info(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
     let Some(ref status) = state.status else {
-        ui.spinner();
+        ui.vertical_centered(|ui| {
+            let avail = ui.available_height();
+            ui.add_space((avail / 2.0 - 20.0).max(0.0));
+            ui.spinner();
+            ui.label("Loading...");
+        });
         return;
     };
 

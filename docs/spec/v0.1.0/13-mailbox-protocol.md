@@ -1,8 +1,8 @@
-# ZFS v0.1.0 — Mailbox Protocol
+# ZFS v0.1.0 — Sector Protocol
 
 ## Purpose
 
-This document specifies the **mailbox protocol**, a metadata-private storage layer for ZFS. The mailbox protocol reduces the Zode to an opaque key-value store scoped by program. Clients derive deterministic mailbox IDs via HKDF and store encrypted blobs. The Zode sees only `(program_id, mailbox_id, encrypted_blob)` — it cannot determine who wrote a blob, who can read it, or which blobs are related.
+This document specifies the **sector protocol**, a metadata-private storage layer for ZFS. The sector protocol reduces the Zode to an opaque key-value store scoped by program. Clients derive deterministic sector IDs via HKDF and store encrypted blobs. The Zode sees only `(program_id, sector_id, encrypted_blob)` — it cannot determine who wrote a blob, who can read it, or which blobs are related.
 
 This is an alternative to the transparent protocol defined in [12-protocol](12-protocol.md), where heads, CIDs, sender identities, and signatures are visible on the wire.
 
@@ -18,17 +18,17 @@ This is an alternative to the transparent protocol defined in [12-protocol](12-p
 
 ## Threat model
 
-The mailbox protocol protects against an **honest-but-curious Zode** (or network observer) that:
+The sector protocol protects against an **honest-but-curious Zode** (or network observer) that:
 
 - Stores and serves data correctly but attempts to learn metadata.
-- Can observe all writes and reads (mailbox IDs, blob sizes, timing).
+- Can observe all writes and reads (sector IDs, blob sizes, timing).
 - Can correlate traffic by IP address and connection timing.
 - Cannot break the underlying cryptography (XChaCha20-Poly1305, X25519, ML-KEM-768).
 
 **Known limitations (v0.1.0):**
 
 - **No transport anonymity.** IP addresses are visible. Onion routing and mixnets are out of scope.
-- **Timing correlation.** A Zode can correlate writes and reads that arrive close together from the same connection. Batch requests reveal which mailbox IDs are accessed together. Countermeasure: clients MAY include decoy mailbox IDs in batch requests.
+- **Timing correlation.** A Zode can correlate writes and reads that arrive close together from the same connection. Batch requests reveal which sector IDs are accessed together. Countermeasure: clients MAY include decoy sector IDs in batch requests.
 - **Overwrite flag.** The `overwrite` flag in store requests is visible on the wire. A Zode can distinguish write-once slots from mutable slots. Applications should account for this when designing their slot layout.
 - **Active attacks out of scope.** Integrity is assumed at the transport layer. A malicious Zode that drops or modifies data is not in the threat model.
 
@@ -38,7 +38,7 @@ The mailbox protocol protects against an **honest-but-curious Zode** (or network
 ┌──────────────────────────────────────────────────────┐
 │                    Zode's view                        │
 │                                                      │
-│   program_id   │   mailbox_id    │   payload          │
+│   program_id   │   sector_id    │   payload          │
 │   (visible)    │   (opaque 32B)  │   (encrypted blob) │
 │────────────────┼─────────────────┼────────────────────│
 │   0xaa..       │   0x3f..        │   [1 KB]           │
@@ -48,53 +48,54 @@ The mailbox protocol protects against an **honest-but-curious Zode** (or network
 └──────────────────────────────────────────────────────┘
 ```
 
-The Zode is a **program-scoped key-value store**: `(program_id, mailbox_id) → encrypted_blob`. It cannot determine which rows are related, what type of data they contain, or who wrote or reads them.
+The Zode is a **program-scoped key-value store**: `(program_id, sector_id) → encrypted_blob`. It cannot determine which rows are related, what type of data they contain, or who wrote or reads them.
 
-## Mailbox ID
+## Sector ID
 
-A `MailboxId` is a 32-byte opaque identifier:
+The sector protocol reuses the existing `SectorId` type from `zfs-core`:
 
 ```rust
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MailboxId([u8; 32]);
+pub struct SectorId(Vec<u8>);
 ```
 
-Mailbox IDs are derived client-side via HKDF-SHA256 from a derivation key and an application-defined info string. The Zode stores and retrieves blobs by `(program_id, mailbox_id)` without knowledge of the derivation inputs.
+In the sector protocol, sector IDs are always **32 bytes** (HKDF-SHA256 output). The existing variable-length `SectorId` type accommodates this — the sector protocol simply produces 32-byte values. Zodes MAY reject sector protocol requests with non-32-byte sector IDs.
+
+Sector IDs are derived client-side via HKDF-SHA256 from a derivation key and an application-defined info string. The Zode stores and retrieves blobs by `(program_id, sector_id)` without knowledge of the derivation inputs.
 
 ### Derivation
 
 ```
 derivation_key = HKDF-SHA256(
     ikm  = shared_secret,
-    salt = "zfs:mailbox:v1",
-    info = "zfs:mailbox:derive-key:v1"
+    salt = "zfs:sector:v1",
+    info = "zfs:sector:derive-key:v1"
 )
 
-mailbox_id = HKDF-SHA256(
+sector_id = HKDF-SHA256(
     ikm  = derivation_key,
-    salt = "zfs:mailbox:v1",
+    salt = "zfs:sector:v1",
     info = application_defined_info_string
 )
 ```
 
-The `shared_secret` is typically a `SectorKey` or a value derived from one (see [10-crypto](10-crypto.md)). A **derivation key** is first extracted from the shared secret via HKDF to ensure the raw `SectorKey` is never used directly as HKDF input for mailbox IDs (it is reserved exclusively for AEAD encryption). This two-step process ensures cryptographic domain separation between mailbox ID derivation and payload encryption.
+The `shared_secret` is typically a `SectorKey` or a value derived from one (see [10-crypto](10-crypto.md)). A **derivation key** is first extracted from the shared secret via HKDF to ensure the raw `SectorKey` is never used directly as HKDF input for sector IDs (it is reserved exclusively for AEAD encryption). This two-step process ensures cryptographic domain separation between sector ID derivation and payload encryption.
 
-The `info` string is chosen by the application to produce distinct, non-colliding mailbox IDs for different slots. See [Info string conventions](#info-string-conventions) for recommended formats.
+The `info` string is chosen by the application to produce distinct, non-colliding sector IDs for different slots. See [Info string conventions](#info-string-conventions) for recommended formats.
 
 ### Properties
 
-- **Deterministic:** All parties sharing the same `shared_secret` and `info` string compute the same mailbox ID.
-- **Unlinkable:** Different info strings produce unrelated mailbox IDs. The Zode cannot determine that two IDs were derived from the same secret.
+- **Deterministic:** All parties sharing the same `shared_secret` and `info` string compute the same sector ID.
+- **Unlinkable:** Different info strings produce unrelated sector IDs. The Zode cannot determine that two IDs were derived from the same secret.
 - **Collision-resistant:** HKDF-SHA256 output is 32 bytes; collision probability is negligible.
-- **Domain-separated:** The fixed salt `"zfs:mailbox:v1"` prevents accidental collision with other HKDF uses of the same key material.
+- **Domain-separated:** The fixed salt `"zfs:sector:v1"` prevents accidental collision with other HKDF uses of the same key material.
 
-### `derive_mailbox_id`
+### `derive_sector_id`
 
 ```rust
-pub fn derive_mailbox_id(shared_secret: &[u8; 32], info: &[u8]) -> MailboxId;
+pub fn derive_sector_id(shared_secret: &[u8; 32], info: &[u8]) -> SectorId;
 ```
 
-Internally performs the two-step HKDF described above: derives the intermediate `derivation_key` from `shared_secret`, then derives the final `MailboxId` from `derivation_key` + `info`. The intermediate key is zeroized after use. Implemented in `zfs-crypto`.
+Internally performs the two-step HKDF described above: derives the intermediate `derivation_key` from `shared_secret`, then derives the final `SectorId` from `derivation_key` + `info`. The intermediate key is zeroized after use. Implemented in `zfs-crypto`.
 
 ### Info string conventions
 
@@ -123,34 +124,34 @@ Rules:
 ### Protocol string
 
 ```
-/zfs/mailbox/1.0.0
+/zfs/sector/1.0.0
 ```
 
 Separate from the base protocol (`/zfs/1.0.0`). A Zode MAY serve both protocols simultaneously (see [Protocol coexistence](#protocol-coexistence)). Serialization is canonical CBOR, matching [11-core-types](11-core-types.md).
 
 ### Request / Response enums
 
-The mailbox protocol uses its own top-level enums, separate from the base protocol's `ZfsRequest` / `ZfsResponse`:
+The sector protocol uses its own top-level enums, separate from the base protocol's `ZfsRequest` / `ZfsResponse`:
 
 ```rust
-pub enum MailboxRequest {
-    Store(MailboxStoreRequest),
-    Fetch(MailboxFetchRequest),
-    BatchStore(MailboxBatchStoreRequest),
-    BatchFetch(MailboxBatchFetchRequest),
+pub enum SectorRequest {
+    Store(SectorStoreRequest),
+    Fetch(SectorFetchRequest),
+    BatchStore(SectorBatchStoreRequest),
+    BatchFetch(SectorBatchFetchRequest),
 }
 
-pub enum MailboxResponse {
-    Store(MailboxStoreResponse),
-    Fetch(MailboxFetchResponse),
-    BatchStore(MailboxBatchStoreResponse),
-    BatchFetch(MailboxBatchFetchResponse),
+pub enum SectorResponse {
+    Store(SectorStoreResponse),
+    Fetch(SectorFetchResponse),
+    BatchStore(SectorBatchStoreResponse),
+    BatchFetch(SectorBatchFetchResponse),
 }
 ```
 
 ### Error codes
 
-The mailbox protocol extends the base `ErrorCode` enum (defined in [11-core-types](11-core-types.md)) with mailbox-specific variants rather than defining a separate enum:
+The sector protocol extends the base `ErrorCode` enum (defined in [11-core-types](11-core-types.md)) with sector-specific variants rather than defining a separate enum:
 
 ```rust
 pub enum ErrorCode {
@@ -161,22 +162,22 @@ pub enum ErrorCode {
     NotFound,
     InvalidPayload,
     ProgramMismatch,
-    // --- mailbox protocol additions ---
+    // --- sector protocol additions ---
     SlotOccupied,      // write-once slot already written
     BatchTooLarge,     // batch exceeds entry or payload limits
     ConditionFailed,   // expected_hash did not match current content
 }
 ```
 
-Wire serialization distinguishes variants by integer tag in CBOR. Existing base protocol messages never produce the mailbox-specific variants; mailbox messages never produce `ProofInvalid`.
+Wire serialization distinguishes variants by integer tag in CBOR. Existing base protocol messages never produce the sector-specific variants; sector messages never produce `ProofInvalid`.
 
-### `MailboxStoreError`
+### `SectorStoreError`
 
-The internal storage error type used by the `MailboxStore` trait (not sent on the wire):
+The internal storage error type used by the `SectorStore` trait (not sent on the wire):
 
 ```rust
 #[derive(Debug, Error)]
-pub enum MailboxStoreError {
+pub enum SectorStoreError {
     #[error("storage full")]
     StorageFull,
     #[error("slot occupied")]
@@ -194,21 +195,21 @@ pub enum MailboxStoreError {
 }
 ```
 
-`MailboxStoreError` maps to wire `ErrorCode` variants where applicable; `Backend`, `Encode`, and `Decode` map to `InvalidPayload` on the wire.
+`SectorStoreError` maps to wire `ErrorCode` variants where applicable; `Backend`, `Encode`, and `Decode` map to `InvalidPayload` on the wire.
 
 ### Single store
 
 ```rust
-pub struct MailboxStoreRequest {
+pub struct SectorStoreRequest {
     pub program_id: ProgramId,
-    pub mailbox_id: MailboxId,
+    pub sector_id: SectorId,
     pub payload: Vec<u8>,
     pub overwrite: bool,
     pub expected_hash: Option<[u8; 32]>,
     pub ttl_seconds: Option<u64>,
 }
 
-pub struct MailboxStoreResponse {
+pub struct SectorStoreResponse {
     pub ok: bool,
     pub error: Option<ErrorCode>,
 }
@@ -222,41 +223,41 @@ pub struct MailboxStoreResponse {
 ### Single fetch
 
 ```rust
-pub struct MailboxFetchRequest {
+pub struct SectorFetchRequest {
     pub program_id: ProgramId,
-    pub mailbox_id: MailboxId,
+    pub sector_id: SectorId,
 }
 
-pub struct MailboxFetchResponse {
+pub struct SectorFetchResponse {
     pub payload: Option<Vec<u8>>,
     pub error: Option<ErrorCode>,
 }
 ```
 
-Returns `None` payload (no error) if the mailbox has not been written.
+Returns `None` payload (no error) if the sector has not been written.
 
 ### Batch store
 
 ```rust
-pub struct MailboxBatchStoreRequest {
+pub struct SectorBatchStoreRequest {
     pub program_id: ProgramId,
-    pub entries: Vec<MailboxBatchStoreEntry>,  // max 64
+    pub entries: Vec<SectorBatchStoreEntry>,  // max 64
 }
 
-pub struct MailboxBatchStoreEntry {
-    pub mailbox_id: MailboxId,
+pub struct SectorBatchStoreEntry {
+    pub sector_id: SectorId,
     pub payload: Vec<u8>,
     pub overwrite: bool,
     pub expected_hash: Option<[u8; 32]>,
     pub ttl_seconds: Option<u64>,
 }
 
-pub struct MailboxBatchStoreResponse {
-    pub results: Vec<MailboxStoreResult>,      // parallel to entries
+pub struct SectorBatchStoreResponse {
+    pub results: Vec<SectorStoreResult>,      // parallel to entries
     pub error: Option<ErrorCode>,              // batch-level error only
 }
 
-pub struct MailboxStoreResult {
+pub struct SectorStoreResult {
     pub ok: bool,
     pub error: Option<ErrorCode>,              // per-entry error
 }
@@ -267,18 +268,18 @@ pub struct MailboxStoreResult {
 ### Batch fetch
 
 ```rust
-pub struct MailboxBatchFetchRequest {
+pub struct SectorBatchFetchRequest {
     pub program_id: ProgramId,
-    pub mailbox_ids: Vec<MailboxId>,  // max 64
+    pub sector_ids: Vec<SectorId>,  // max 64
 }
 
-pub struct MailboxBatchFetchResponse {
-    pub results: Vec<Option<Vec<u8>>>,         // parallel to mailbox_ids
+pub struct SectorBatchFetchResponse {
+    pub results: Vec<Option<Vec<u8>>>,         // parallel to sector_ids
     pub error: Option<ErrorCode>,              // batch-level error only
 }
 ```
 
-`results[i]` corresponds to `mailbox_ids[i]`. A `None` entry means the mailbox has not been written (not an error).
+`results[i]` corresponds to `sector_ids[i]`. A `None` entry means the sector has not been written (not an error).
 
 ### Batch limits
 
@@ -290,16 +291,16 @@ pub struct MailboxBatchFetchResponse {
 
 | Operation | Wire type | Purpose |
 |-----------|-----------|---------|
-| `put` | `MailboxStoreRequest` | Write a single slot |
-| `get` | `MailboxFetchRequest` | Read a single slot |
-| `batch_put` | `MailboxBatchStoreRequest` | Write up to 64 slots in one round trip |
-| `batch_get` | `MailboxBatchFetchRequest` | Read up to 64 slots in one round trip |
+| `put` | `SectorStoreRequest` | Write a single slot |
+| `get` | `SectorFetchRequest` | Read a single slot |
+| `batch_put` | `SectorBatchStoreRequest` | Write up to 64 slots in one round trip |
+| `batch_get` | `SectorBatchFetchRequest` | Read up to 64 slots in one round trip |
 
 No machine_did, no signature, no head, no key_envelope, no CID on the wire.
 
 ## Payload encryption
 
-All mailbox payloads MUST be encrypted before storage. The Zode stores opaque bytes; encryption and decryption are performed client-side.
+All sector payloads MUST be encrypted before storage. The Zode stores opaque bytes; encryption and decryption are performed client-side.
 
 ### Encryption
 
@@ -310,14 +311,14 @@ encrypted_payload = XChaCha20-Poly1305(
     key       = SectorKey,
     nonce     = random 192-bit,
     plaintext = padded(serialized_content),
-    aad       = program_id (32 bytes) || mailbox_id (32 bytes)
+    aad       = program_id (32 bytes) || sector_id (32 bytes)
 )
 ```
 
-**AAD is mandatory.** The AAD MUST include `program_id || mailbox_id` at minimum. This binds the ciphertext to both its program and its specific slot, preventing cross-program and cross-slot ciphertext relocation attacks. Applications MAY append additional context (e.g., a version tag) after the mandatory fields:
+**AAD is mandatory.** The AAD MUST include `program_id || sector_id` at minimum. This binds the ciphertext to both its program and its specific slot, preventing cross-program and cross-slot ciphertext relocation attacks. Applications MAY append additional context (e.g., a version tag) after the mandatory fields:
 
 ```
-AAD = program_id (32 bytes) || mailbox_id (32 bytes) [|| additional_context]
+AAD = program_id (32 bytes) || sector_id (32 bytes) [|| additional_context]
 ```
 
 ### Padding
@@ -359,7 +360,7 @@ pub fn unpad_from_bucket(padded: &[u8]) -> Result<Vec<u8>, CryptoError>;
 
 | Column family | Key | Value |
 |--------------|-----|-------|
-| **mailboxes** | `program_id (32B) \|\| mailbox_id (32B)` | `payload (encrypted blob)` |
+| **sectors** | `program_id (32B) \|\| sector_id (32B)` | `payload (encrypted blob)` |
 
 A single column family with 64-byte composite keys. No block store, head store, or program index is needed. This column family is added to the existing `RocksStorage` instance alongside the base protocol's `blocks`, `heads`, `program_index`, and `metadata` column families.
 
@@ -367,52 +368,52 @@ A single column family with 64-byte composite keys. No block store, head store, 
 
 | Operation | Behavior |
 |-----------|----------|
-| `put(program_id, mailbox_id, payload, overwrite, expected_hash)` | Write blob. If `overwrite=false` and key exists, reject with `SlotOccupied`. If `overwrite=true` and `expected_hash` is `Some`, compare `SHA-256(current)` and reject with `ConditionFailed` on mismatch. If `overwrite=true` and `expected_hash` is `None`, overwrite unconditionally. |
-| `get(program_id, mailbox_id)` | Return payload if key exists, or `None`. |
+| `put(program_id, sector_id, payload, overwrite, expected_hash)` | Write blob. If `overwrite=false` and key exists, reject with `SlotOccupied`. If `overwrite=true` and `expected_hash` is `Some`, compare `SHA-256(current)` and reject with `ConditionFailed` on mismatch. If `overwrite=true` and `expected_hash` is `None`, overwrite unconditionally. |
+| `get(program_id, sector_id)` | Return payload if key exists, or `None`. |
 | `batch_put(program_id, entries[])` | Up to 64 puts. Each entry is independent (partial success allowed). |
-| `batch_get(program_id, mailbox_ids[])` | Up to 64 gets. Returns parallel array of payloads (`None` for missing keys). |
+| `batch_get(program_id, sector_ids[])` | Up to 64 gets. Returns parallel array of payloads (`None` for missing keys). |
 
 Delete is **local-only** for Zode garbage collection — not exposed on the wire. Zodes MAY use `ttl_seconds` hints from store requests as input to eviction decisions. Zodes MAY also implement time-based or size-based eviction policies independently.
 
-### MailboxStore trait
+### SectorStore trait
 
 ```rust
-pub trait MailboxStore {
+pub trait SectorStore {
     fn put(
         &self,
         program_id: &ProgramId,
-        mailbox_id: &MailboxId,
+        sector_id: &SectorId,
         payload: &[u8],
         overwrite: bool,
         expected_hash: Option<&[u8; 32]>,
-    ) -> Result<(), MailboxStoreError>;
+    ) -> Result<(), SectorStoreError>;
 
     fn get(
         &self,
         program_id: &ProgramId,
-        mailbox_id: &MailboxId,
-    ) -> Result<Option<Vec<u8>>, MailboxStoreError>;
+        sector_id: &SectorId,
+    ) -> Result<Option<Vec<u8>>, SectorStoreError>;
 
     fn batch_put(
         &self,
         program_id: &ProgramId,
-        entries: &[MailboxBatchStoreEntry],
-    ) -> Result<Vec<MailboxStoreResult>, MailboxStoreError>;
+        entries: &[SectorBatchStoreEntry],
+    ) -> Result<Vec<SectorStoreResult>, SectorStoreError>;
 
     fn batch_get(
         &self,
         program_id: &ProgramId,
-        mailbox_ids: &[MailboxId],
-    ) -> Result<Vec<Option<Vec<u8>>>, MailboxStoreError>;
+        sector_ids: &[SectorId],
+    ) -> Result<Vec<Option<Vec<u8>>>, SectorStoreError>;
 
-    fn stats(&self) -> Result<MailboxStorageStats, MailboxStoreError>;
+    fn stats(&self) -> Result<SectorStorageStats, SectorStoreError>;
 }
 ```
 
 ### Storage statistics
 
 ```rust
-pub struct MailboxStorageStats {
+pub struct SectorStorageStats {
     pub db_size_bytes: u64,
     pub slot_count: u64,
     pub program_count: u64,
@@ -432,22 +433,63 @@ The Zode **cannot** enforce (by design):
 
 - Per-group or per-user limits (these concepts are invisible).
 - Payload format validation (payload is opaque).
-- Write authorization (any client that can connect can write to any mailbox_id within an allowed program).
+- Write authorization (any client that can connect can write to any sector_id within an allowed program).
 
 ## Replication
 
-Replication is **client-driven**: the client sends the same store request to `R` Zodes (replication factor). At-least-one-success semantics apply, matching the base protocol's `upload()` behavior.
+Replication is **Zode-to-Zode** via GossipSub. When a Zode accepts a `SectorStoreRequest` from a client, it stores the blob locally and publishes a `GossipSector` message to the program's GossipSub topic (`prog/{program_id_hex}`). Other Zodes subscribed to that topic receive the message and store the blob automatically.
 
-GossipSub topics (`prog/{program_id_hex}`) are used for **peer discovery and presence only** — Zodes subscribe to program topics to signal which programs they serve. Data propagation is not done via GossipSub; the base protocol's `GossipBlock` type does not apply to opaque mailbox blobs.
+### `GossipSector`
+
+Analogous to the base protocol's `GossipBlock`, this is the gossip message type for sector replication:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GossipSector {
+    pub program_id: ProgramId,
+    pub sector_id: SectorId,
+    #[serde(with = "serde_bytes")]
+    pub payload: Vec<u8>,
+    pub overwrite: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ttl_seconds: Option<u64>,
+}
+```
+
+The `expected_hash` field is intentionally omitted — CAS semantics are a client-to-Zode concern and do not propagate via gossip (see [Replication semantics](#replication-semantics)).
+
+### Receiving Zode behavior
+
+When a Zode receives a `GossipSector`:
+
+1. **Program check.** If the Zode does not serve the `program_id`, discard.
+2. **Write-once slot** (`overwrite: false`). Store if empty; silently ignore if already occupied (idempotent).
+3. **Mutable slot** (`overwrite: true`). Overwrite unconditionally (last-write-wins). No `expected_hash` check — CAS does not apply to gossip-propagated writes.
+4. **Deduplication.** For write-once slots, occupancy is a natural dedup. For mutable slots, a Zode MAY compare `SHA-256(current_payload)` to `SHA-256(incoming_payload)` and skip the write if identical, but this is an optimization, not a requirement.
+5. **Policy enforcement.** Storage quotas and per-slot size limits apply. If the incoming blob would exceed limits, the Zode silently drops it (no error path on gossip).
+6. **No re-gossip.** The Zode does NOT re-publish to GossipSub after storing a gossip-received blob. GossipSub's built-in mesh propagation handles fan-out — each message is delivered to all subscribers by the GossipSub layer itself.
+
+### Replication semantics
+
+| Concern | Behavior |
+|---------|----------|
+| Write-once slots | First-write-wins globally. Gossip-received writes to occupied slots are silently dropped. |
+| Mutable slots (unconditional) | Last-write-wins. Concurrent writes from different clients may resolve differently on different Zodes until gossip converges. |
+| Mutable slots (CAS via `expected_hash`) | CAS is enforced only between the client and the Zode it connects to. The winning write is then propagated via gossip with unconditional overwrite semantics. If two clients CAS to different Zodes simultaneously, both may succeed locally, and gossip propagation resolves via last-write-wins. Applications requiring stronger consistency should implement conflict resolution above the sector layer. |
+| `ttl_seconds` | Propagated in the gossip message. Receiving Zodes MAY use the hint for their own eviction policy. |
+
+### Optional client multi-send
+
+Clients MAY send the same `SectorStoreRequest` to multiple Zodes directly for faster initial availability. This is not required — gossip propagation will replicate the blob automatically — but it reduces the window during which only a single Zode holds the data. When multi-sending, at-least-one-success semantics apply: the client considers the write successful if any Zode accepts it.
 
 ## Notification and polling
 
-The mailbox protocol is **pull-based** in v0.1.0. Clients discover new writes by polling `batch_get` on known mailbox IDs.
+The sector protocol is **pull-based** in v0.1.0. Clients discover new writes by polling `batch_get` on known sector IDs.
 
 ### Polling guidance
 
 - Clients SHOULD use exponential backoff when no new data is found, up to a maximum interval (e.g., 30 seconds).
-- Clients SHOULD include decoy mailbox IDs in batch fetch requests to mask which IDs they are actually interested in.
+- Clients SHOULD include decoy sector IDs in batch fetch requests to mask which IDs they are actually interested in.
 - Clients SHOULD avoid polling from a single connection at high frequency to limit timing correlation.
 
 ### Future: push notifications
@@ -455,44 +497,44 @@ The mailbox protocol is **pull-based** in v0.1.0. Clients discover new writes by
 A future version MAY add a lightweight notification mechanism:
 
 ```rust
-pub struct MailboxSubscribeRequest {
+pub struct SectorSubscribeRequest {
     pub program_id: ProgramId,
-    pub mailbox_ids: Vec<MailboxId>,
+    pub sector_ids: Vec<SectorId>,
 }
 
-pub struct MailboxNotification {
-    pub mailbox_id: MailboxId,
+pub struct SectorNotification {
+    pub sector_id: SectorId,
     pub updated_at_ms: u64,
 }
 ```
 
-This would allow Zodes to push `MailboxNotification` events when subscribed slots are written. The notification contains only the `mailbox_id` and a timestamp — no payload — so the client still performs a fetch to retrieve the content. This is deferred from v0.1.0 because push subscriptions reveal which mailbox IDs a client is interested in, creating a metadata correlation vector.
+This would allow Zodes to push `SectorNotification` events when subscribed slots are written. The notification contains only the `sector_id` and a timestamp — no payload — so the client still performs a fetch to retrieve the content. This is deferred from v0.1.0 because push subscriptions reveal which sector IDs a client is interested in, creating a metadata correlation vector.
 
 ## Protocol coexistence
 
 ### Multiplexing
 
-Both `/zfs/1.0.0` (base protocol) and `/zfs/mailbox/1.0.0` are registered as separate libp2p request-response protocols on the same Swarm. libp2p's built-in protocol negotiation (multistream-select) handles routing — each inbound stream is matched to the correct handler by its protocol string. No application-level multiplexing is needed.
+Both `/zfs/1.0.0` (base protocol) and `/zfs/sector/1.0.0` are registered as separate libp2p request-response protocols on the same Swarm. libp2p's built-in protocol negotiation (multistream-select) handles routing — each inbound stream is matched to the correct handler by its protocol string. No application-level multiplexing is needed.
 
 ### Shared infrastructure
 
 | Resource | Shared? | Notes |
 |----------|---------|-------|
 | libp2p Swarm | Yes | Single Swarm with both protocols registered |
-| GossipSub topics | Yes | `prog/{program_id_hex}` used for discovery by both protocols |
-| RocksDB instance | Yes | Mailbox uses its own `mailboxes` column family alongside base protocol CFs |
+| GossipSub topics | Yes | `prog/{program_id_hex}` used for discovery and data propagation by both protocols. Base protocol publishes `GossipBlock`; sector protocol publishes `GossipSector`. Messages are distinguished by CBOR tag. |
+| RocksDB instance | Yes | Sector uses its own `sectors` column family alongside base protocol CFs |
 | Policy engine | Yes | Program allowlist and quotas apply uniformly to both protocols |
-| Metrics surface | Separate counters | `mailbox_puts_total`, `mailbox_gets_total`, etc. alongside base protocol metrics |
+| Metrics surface | Separate counters | `sector_puts_total`, `sector_gets_total`, etc. alongside base protocol metrics |
 
 ### Discovery
 
-Clients discover which protocols a Zode supports via libp2p's Identify protocol, which advertises the list of supported protocol strings. A client connecting to a Zode that does not advertise `/zfs/mailbox/1.0.0` falls back to the base protocol (or raises an error if mailbox is required).
+Clients discover which protocols a Zode supports via libp2p's Identify protocol, which advertises the list of supported protocol strings. A client connecting to a Zode that does not advertise `/zfs/sector/1.0.0` falls back to the base protocol (or raises an error if sector is required).
 
 ## Versioning
 
 ### Protocol version string
 
-The protocol string `/zfs/mailbox/1.0.0` follows semver:
+The protocol string `/zfs/sector/1.0.0` follows semver:
 
 - **Major** (`1`): Breaking wire-format changes. Incompatible with prior major versions.
 - **Minor** (`0`): Additive changes (new optional fields, new request types). Backward-compatible.
@@ -500,7 +542,7 @@ The protocol string `/zfs/mailbox/1.0.0` follows semver:
 
 ### Negotiation
 
-A Zode MAY advertise multiple mailbox protocol versions (e.g., `/zfs/mailbox/1.0.0` and `/zfs/mailbox/2.0.0`). Clients select the highest mutually supported version via multistream-select. Within a major version, new optional fields (e.g., `ttl_seconds`, `expected_hash`) are silently ignored by older implementations that do not recognize them, because CBOR deserialization with `#[serde(default)]` skips unknown fields.
+A Zode MAY advertise multiple sector protocol versions (e.g., `/zfs/sector/1.0.0` and `/zfs/sector/2.0.0`). Clients select the highest mutually supported version via multistream-select. Within a major version, new optional fields (e.g., `ttl_seconds`, `expected_hash`) are silently ignored by older implementations that do not recognize them, because CBOR deserialization with `#[serde(default)]` skips unknown fields.
 
 ### Upgrade path
 
@@ -517,14 +559,14 @@ When a breaking change is needed:
 | Information | Visible? |
 |------------|----------|
 | `program_id` | Yes — routing and policy |
-| `mailbox_id` | Yes — opaque 32 bytes, cannot reverse |
+| `sector_id` | Yes — opaque 32 bytes, cannot reverse |
 | Payload size (post-encryption) | Yes — mitigated by padding |
 | `overwrite` flag | Yes — distinguishes write-once from mutable slots |
 | `expected_hash` presence | Yes — reveals the client is doing conditional writes |
 | `ttl_seconds` value | Yes — reveals client's retention preference |
 | Write timing | Yes — when a put arrives |
 | Read timing | Yes — when a get arrives |
-| Which mailbox IDs are batched together | Yes — within a single batch request |
+| Which sector IDs are batched together | Yes — within a single batch request |
 | IP address of client | Yes — transport-level |
 
 ### What the Zode cannot see
@@ -540,7 +582,7 @@ When a breaking change is needed:
 
 ## Comparison with base protocol
 
-| Aspect | Base protocol ([12-protocol](12-protocol.md)) | Mailbox protocol |
+| Aspect | Base protocol ([12-protocol](12-protocol.md)) | Sector protocol |
 |--------|---------------------------------------------|-----------------|
 | Zode role | Indexes heads, verifies proofs, validates structure | Flat key-value put/get per program |
 | Metadata visible to Zode | Sender, recipients, sector, version, timestamps, signatures | Only `program_id` |
@@ -548,8 +590,8 @@ When a breaking change is needed:
 | Proof verification | Zode verifies Valid-Sector proofs | Not applicable; client-verified if needed |
 | Head management | Zode stores and serves structured `Head`s | No heads; client manages all state |
 | Client complexity | Low — Zode manages state | Higher — client manages all state |
-| Replication | GossipSub + request-response | Client-driven; GossipSub for discovery only |
-| Conflict detection | Version-based via Head lineage | Optional via `expected_hash` (CAS) |
+| Replication | GossipSub (`GossipBlock`) + request-response | Zode-to-Zode via GossipSub (`GossipSector`); optional client multi-send |
+| Conflict detection | Version-based via Head lineage | Optional via `expected_hash` (CAS, local to single Zode); last-write-wins across gossip |
 
 ## Sequence diagrams
 
@@ -559,13 +601,13 @@ When a breaking change is needed:
 sequenceDiagram
     participant C as Client
     participant Z as Zode
-    C->>C: derive_mailbox_id(shared_secret, info)
+    C->>C: derive_sector_id(shared_secret, info)
     C->>C: pad + encrypt payload
-    C->>Z: MailboxStoreRequest(program_id, mailbox_id, payload, overwrite)
+    C->>Z: SectorStoreRequest(program_id, sector_id, payload, overwrite)
     Z->>Z: Check program allowlist
     Z->>Z: Check storage quota
     Z->>Z: Check overwrite / expected_hash
-    Z-->>C: MailboxStoreResponse(ok / error)
+    Z-->>C: SectorStoreResponse(ok / error)
 ```
 
 ### Client fetch (single slot)
@@ -574,9 +616,9 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant Z as Zode
-    C->>C: derive_mailbox_id(shared_secret, info)
-    C->>Z: MailboxFetchRequest(program_id, mailbox_id)
-    Z-->>C: MailboxFetchResponse(payload | None)
+    C->>C: derive_sector_id(shared_secret, info)
+    C->>Z: SectorFetchRequest(program_id, sector_id)
+    Z-->>C: SectorFetchResponse(payload | None)
     C->>C: decrypt + unpad payload
 ```
 
@@ -586,28 +628,48 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant Z as Zode
-    C->>C: Compute real mailbox_ids (N)
-    C->>C: Generate decoy mailbox_ids (D)
+    C->>C: Compute real sector_ids (N)
+    C->>C: Generate decoy sector_ids (D)
     C->>C: Shuffle real + decoy IDs
-    C->>Z: MailboxBatchFetchRequest(program_id, [N + D ids])
-    Z-->>C: MailboxBatchFetchResponse(results[])
+    C->>Z: SectorBatchFetchRequest(program_id, [N + D ids])
+    Z-->>C: SectorBatchFetchResponse(results[])
     C->>C: Discard decoy results, decrypt real payloads
 ```
 
-### Client-driven replication (R = 2)
+### Zode-to-Zode replication via GossipSub
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant Z1 as Zode 1
     participant Z2 as Zode 2
-    C->>C: derive_mailbox_id + pad + encrypt
-    par Replicate to Z1
-        C->>Z1: MailboxStoreRequest
-        Z1-->>C: MailboxStoreResponse
-    and Replicate to Z2
-        C->>Z2: MailboxStoreRequest
-        Z2-->>C: MailboxStoreResponse
+    participant Z3 as Zode 3
+    C->>C: derive_sector_id + pad + encrypt
+    C->>Z1: SectorStoreRequest
+    Z1->>Z1: Store blob locally
+    Z1-->>C: SectorStoreResponse(ok)
+    Z1->>Z2: GossipSector (via GossipSub topic)
+    Z1->>Z3: GossipSector (via GossipSub topic)
+    Z2->>Z2: Store blob locally
+    Z3->>Z3: Store blob locally
+```
+
+### Optional client multi-send
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant Z1 as Zode 1
+    participant Z2 as Zode 2
+    C->>C: derive_sector_id + pad + encrypt
+    par Send to Z1
+        C->>Z1: SectorStoreRequest
+        Z1->>Z1: Store + gossip
+        Z1-->>C: SectorStoreResponse
+    and Send to Z2
+        C->>Z2: SectorStoreRequest
+        Z2->>Z2: Store + gossip (dedup on peers)
+        Z2-->>C: SectorStoreResponse
     end
     C->>C: At least one ok → success
 ```
@@ -618,15 +680,15 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant Z as Zode
-    C->>Z: MailboxFetchRequest(program_id, mailbox_id)
-    Z-->>C: MailboxFetchResponse(payload=current_blob)
+    C->>Z: SectorFetchRequest(program_id, sector_id)
+    Z-->>C: SectorFetchResponse(payload=current_blob)
     C->>C: expected_hash = SHA-256(current_blob)
     C->>C: Modify content, pad + encrypt → new_blob
-    C->>Z: MailboxStoreRequest(overwrite=true, expected_hash, payload=new_blob)
+    C->>Z: SectorStoreRequest(overwrite=true, expected_hash, payload=new_blob)
     alt Hash matches
-        Z-->>C: MailboxStoreResponse(ok=true)
+        Z-->>C: SectorStoreResponse(ok=true)
     else Hash mismatch (concurrent write)
-        Z-->>C: MailboxStoreResponse(error=ConditionFailed)
+        Z-->>C: SectorStoreResponse(error=ConditionFailed)
         C->>C: Re-fetch, merge, retry
     end
 ```
@@ -638,25 +700,27 @@ sequenceDiagram
 - **No transport anonymity**: IP addresses are visible. Onion routing / mixnet integration is deferred.
 - **Timing correlation**: Batch requests and write patterns can leak access structure. Decoy IDs are a partial countermeasure but are not mandatory in v0.1.0.
 - **No Zode-side validation**: Malicious clients can write invalid or adversarial data. Applications must validate after decryption.
-- **No wire-level write authorization**: Any client that can connect and knows a `program_id` can write to any `mailbox_id`. Access control is an application-layer concern.
-- **Write-once slot squatting**: Because there is no write authorization, an attacker who can predict a `mailbox_id` (e.g., by knowing the `shared_secret`) can pre-write to a write-once slot, permanently blocking the legitimate writer. Mitigations: (1) applications SHOULD use high-entropy, unpredictable info strings for write-once slots; (2) applications MAY use mutable slots with `expected_hash` instead of write-once slots where contention is possible; (3) future versions may add write-authorization tokens (see below).
+- **No wire-level write authorization**: Any client that can connect and knows a `program_id` can write to any `sector_id`. Access control is an application-layer concern.
+- **Write-once slot squatting**: Because there is no write authorization, an attacker who can predict a `sector_id` (e.g., by knowing the `shared_secret`) can pre-write to a write-once slot, permanently blocking the legitimate writer. Mitigations: (1) applications SHOULD use high-entropy, unpredictable info strings for write-once slots; (2) applications MAY use mutable slots with `expected_hash` instead of write-once slots where contention is possible; (3) future versions may add write-authorization tokens (see below).
 - **Polling latency**: Clients must poll to discover new writes. High-frequency polling wastes bandwidth; low-frequency polling increases latency. Applications should tune polling intervals to their use case.
+- **CAS is local, not global**: `expected_hash` compare-and-swap is enforced only between the client and the single Zode it connects to. Gossip replication propagates the winning write with unconditional overwrite semantics. If two clients CAS to different Zodes simultaneously for the same mutable slot, both may succeed locally, and gossip resolves via last-write-wins. Applications requiring stronger consistency should implement conflict resolution above the sector layer.
 - **`expected_hash` reveals conditional-write intent**: The Zode can observe that a client is performing compare-and-swap, which reveals that the slot is being concurrently accessed. Applications that require this to be hidden should use unconditional overwrites and handle conflicts at the application layer.
+- **Gossip propagation delay**: There is a window between when a Zode stores a blob and when gossip delivers it to peers. During this window, the blob exists on only one Zode. Clients that require faster multi-Zode availability MAY use optional multi-send.
 - **`ttl_seconds` is a hint only**: Zodes are not obligated to honor TTLs. Clients must tolerate both early eviction and indefinite retention.
 
 ### Future enhancements
 
-- **Decoy traffic**: Periodic writes to random mailbox IDs to mask real activity timing.
+- **Decoy traffic**: Periodic writes to random sector IDs to mask real activity timing.
 - **Epoch-based ID rotation**: Rotate derivation inputs periodically so the Zode cannot track long-lived mutable slots.
-- **Private information retrieval**: Fetch without revealing which `mailbox_id` is requested.
+- **Private information retrieval**: Fetch without revealing which `sector_id` is requested.
 - **Write authorization tokens**: Zode-verified tokens to restrict who can write to specific slots or programs. Could use blind signatures so the Zode verifies a valid token without learning the writer's identity.
-- **Push notifications**: `MailboxSubscribeRequest` for Zode-pushed slot-update events (see [Notification and polling](#notification-and-polling)).
+- **Push notifications**: `SectorSubscribeRequest` for Zode-pushed slot-update events (see [Notification and polling](#notification-and-polling)).
 
 ## Implementation notes
 
-- **`zfs-core`**: Gains `MailboxId` (new module `mailbox_id.rs`), and mailbox wire types (`MailboxRequest`, `MailboxResponse`, and their inner structs in a new `mailbox_protocol.rs` module). The existing `ErrorCode` enum is extended with `SlotOccupied`, `BatchTooLarge`, and `ConditionFailed` variants. `MailboxStoreError` is defined here as a shared error type.
-- **`zfs-crypto`**: Gains `derive_mailbox_id(shared_secret, info) -> MailboxId` — performs the two-step HKDF derivation (extract derivation key, then derive mailbox ID) with salt `"zfs:mailbox:v1"`. Also gains `pad_to_bucket(content) -> Vec<u8>` and `unpad_from_bucket(padded) -> Result<Vec<u8>, CryptoError>` for the length-prefix + zero-fill padding scheme. The existing `SectorKey`, `encrypt_sector`, `decrypt_sector`, `wrap_sector_key`, `unwrap_sector_key` are unchanged and reused for payload encryption.
-- **`zfs-storage`**: Gains a `MailboxStore` trait with `put`, `get`, `batch_put`, `batch_get`, and `stats`. The `RocksStorage` implementation adds a `mailboxes` column family to its existing set (`blocks`, `heads`, `program_index`, `metadata`, `mailboxes`). The `put` operation with `expected_hash` uses a read-modify-write under a RocksDB single-key lock (or merge operator) to ensure atomicity. The existing base protocol traits (`BlockStore`, `HeadStore`, `ProgramIndex`) are unchanged.
-- **`zfs-net`**: Registers `/zfs/mailbox/1.0.0` as a separate request-response protocol on the same libp2p Swarm. Uses multistream-select for protocol negotiation. The base protocol's `ZfsRequest` / `ZfsResponse` and GossipSub topics are unchanged.
-- **`zfs-zode`**: Gains a `MailboxStore`-backed request handler (simpler than the base handler — no CID verification, no proof verification, no head management). Policy enforcement (program allowlist, quotas, rate limiting) applies to both protocols. The `expected_hash` check is performed inside the storage layer, not the handler.
-- **`zfs-sdk`**: Gains `derive_mailbox_id`, `pad_to_bucket`, `unpad_from_bucket`, and batch operation helpers for client-driven replication. Provides a convenience `mailbox_encrypt(sector_key, program_id, mailbox_id, content) -> Vec<u8>` that pads, sets the mandatory AAD, and encrypts in one call. Application-specific logic (group management, message ordering, membership) lives above this layer in application code.
+- **`zfs-core`**: Gains `GossipSector` and sector wire types (`SectorRequest`, `SectorResponse`, and their inner structs in a new `sector_protocol.rs` module). Reuses the existing `SectorId` type from `sector_id.rs` (sector protocol IDs are always 32-byte HKDF outputs within the variable-length `SectorId`). The existing `ErrorCode` enum is extended with `SlotOccupied`, `BatchTooLarge`, and `ConditionFailed` variants. `SectorStoreError` is defined here as a shared error type.
+- **`zfs-crypto`**: Gains `derive_sector_id(shared_secret, info) -> SectorId` — performs the two-step HKDF derivation (extract derivation key, then derive sector ID) with salt `"zfs:sector:v1"`. Also gains `pad_to_bucket(content) -> Vec<u8>` and `unpad_from_bucket(padded) -> Result<Vec<u8>, CryptoError>` for the length-prefix + zero-fill padding scheme. The existing `SectorKey`, `encrypt_sector`, `decrypt_sector`, `wrap_sector_key`, `unwrap_sector_key` are unchanged and reused for payload encryption.
+- **`zfs-storage`**: Gains a `SectorStore` trait with `put`, `get`, `batch_put`, `batch_get`, and `stats`. The `RocksStorage` implementation adds a `sectors` column family to its existing set (`blocks`, `heads`, `program_index`, `metadata`, `sectors`). The `put` operation with `expected_hash` uses a read-modify-write under a RocksDB single-key lock (or merge operator) to ensure atomicity. The existing base protocol traits (`BlockStore`, `HeadStore`, `ProgramIndex`) are unchanged.
+- **`zfs-net`**: Registers `/zfs/sector/1.0.0` as a separate request-response protocol on the same libp2p Swarm. Uses multistream-select for protocol negotiation. GossipSub message handling is extended to deserialize both `GossipBlock` (base protocol) and `GossipSector` (sector protocol) from the same program topics, distinguished by CBOR tag. On successful client store, the handler publishes a `GossipSector` to the program's GossipSub topic. Incoming gossip messages are routed to the appropriate handler based on type.
+- **`zfs-zode`**: Gains a `SectorStore`-backed request handler (simpler than the base handler — no CID verification, no proof verification, no head management). On accepting a `SectorStoreRequest`, the handler stores the blob and triggers gossip publication via `zfs-net`. Incoming `GossipSector` messages are handled with idempotent write-once or last-write-wins semantics (no `expected_hash` check for gossip-received writes). Policy enforcement (program allowlist, quotas, rate limiting) applies to both client requests and gossip-received writes.
+- **`zfs-sdk`**: Gains `derive_sector_id`, `pad_to_bucket`, `unpad_from_bucket`, and batch operation helpers. Provides optional multi-send to multiple Zodes for faster initial availability (gossip handles replication automatically). Provides a convenience `sector_encrypt(sector_key, program_id, sector_id, content) -> Vec<u8>` that pads, sets the mandatory AAD, and encrypts in one call. Application-specific logic (group management, message ordering, membership) lives above this layer in application code.

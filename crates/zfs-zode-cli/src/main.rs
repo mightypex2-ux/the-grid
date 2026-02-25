@@ -99,7 +99,7 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
     let bootstrap_peers: Vec<zfs_net::Multiaddr> = cli
         .bootstrap
         .iter()
-        .map(|s| s.parse().context("invalid bootstrap multiaddr"))
+        .map(|s| zfs_net::strip_zx_multiaddr(s).parse().context("invalid bootstrap multiaddr"))
         .collect::<Result<_>>()?;
 
     let topics: HashSet<ProgramId> = cli

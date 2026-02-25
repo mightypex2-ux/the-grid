@@ -63,3 +63,19 @@ pub fn parse_zode_id(s: &str) -> Result<ZodeId, libp2p::identity::ParseError> {
     let raw = s.strip_prefix(ZODE_ID_PREFIX).unwrap_or(s);
     raw.parse()
 }
+
+/// Strip the display-only `Zx` prefix from the `/p2p/<peer_id>` component of a
+/// multiaddr string so libp2p can parse the raw `PeerId`.
+///
+/// Returns the input unchanged when no `Zx` prefix is present.
+pub fn strip_zx_multiaddr(addr: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(idx) = addr.find("/p2p/Zx") {
+        let prefix_start = idx + "/p2p/".len();
+        let mut out = String::with_capacity(addr.len() - 2);
+        out.push_str(&addr[..prefix_start]);
+        out.push_str(&addr[prefix_start + 2..]);
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(addr)
+    }
+}
