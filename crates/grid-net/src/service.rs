@@ -256,12 +256,8 @@ impl NetworkService {
 
     fn map_gossip_event(event: gossipsub::Event) -> Option<NetworkEvent> {
         match event {
-            gossipsub::Event::Message {
-                propagation_source,
-                message,
-                ..
-            } => Some(NetworkEvent::GossipMessage {
-                source: message.source.or(Some(propagation_source)),
+            gossipsub::Event::Message { message, .. } => Some(NetworkEvent::GossipMessage {
+                source: message.source,
                 topic: message.topic.to_string(),
                 data: message.data,
             }),
