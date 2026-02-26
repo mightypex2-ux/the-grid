@@ -71,6 +71,8 @@ impl ZodeApp {
         self.settings_error = None;
         self.stop_zode();
 
+        crate::chat::ensure_proof_keys(&self.settings.data_dir);
+
         let shared = Arc::new(Mutex::new(AppState::default()));
         self.shared = Arc::clone(&shared);
 

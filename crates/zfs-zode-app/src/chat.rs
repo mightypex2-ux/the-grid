@@ -351,35 +351,41 @@ fn broadcast_gossip(
 
 const PROOF_BUCKETS: &[u32] = &[1024, 4096];
 
-fn load_or_generate_prover(data_dir: &str) -> Box<Groth16ShapeProver> {
+/// Ensure the Groth16 proving and verifying key files exist on disk.
+///
+/// Must be called **before** `Zode::start()` so the verifier can load
+/// the VKs at boot time.
+pub(crate) fn ensure_proof_keys(data_dir: &str) {
     let ver = zfs_proof_groth16::KEY_VERSION;
     let key_dir = PathBuf::from(data_dir).join("proof_keys");
     std::fs::create_dir_all(&key_dir).ok();
 
-    let all_cached = PROOF_BUCKETS
-        .iter()
-        .all(|b| key_dir.join(format!("shape_pk_{b}_{ver}.bin")).exists());
-
-    if all_cached {
-        if let Ok(prover) = Groth16ShapeProver::load(&key_dir) {
-            info!("loaded cached Groth16 proving keys");
-            return Box::new(prover);
-        }
+    let all_exist = PROOF_BUCKETS.iter().all(|b| {
+        key_dir.join(format!("shape_pk_{b}_{ver}.bin")).exists()
+            && key_dir.join(format!("shape_vk_{b}_{ver}.bin")).exists()
+    });
+    if all_exist {
+        return;
     }
 
-    info!("generating Groth16 keys for buckets {:?} (first launch)...", PROOF_BUCKETS);
-    let dir = key_dir.clone();
-    let prover = std::thread::Builder::new()
+    info!(
+        "generating Groth16 keys for buckets {:?} (first launch)...",
+        PROOF_BUCKETS
+    );
+    let dir = key_dir;
+    std::thread::Builder::new()
         .name("groth16-keygen".into())
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             for &bucket in PROOF_BUCKETS {
-                if dir.join(format!("shape_pk_{bucket}_{ver}.bin")).exists() {
+                if dir.join(format!("shape_pk_{bucket}_{ver}.bin")).exists()
+                    && dir.join(format!("shape_vk_{bucket}_{ver}.bin")).exists()
+                {
                     continue;
                 }
                 info!(bucket, "generating Groth16 keys...");
-                let (pk, vk) = generate_keys_for_bucket(bucket)
-                    .expect("Groth16 key generation failed");
+                let (pk, vk) =
+                    generate_keys_for_bucket(bucket).expect("Groth16 key generation failed");
 
                 let mut pk_bytes = Vec::new();
                 pk.serialize_compressed(&mut pk_bytes)
@@ -393,13 +399,19 @@ fn load_or_generate_prover(data_dir: &str) -> Box<Groth16ShapeProver> {
                 std::fs::write(dir.join(format!("shape_vk_{bucket}_{ver}.bin")), &vk_bytes)
                     .expect("failed to write verifying key");
             }
-            Groth16ShapeProver::load(&dir).expect("failed to load proving keys")
         })
         .expect("failed to spawn keygen thread")
         .join()
         .expect("keygen thread panicked");
 
     info!("Groth16 key generation complete");
+}
+
+fn load_or_generate_prover(data_dir: &str) -> Box<Groth16ShapeProver> {
+    ensure_proof_keys(data_dir);
+    let key_dir = PathBuf::from(data_dir).join("proof_keys");
+    let prover = Groth16ShapeProver::load(&key_dir).expect("failed to load proving keys");
+    info!("loaded Groth16 proving keys");
     Box::new(prover)
 }
 
