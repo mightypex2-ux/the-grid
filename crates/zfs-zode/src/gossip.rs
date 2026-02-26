@@ -11,8 +11,9 @@ pub(crate) fn handle_gossip_message<S: SectorStore>(
     event_tx: &broadcast::Sender<LogEvent>,
     topic: &str,
     data: &[u8],
+    sender: Option<String>,
 ) {
-    info!(%topic, bytes = data.len(), "gossip message received");
+    info!(%topic, bytes = data.len(), ?sender, "gossip message received");
     match zfs_core::decode_canonical::<GossipSectorAppend>(data) {
         Ok(msg) => {
             let result = sector_handler.handle_gossip_append(&msg);
@@ -25,6 +26,7 @@ pub(crate) fn handle_gossip_message<S: SectorStore>(
                 "gossip sector append processed"
             );
             let _ = event_tx.send(LogEvent::GossipSectorReceived {
+                sender,
                 program_id: msg.program_id.to_hex(),
                 sector_id: msg.sector_id.to_hex(),
                 result,

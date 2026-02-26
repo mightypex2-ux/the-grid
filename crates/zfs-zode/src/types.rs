@@ -2,6 +2,20 @@ use std::fmt;
 
 use crate::metrics::MetricsSnapshot;
 
+/// Produce a short display form of a Zode ID, stripping the common
+/// `Zx12D3KooW` multicodec prefix shared by all libp2p PeerIds.
+fn short_zode_id(id: &str) -> String {
+    const PREFIX: &str = "Zx12D3KooW";
+    if id.starts_with(PREFIX) {
+        let unique = &id[PREFIX.len()..];
+        format!("Zx..{}", &unique[..6.min(unique.len())])
+    } else if id.len() > 10 {
+        format!("{}..{}", &id[..4], &id[id.len() - 6..])
+    } else {
+        id.to_string()
+    }
+}
+
 /// Structured log events emitted by the Zode for UI consumption.
 #[derive(Debug, Clone)]
 pub enum LogEvent {
@@ -28,6 +42,7 @@ pub enum LogEvent {
     },
     /// A gossip sector append was received and stored (or rejected).
     GossipSectorReceived {
+        sender: Option<String>,
         program_id: String,
         sector_id: String,
         result: GossipAppendResult,
@@ -72,21 +87,29 @@ impl fmt::Display for LogEvent {
                 )
             }
             Self::GossipSectorReceived {
+                sender,
                 program_id,
                 sector_id,
                 result,
             } => {
                 let prog = &program_id[..8.min(program_id.len())];
                 let sid = &sector_id[..8.min(sector_id.len())];
+                let from = sender
+                    .as_deref()
+                    .map(short_zode_id)
+                    .unwrap_or_else(|| "unknown".into());
                 match result {
                     GossipAppendResult::Stored => {
-                        write!(f, "[GOSSIP STORED] prog={prog} sid={sid}")
+                        write!(f, "[GOSSIP STORED] from={from} prog={prog} sid={sid}")
                     }
                     GossipAppendResult::Duplicate => {
-                        write!(f, "[GOSSIP DUP] prog={prog} sid={sid}")
+                        write!(f, "[GOSSIP DUP] from={from} prog={prog} sid={sid}")
                     }
                     GossipAppendResult::Rejected(reason) => {
-                        write!(f, "[GOSSIP REJECT] prog={prog} sid={sid}: {reason}")
+                        write!(
+                            f,
+                            "[GOSSIP REJECT] from={from} prog={prog} sid={sid}: {reason}"
+                        )
                     }
                 }
             }

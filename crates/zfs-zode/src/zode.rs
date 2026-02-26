@@ -306,8 +306,19 @@ impl Zode {
                     listen_addr: addr.to_string(),
                 });
             }
-            NetworkEvent::GossipMessage { topic, data, .. } => {
-                crate::gossip::handle_gossip_message(sector_handler, event_tx, &topic, &data);
+            NetworkEvent::GossipMessage {
+                source,
+                topic,
+                data,
+            } => {
+                let sender = source.map(|id| format_zode_id(&id));
+                crate::gossip::handle_gossip_message(
+                    sector_handler,
+                    event_tx,
+                    &topic,
+                    &data,
+                    sender,
+                );
             }
             NetworkEvent::PeerDiscovered {
                 zode_id, addresses, ..
