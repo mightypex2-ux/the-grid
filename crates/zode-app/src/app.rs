@@ -325,6 +325,27 @@ impl ZodeApp {
         self.interlink_state = None;
     }
 
+    pub(crate) fn lock_session(&mut self) {
+        self.stop_zode();
+        self.unlock_password.clear();
+        self.unlock_error = None;
+        self.active_profile_id = None;
+        self.session_password = None;
+        self.identity_state = Default::default();
+        self.shared = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::state::AppState::default(),
+        ));
+        self.tab = Tab::Status;
+
+        self.phase = if self.profiles.len() > 1 {
+            AppPhase::ProfileSelect
+        } else {
+            AppPhase::Unlock {
+                profile_id: self.profiles[0].id.clone(),
+            }
+        };
+    }
+
     fn handle_resize_edges(ctx: &egui::Context) -> bool {
         const BORDER: f32 = 6.0;
         let screen = ctx.screen_rect();
@@ -477,6 +498,15 @@ impl ZodeApp {
         let is_identity = self.tab == Tab::Identity;
         if title_bar_icon(ui, egui_phosphor::regular::USER_CIRCLE, is_identity).clicked() {
             self.tab = Tab::Identity;
+        }
+
+        if !self.profiles.is_empty() {
+            if title_bar_icon(ui, egui_phosphor::regular::LOCK, false)
+                .on_hover_text("Lock & switch profile")
+                .clicked()
+            {
+                self.lock_session();
+            }
         }
 
         let connected = self.zode.is_some();
