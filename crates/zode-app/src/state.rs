@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use grid_core::{ProgramId, SectorId};
 use grid_crypto::SectorKey;
-use programs_interlink::interlink::ChannelId;
+use grid_programs_interlink::interlink::ChannelId;
 use zode::ZodeStatus;
 
 pub(crate) const MAX_LOG_ENTRIES: usize = 500;

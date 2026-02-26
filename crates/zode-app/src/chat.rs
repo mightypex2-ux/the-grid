@@ -11,7 +11,7 @@ use zero_neural::MachineKeyCapabilities;
 use grid_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
 use grid_crypto::SectorKey;
 use grid_proof_groth16::Groth16ShapeProver;
-use programs_interlink::interlink::{ChannelId, InterlinkDescriptor, ZMessage, TEST_CHANNEL_ID};
+use grid_programs_interlink::interlink::{ChannelId, InterlinkDescriptor, ZMessage, TEST_CHANNEL_ID};
 use grid_storage::SectorStore;
 
 use crate::app::ZodeApp;

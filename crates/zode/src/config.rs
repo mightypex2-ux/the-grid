@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use programs_interlink::InterlinkDescriptor;
-use programs_zid::ZidDescriptor;
+use grid_programs_interlink::InterlinkDescriptor;
+use grid_programs_zid::ZidDescriptor;
 use grid_core::{ProgramId, SectorId};
 use grid_net::NetworkConfig;
 use grid_storage::StorageConfig;

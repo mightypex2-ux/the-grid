@@ -1,5 +1,5 @@
 [package]
-name = "programs-zfs"
+name = "grid-programs-zfs"
 version = "0.2.0"
 edition = "2021"
 description = "ZFS file-system program (placeholder for future file-system semantics)"

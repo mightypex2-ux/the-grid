@@ -7,7 +7,7 @@ use grid_core::ProofSystem;
 use grid_net::{format_zode_id, NetworkEvent, NetworkService, ZodeId};
 use grid_proof::{NoopVerifier, ProofVerifierRegistry};
 use grid_proof_groth16::Groth16ShapeVerifier;
-use programs_interlink::InterlinkDescriptor;
+use grid_programs_interlink::InterlinkDescriptor;
 use grid_storage::{RocksStorage, SectorStore};
 
 use crate::config::ZodeConfig;

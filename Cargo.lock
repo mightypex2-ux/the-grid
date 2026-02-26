@@ -2515,6 +2515,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "grid-programs-interlink"
+version = "0.2.0"
+dependencies = [
+ "grid-core",
+ "grid-programs-zid",
+ "serde",
+ "serde_bytes",
+ "sha2",
+]
+
+[[package]]
+name = "grid-programs-zfs"
+version = "0.2.0"
+dependencies = [
+ "grid-core",
+]
+
+[[package]]
+name = "grid-programs-zid"
+version = "0.2.0"
+dependencies = [
+ "grid-core",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
 name = "grid-proof"
 version = "0.2.0"
 dependencies = [
@@ -2550,10 +2577,10 @@ dependencies = [
  "grid-core",
  "grid-crypto",
  "grid-net",
+ "grid-programs-interlink",
+ "grid-programs-zid",
  "grid-proof",
  "grid-proof-groth16",
- "programs-interlink",
- "programs-zid",
  "rand_core 0.6.4",
  "thiserror 2.0.18",
  "tokio",
@@ -4780,33 +4807,6 @@ name = "profiling"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
-
-[[package]]
-name = "programs-interlink"
-version = "0.2.0"
-dependencies = [
- "grid-core",
- "programs-zid",
- "serde",
- "serde_bytes",
- "sha2",
-]
-
-[[package]]
-name = "programs-zfs"
-version = "0.2.0"
-dependencies = [
- "grid-core",
-]
-
-[[package]]
-name = "programs-zid"
-version = "0.2.0"
-dependencies = [
- "grid-core",
- "serde",
- "serde_bytes",
-]
 
 [[package]]
 name = "prometheus-client"
@@ -7654,11 +7654,11 @@ dependencies = [
  "grid-core",
  "grid-crypto",
  "grid-net",
+ "grid-programs-interlink",
+ "grid-programs-zid",
  "grid-proof",
  "grid-proof-groth16",
  "grid-storage",
- "programs-interlink",
- "programs-zid",
  "serde",
  "serde_bytes",
  "tempfile",
@@ -7680,14 +7680,14 @@ dependencies = [
  "grid-core",
  "grid-crypto",
  "grid-net",
+ "grid-programs-interlink",
+ "grid-programs-zid",
  "grid-proof-groth16",
  "grid-sdk",
  "grid-storage",
  "hex",
  "hkdf",
  "image",
- "programs-interlink",
- "programs-zid",
  "rand 0.8.5",
  "sha2",
  "tokio",
@@ -7706,9 +7706,9 @@ dependencies = [
  "crossterm",
  "grid-core",
  "grid-net",
+ "grid-programs-interlink",
+ "grid-programs-zid",
  "grid-storage",
- "programs-interlink",
- "programs-zid",
  "ratatui",
  "tokio",
  "tracing",

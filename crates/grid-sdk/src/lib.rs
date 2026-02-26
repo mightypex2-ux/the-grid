@@ -48,6 +48,6 @@ pub use grid_crypto::{
     poseidon_encrypt_sector, poseidon_hash, unpad_from_bucket, SectorKey,
 };
 pub use grid_core::program_topic;
-pub use programs_zid::{ZidDescriptor, ZidMessage};
-pub use programs_interlink::{InterlinkDescriptor, ZMessage};
+pub use grid_programs_zid::{ZidDescriptor, ZidMessage};
+pub use grid_programs_interlink::{InterlinkDescriptor, ZMessage};
 pub use grid_proof_groth16::Groth16ShapeProver;

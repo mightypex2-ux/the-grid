@@ -1,15 +1,11 @@
 [package]
-name = "programs-interlink"
+name = "grid-programs-zid"
 version = "0.2.0"
 edition = "2021"
-description = "Interlink (chat) program descriptor and messages"
+description = "ZID (Zero Identity) program descriptor and messages"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
 grid-core = { path = "../../grid-core" }
-sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
-
-[dev-dependencies]
-programs-zid = { path = "../zid" }

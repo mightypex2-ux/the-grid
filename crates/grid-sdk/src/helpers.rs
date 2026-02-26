@@ -1,5 +1,5 @@
-use programs_interlink::InterlinkDescriptor;
-use programs_zid::ZidDescriptor;
+use grid_programs_interlink::InterlinkDescriptor;
+use grid_programs_zid::ZidDescriptor;
 
 /// Create the canonical ZID v1 program descriptor.
 pub fn zid_descriptor() -> ZidDescriptor {

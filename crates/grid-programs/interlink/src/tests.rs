@@ -20,7 +20,7 @@ fn interlink_descriptor_round_trip() {
 
 #[test]
 fn zid_and_interlink_have_different_program_ids() {
-    let zid_id = programs_zid::ZidDescriptor::v1().program_id().expect("zid");
+    let zid_id = grid_programs_zid::ZidDescriptor::v1().program_id().expect("zid");
     let interlink_id = InterlinkDescriptor::v1().program_id().expect("interlink");
     assert_ne!(zid_id, interlink_id);
 }
