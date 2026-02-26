@@ -10,6 +10,7 @@ mod render;
 mod render_storage;
 mod settings;
 mod state;
+mod vault;
 mod visualization;
 mod visualization_render;
 
