@@ -75,7 +75,7 @@ pub(crate) fn action_panel(
 pub(crate) fn info_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id)
         .num_columns(2)
-        .spacing([12.0, 6.0])
+        .spacing([12.0, 2.0])
         .show(ui, add_rows);
 }
 
