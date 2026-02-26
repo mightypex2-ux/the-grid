@@ -155,12 +155,17 @@ fn render_discovery_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
 
 pub(crate) fn render_status(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
     let Some(ref status) = state.status else {
-        ui.vertical_centered(|ui| {
-            let avail = ui.available_height();
-            ui.add_space((avail / 2.0 - 20.0).max(0.0));
-            ui.spinner();
-            ui.label("Starting Zode...");
-        });
+        egui::Frame::default()
+            .fill(colors::SURFACE)
+            .rounding(0.0)
+            .inner_margin(0.0)
+            .outer_margin(egui::Margin::symmetric(1.0, 0.0))
+            .stroke(egui::Stroke::new(1.0, colors::BORDER))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_min_height(ui.available_height());
+                app.visualization.render(ui);
+            });
         return;
     };
 
