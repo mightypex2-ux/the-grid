@@ -137,18 +137,40 @@ pub(crate) struct InterlinkUpdate {
 pub(crate) struct InterlinkState {
     pub messages: Vec<DisplayMessage>,
     pub compose: String,
-    pub sector_key: SectorKey,
+    pub sector_key: Option<SectorKey>,
     pub machine_did: String,
-    pub signing_keypair: Arc<zid::MachineKeyPair>,
-    pub channel_id: ChannelId,
-    pub program_id: ProgramId,
+    pub signing_keypair: Option<Arc<zid::MachineKeyPair>>,
+    pub channel_id: Option<ChannelId>,
+    pub program_id: Option<ProgramId>,
     /// Per-channel sector ID (one sector per channel in append model).
-    pub sector_id: SectorId,
-    pub prover: Box<grid_proof_groth16::Groth16ShapeProver>,
+    pub sector_id: Option<SectorId>,
+    pub prover: Option<Box<grid_proof_groth16::Groth16ShapeProver>>,
     pub error: Option<String>,
     pub initialized: bool,
     pub scroll_to_bottom: bool,
     pub focus_compose: bool,
-    pub update_rx: tokio::sync::mpsc::Receiver<InterlinkUpdate>,
-    pub refresh_tx: tokio::sync::mpsc::Sender<()>,
+    pub update_rx: Option<tokio::sync::mpsc::Receiver<InterlinkUpdate>>,
+    pub refresh_tx: Option<tokio::sync::mpsc::Sender<()>>,
+}
+
+impl InterlinkState {
+    pub fn error_only(msg: &str) -> Self {
+        Self {
+            messages: Vec::new(),
+            compose: String::new(),
+            sector_key: None,
+            machine_did: String::new(),
+            signing_keypair: None,
+            channel_id: None,
+            program_id: None,
+            sector_id: None,
+            prover: None,
+            error: Some(msg.to_string()),
+            initialized: true,
+            scroll_to_bottom: false,
+            focus_compose: false,
+            update_rx: None,
+            refresh_tx: None,
+        }
+    }
 }

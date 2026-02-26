@@ -5,8 +5,6 @@ use eframe::egui;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use tracing::info;
-use zid::ed25519_to_did_key;
-use zid::testkit::derive_machine_keypair_from_seed;
 use zid::MachineKeyCapabilities;
 use grid_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
 use grid_crypto::SectorKey;
@@ -29,19 +27,6 @@ fn derive_test_sector_key() -> SectorKey {
     SectorKey::from_bytes(key_bytes)
 }
 
-fn derive_test_machine_identity(zode_id: &str) -> (Arc<zid::MachineKeyPair>, String) {
-    use sha2::Digest;
-    let hash: [u8; 32] =
-        sha2::Sha256::digest(format!("interlink-main-machine:{zode_id}").as_bytes()).into();
-    let identity_id = [0x01; 16];
-    let machine_id = [0x02; 16];
-    let caps = MachineKeyCapabilities::SIGN | MachineKeyCapabilities::ENCRYPT;
-    let kp = derive_machine_keypair_from_seed(hash, &identity_id, &machine_id, 0, caps)
-        .expect("deterministic derivation cannot fail");
-    let did = ed25519_to_did_key(&kp.public_key().ed25519_bytes());
-    (Arc::new(kp), did)
-}
-
 // ---------------------------------------------------------------------------
 // ZodeApp interlink lifecycle
 // ---------------------------------------------------------------------------
@@ -49,11 +34,6 @@ fn derive_test_machine_identity(zode_id: &str) -> (Arc<zid::MachineKeyPair>, Str
 impl ZodeApp {
     pub(crate) fn init_interlink(&mut self) {
         let sector_key = derive_test_sector_key();
-        let zode_id = self
-            .zode
-            .as_ref()
-            .map(|z| z.status().zode_id)
-            .unwrap_or_default();
 
         let real_key = self
             .identity_state
@@ -61,12 +41,14 @@ impl ZodeApp {
             .iter()
             .find(|mk| mk.capabilities.contains(MachineKeyCapabilities::SIGN));
 
-        let (signing_keypair, machine_did) = if let Some(mk) = real_key {
-            (Arc::clone(&mk.keypair), mk.did.clone())
-        } else {
-            std::thread::spawn(move || derive_test_machine_identity(&zode_id))
-                .join()
-                .expect("key derivation thread panicked")
+        let (signing_keypair, machine_did) = match real_key {
+            Some(mk) => (Arc::clone(&mk.keypair), mk.did.clone()),
+            None => {
+                self.interlink_state = Some(InterlinkState::error_only(
+                    "No machine key with SIGN capability. Derive one on the Identity tab first.",
+                ));
+                return;
+            }
         };
 
         let data_dir = self.settings.data_dir.clone();
@@ -96,19 +78,19 @@ impl ZodeApp {
         self.interlink_state = Some(InterlinkState {
             messages: Vec::new(),
             compose: String::new(),
-            sector_key,
+            sector_key: Some(sector_key),
             machine_did,
-            signing_keypair,
-            channel_id,
-            program_id,
-            sector_id,
-            prover,
+            signing_keypair: Some(signing_keypair),
+            channel_id: Some(channel_id),
+            program_id: Some(program_id),
+            sector_id: Some(sector_id),
+            prover: Some(prover),
             error: None,
             initialized: true,
             scroll_to_bottom: true,
             focus_compose: true,
-            update_rx,
-            refresh_tx,
+            update_rx: Some(update_rx),
+            refresh_tx: Some(refresh_tx),
         });
     }
 
@@ -156,6 +138,14 @@ impl ZodeApp {
         if text.is_empty() {
             return;
         }
+
+        let (Some(ref sector_key), Some(ref program_id), Some(ref sector_id), Some(ref prover)) =
+            (&il.sector_key, &il.program_id, &il.sector_id, &il.prover)
+        else {
+            il.error = Some("Interlink not fully initialized".into());
+            return;
+        };
+
         il.compose.clear();
 
         let msg = match build_interlink_message(il, text) {
@@ -166,13 +156,7 @@ impl ZodeApp {
             }
         };
 
-        match encrypt_message(
-            &msg,
-            &il.sector_key,
-            &il.program_id,
-            &il.sector_id,
-            &il.prover,
-        ) {
+        match encrypt_message(&msg, sector_key, program_id, sector_id, prover) {
             Ok((ciphertext, proof)) => {
                 do_append(il, &storage, zode, ciphertext, Some(proof));
             }
@@ -190,28 +174,29 @@ fn do_append(
     ciphertext: Vec<u8>,
     shape_proof: Option<ShapeProof>,
 ) {
-    match storage.append(&il.program_id, &il.sector_id, &ciphertext) {
+    let (Some(ref program_id), Some(ref sector_id)) = (&il.program_id, &il.sector_id) else {
+        il.error = Some("Interlink not fully initialized".into());
+        return;
+    };
+    match storage.append(program_id, sector_id, &ciphertext) {
         Ok(index) => {
             if let Some(ref proof) = shape_proof {
                 if let Ok(proof_bytes) = encode_proof_cbor(proof) {
-                    let _ = storage.store_proof(
-                        &il.program_id,
-                        &il.sector_id,
-                        index,
-                        &proof_bytes,
-                    );
+                    let _ = storage.store_proof(program_id, sector_id, index, &proof_bytes);
                 }
             }
             il.error = None;
             broadcast_gossip(
                 zode,
-                il.program_id,
-                il.sector_id.clone(),
+                *program_id,
+                sector_id.clone(),
                 index,
                 ciphertext,
                 shape_proof,
             );
-            let _ = il.refresh_tx.try_send(());
+            if let Some(ref tx) = il.refresh_tx {
+                let _ = tx.try_send(());
+            }
         }
         Err(e) => {
             il.error = Some(format!("Sector append failed: {e}"));
@@ -224,16 +209,24 @@ fn do_append(
 // ---------------------------------------------------------------------------
 
 fn build_interlink_message(il: &InterlinkState, text: String) -> Result<ZMessage, String> {
+    let channel_id = il
+        .channel_id
+        .as_ref()
+        .ok_or_else(|| "No channel ID".to_string())?;
+    let signing_keypair = il
+        .signing_keypair
+        .as_ref()
+        .ok_or_else(|| "No signing keypair".to_string())?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
     ZMessage::new_signed(
         il.machine_did.clone(),
-        il.channel_id.clone(),
+        channel_id.clone(),
         text,
         now_ms,
-        |signable| il.signing_keypair.sign(signable).to_bytes(),
+        |signable| signing_keypair.sign(signable).to_bytes(),
     )
     .map_err(|e| format!("Sign failed: {e}"))
 }
@@ -396,27 +389,30 @@ pub(crate) fn render_interlink(app: &mut ZodeApp, ui: &mut egui::Ui) {
 
 fn render_interlink_header(app: &ZodeApp, ui: &mut egui::Ui) {
     let il = app.interlink_state.as_ref().unwrap();
-    let key_preview: String = il.sector_key.as_bytes()[..8]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let ch_display = String::from_utf8_lossy(il.channel_id.as_bytes()).to_string();
 
     section(ui, "INTERLINK", |ui| {
-        info_grid(ui, "interlink_info_grid", |ui| {
-            kv_row(ui, "Channel", &ch_display);
+        if let (Some(ref sector_key), Some(ref channel_id)) = (&il.sector_key, &il.channel_id) {
+            let key_preview: String = sector_key.as_bytes()[..8]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let ch_display = String::from_utf8_lossy(channel_id.as_bytes()).to_string();
 
-            field_label(ui, "Sector Key");
-            ui.label(
-                egui::RichText::new(format!("{key_preview}..."))
-                    .monospace()
-                    .weak(),
-            );
-            ui.end_row();
+            info_grid(ui, "interlink_info_grid", |ui| {
+                kv_row(ui, "Channel", &ch_display);
 
-            kv_row(ui, "Messages", &format!("{}", il.messages.len()));
-            kv_row(ui, "Protocol", "/grid/sector/2.0.0");
-        });
+                field_label(ui, "Sector Key");
+                ui.label(
+                    egui::RichText::new(format!("{key_preview}..."))
+                        .monospace()
+                        .weak(),
+                );
+                ui.end_row();
+
+                kv_row(ui, "Messages", &format!("{}", il.messages.len()));
+                kv_row(ui, "Protocol", "/grid/sector/2.0.0");
+            });
+        }
     });
 
     if let Some(ref err) = il.error {
@@ -426,13 +422,15 @@ fn render_interlink_header(app: &ZodeApp, ui: &mut egui::Ui) {
 
 fn drain_interlink_updates(app: &mut ZodeApp) {
     let il = app.interlink_state.as_mut().unwrap();
-    while let Ok(upd) = il.update_rx.try_recv() {
-        if upd.error.is_some() {
-            il.error = upd.error;
-        }
-        if !upd.new_messages.is_empty() {
-            il.messages.extend(upd.new_messages);
-            il.scroll_to_bottom = true;
+    if let Some(ref mut rx) = il.update_rx {
+        while let Ok(upd) = rx.try_recv() {
+            if upd.error.is_some() {
+                il.error = upd.error;
+            }
+            if !upd.new_messages.is_empty() {
+                il.messages.extend(upd.new_messages);
+                il.scroll_to_bottom = true;
+            }
         }
     }
 }
