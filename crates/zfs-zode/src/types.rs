@@ -30,7 +30,7 @@ pub enum LogEvent {
     GossipSectorReceived {
         program_id: String,
         sector_id: String,
-        accepted: bool,
+        result: GossipAppendResult,
     },
     /// The Zode is shutting down.
     ShuttingDown,
@@ -74,17 +74,80 @@ impl fmt::Display for LogEvent {
             Self::GossipSectorReceived {
                 program_id,
                 sector_id,
-                accepted,
+                result,
             } => {
-                let status = if *accepted { "STORED" } else { "REJECT" };
-                write!(
-                    f,
-                    "[GOSSIP {status}] prog={} sid={}",
-                    &program_id[..8.min(program_id.len())],
-                    &sector_id[..8.min(sector_id.len())]
-                )
+                let prog = &program_id[..8.min(program_id.len())];
+                let sid = &sector_id[..8.min(sector_id.len())];
+                match result {
+                    GossipAppendResult::Stored => {
+                        write!(f, "[GOSSIP STORED] prog={prog} sid={sid}")
+                    }
+                    GossipAppendResult::Duplicate => {
+                        write!(f, "[GOSSIP DUP] prog={prog} sid={sid}")
+                    }
+                    GossipAppendResult::Rejected(reason) => {
+                        write!(f, "[GOSSIP REJECT] prog={prog} sid={sid}: {reason}")
+                    }
+                }
             }
             Self::ShuttingDown => write!(f, "[SHUTDOWN] Zode shutting down"),
+        }
+    }
+}
+
+/// Outcome of a gossip sector append.
+#[derive(Debug, Clone)]
+pub enum GossipAppendResult {
+    /// The entry was stored successfully.
+    Stored,
+    /// The entry already existed at this index (idempotent no-op).
+    Duplicate,
+    /// The entry was rejected.
+    Rejected(GossipRejectReason),
+}
+
+impl GossipAppendResult {
+    pub fn is_accepted(&self) -> bool {
+        matches!(self, Self::Stored | Self::Duplicate)
+    }
+}
+
+/// Why a gossip sector append was rejected.
+#[derive(Debug, Clone)]
+pub enum GossipRejectReason {
+    /// The program ID is not in the subscribed topic set.
+    ProgramNotSubscribed,
+    /// The sector ID is filtered out by the sector policy.
+    SectorFiltered,
+    /// The payload exceeds the maximum entry size.
+    EntryTooLarge { size: usize, max: u64 },
+    /// A shape proof is required but was not included.
+    ProofMissing,
+    /// The ciphertext in the payload could not be parsed for hashing.
+    CiphertextMalformed,
+    /// The ciphertext hash in the proof does not match the payload.
+    CiphertextHashMismatch,
+    /// The Groth16/ZK proof did not verify.
+    ProofVerificationFailed { detail: String },
+    /// Writing to storage failed.
+    StorageError { detail: String },
+}
+
+impl fmt::Display for GossipRejectReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ProgramNotSubscribed => write!(f, "program not subscribed"),
+            Self::SectorFiltered => write!(f, "sector filtered by policy"),
+            Self::EntryTooLarge { size, max } => {
+                write!(f, "entry too large ({size} bytes, max {max})")
+            }
+            Self::ProofMissing => write!(f, "shape proof required but missing"),
+            Self::CiphertextMalformed => write!(f, "ciphertext malformed for hash"),
+            Self::CiphertextHashMismatch => write!(f, "ciphertext hash mismatch"),
+            Self::ProofVerificationFailed { detail } => {
+                write!(f, "proof verification failed: {detail}")
+            }
+            Self::StorageError { detail } => write!(f, "storage error: {detail}"),
         }
     }
 }
@@ -104,7 +167,10 @@ pub enum LogLevel {
 
 impl LogLevel {
     pub fn from_log_line(line: &str) -> Self {
-        if line.starts_with("[SECTOR APPEND REJECT") || line.starts_with("[REJECT") {
+        if line.starts_with("[SECTOR APPEND REJECT")
+            || line.starts_with("[REJECT")
+            || line.starts_with("[GOSSIP REJECT")
+        {
             Self::Reject
         } else if line.starts_with("[GOSSIP") {
             Self::Gossip

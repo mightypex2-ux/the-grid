@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tracing::{debug, warn};
+use tracing::warn;
 use zfs_core::{
     Cid, ErrorCode, GossipSectorAppend, ProgramId, ProofSystem, SectorAppendRequest,
     SectorAppendResponse, SectorAppendResult, SectorBatchAppendEntry, SectorBatchAppendRequest,
@@ -250,21 +250,27 @@ impl<S: SectorStore> SectorRequestHandler<S> {
         }
     }
 
-    /// Handle a gossip sector append. Returns `true` if stored.
-    pub(crate) fn handle_gossip_append(&self, msg: &GossipSectorAppend) -> bool {
-        if self.check_access(&msg.program_id, &msg.sector_id).is_err() {
-            return false;
+    /// Handle a gossip sector append, returning a detailed result.
+    pub(crate) fn handle_gossip_append(
+        &self,
+        msg: &GossipSectorAppend,
+    ) -> crate::types::GossipAppendResult {
+        use crate::types::{GossipAppendResult, GossipRejectReason};
+
+        if let Err(reason) = self.check_gossip_access(&msg.program_id, &msg.sector_id) {
+            return GossipAppendResult::Rejected(reason);
         }
-        if let Err(code) = self.check_entry_size(msg.payload.len()) {
-            debug!(?code, "gossip append rejected by size limit");
-            return false;
+        if msg.payload.len() as u64 > self.limits.max_slot_size_bytes {
+            self.metrics.inc_limit_rejection();
+            return GossipAppendResult::Rejected(GossipRejectReason::EntryTooLarge {
+                size: msg.payload.len(),
+                max: self.limits.max_slot_size_bytes,
+            });
         }
-        if self
-            .verify_proof(&msg.program_id, &msg.payload, msg.shape_proof.as_ref())
-            .is_err()
+        if let Err(reason) =
+            self.verify_proof_detailed(&msg.program_id, &msg.payload, msg.shape_proof.as_ref())
         {
-            debug!("gossip append rejected by proof verification");
-            return false;
+            return GossipAppendResult::Rejected(reason);
         }
         match self
             .storage
@@ -284,12 +290,16 @@ impl<S: SectorStore> SectorRequestHandler<S> {
                             );
                         }
                     }
+                    GossipAppendResult::Stored
+                } else {
+                    GossipAppendResult::Duplicate
                 }
-                true
             }
             Err(e) => {
                 warn!(error = %e, "gossip append store failed");
-                false
+                GossipAppendResult::Rejected(GossipRejectReason::StorageError {
+                    detail: e.to_string(),
+                })
             }
         }
     }
@@ -301,6 +311,20 @@ impl<S: SectorStore> SectorRequestHandler<S> {
         entry: &[u8],
         proof: Option<&ShapeProof>,
     ) -> Result<(), ErrorCode> {
+        self.verify_proof_detailed(program_id, entry, proof)
+            .map_err(|_| ErrorCode::ProofInvalid)
+    }
+
+    /// Like [`verify_proof`] but returns a specific [`GossipRejectReason`]
+    /// for diagnostics.
+    fn verify_proof_detailed(
+        &self,
+        program_id: &ProgramId,
+        entry: &[u8],
+        proof: Option<&ShapeProof>,
+    ) -> Result<(), crate::types::GossipRejectReason> {
+        use crate::types::GossipRejectReason;
+
         let proof_system = match self.program_proof_config.get(program_id) {
             Some(ps) => ps,
             None => return Ok(()),
@@ -309,18 +333,13 @@ impl<S: SectorStore> SectorRequestHandler<S> {
             return Ok(());
         }
 
-        let shape_proof = proof.ok_or(ErrorCode::ProofInvalid)?;
+        let shape_proof = proof.ok_or(GossipRejectReason::ProofMissing)?;
 
-        let actual_ct_hash = match zfs_crypto::poseidon_ciphertext_hash(entry) {
-            Ok(h) => h,
-            Err(_) => {
-                debug!("failed to extract ciphertext elements for hash");
-                return Err(ErrorCode::ProofInvalid);
-            }
-        };
+        let actual_ct_hash = zfs_crypto::poseidon_ciphertext_hash(entry)
+            .map_err(|_| GossipRejectReason::CiphertextMalformed)?;
+
         if actual_ct_hash.as_slice() != shape_proof.ciphertext_hash.as_slice() {
-            debug!("ciphertext hash mismatch — binding check failed");
-            return Err(ErrorCode::ProofInvalid);
+            return Err(GossipRejectReason::CiphertextHashMismatch);
         }
 
         let mut payload_ctx = Vec::with_capacity(68);
@@ -338,9 +357,8 @@ impl<S: SectorStore> SectorRequestHandler<S> {
                 &shape_proof.proof_bytes,
                 Some(&payload_ctx),
             )
-            .map_err(|e| {
-                debug!(error = %e, "proof verification failed");
-                ErrorCode::ProofInvalid
+            .map_err(|e| GossipRejectReason::ProofVerificationFailed {
+                detail: e.to_string(),
             })?;
 
         Ok(())
@@ -355,6 +373,24 @@ impl<S: SectorStore> SectorRequestHandler<S> {
         if !self.sector_allowed(sector_id) {
             self.metrics.inc_policy_rejection();
             return Err(ErrorCode::PolicyReject);
+        }
+        Ok(())
+    }
+
+    /// Like [`check_access`] but returns [`GossipRejectReason`] for gossip diagnostics.
+    fn check_gossip_access(
+        &self,
+        program_id: &ProgramId,
+        sector_id: &zfs_core::SectorId,
+    ) -> Result<(), crate::types::GossipRejectReason> {
+        use crate::types::GossipRejectReason;
+        if !self.topics.contains(program_id) {
+            self.metrics.inc_policy_rejection();
+            return Err(GossipRejectReason::ProgramNotSubscribed);
+        }
+        if !self.sector_allowed(sector_id) {
+            self.metrics.inc_policy_rejection();
+            return Err(GossipRejectReason::SectorFiltered);
         }
         Ok(())
     }

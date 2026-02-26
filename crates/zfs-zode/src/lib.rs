@@ -31,5 +31,5 @@ mod zode;
 pub use config::{DefaultProgramsConfig, SectorFilter, SectorLimitsConfig, ZodeConfig};
 pub use error::ZodeError;
 pub use metrics::{MetricsSnapshot, ZodeMetrics};
-pub use types::{LogEvent, LogLevel, ZodeStatus};
+pub use types::{GossipAppendResult, GossipRejectReason, LogEvent, LogLevel, ZodeStatus};
 pub use zode::Zode;
