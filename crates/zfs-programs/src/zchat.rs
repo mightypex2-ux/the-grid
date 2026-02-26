@@ -161,6 +161,45 @@ pub struct ZChatMessage {
 }
 
 impl ZChatMessage {
+    /// Build a signed message.
+    ///
+    /// `sign_fn` receives the canonical signable bytes and must return the
+    /// serialised signature (e.g. `HybridSignature::to_bytes()`).
+    pub fn new_signed(
+        sender_did: String,
+        channel_id: ChannelId,
+        content: String,
+        timestamp_ms: u64,
+        sign_fn: impl FnOnce(&[u8]) -> Vec<u8>,
+    ) -> Result<Self, ZfsError> {
+        let mut msg = Self {
+            sender_did,
+            channel_id,
+            content,
+            timestamp_ms,
+            signature: Vec::new(),
+        };
+        let signable = msg.signable_bytes()?;
+        msg.signature = sign_fn(&signable);
+        Ok(msg)
+    }
+
+    /// Verify the embedded signature against [`signable_bytes()`](Self::signable_bytes).
+    ///
+    /// `verify_fn` receives `(signable_bytes, signature_bytes)` and returns
+    /// `true` when the signature is valid.  Returns `Ok(false)` when the
+    /// signature field is empty (unsigned message).
+    pub fn verify_signature(
+        &self,
+        verify_fn: impl FnOnce(&[u8], &[u8]) -> bool,
+    ) -> Result<bool, ZfsError> {
+        if self.signature.is_empty() {
+            return Ok(false);
+        }
+        let signable = self.signable_bytes()?;
+        Ok(verify_fn(&signable, &self.signature))
+    }
+
     /// Canonical CBOR of all fields EXCEPT `signature`.
     /// This is the payload that gets signed and later verified.
     pub fn signable_bytes(&self) -> Result<Vec<u8>, ZfsError> {

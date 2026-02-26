@@ -6,8 +6,8 @@ use sha2::Sha256;
 use zero_neural::ed25519_to_did_key;
 use zero_neural::testkit::derive_machine_keypair_from_seed;
 use zero_neural::MachineKeyCapabilities;
-use zfs_core::{GossipSectorAppend, ProgramId, SectorId};
-use zfs_crypto::{decrypt_sector, encrypt_sector, pad_to_bucket, unpad_from_bucket, SectorKey};
+use zfs_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
+use zfs_crypto::SectorKey;
 use zfs_programs::zchat::{ChannelId, ZChatDescriptor, ZChatMessage, TEST_CHANNEL_ID};
 use zfs_storage::SectorStore;
 
@@ -16,7 +16,7 @@ use crate::components::{
     error_label, field_label, info_grid, kv_row, section, std_button, text_input,
 };
 use crate::helpers::format_timestamp_ms;
-use crate::state::{ChatState, ChatUpdate, DisplayMessage};
+use crate::state::{ChatState, ChatUpdate, DisplayMessage, SignatureStatus};
 
 fn derive_test_sector_key() -> SectorKey {
     let hk = Hkdf::<Sha256>::new(None, b"interlink-main-channel-v1");
@@ -26,7 +26,7 @@ fn derive_test_sector_key() -> SectorKey {
     SectorKey::from_bytes(key_bytes)
 }
 
-fn derive_test_machine_did(zode_id: &str) -> String {
+fn derive_test_machine_identity(zode_id: &str) -> (zero_neural::MachineKeyPair, String) {
     use sha2::Digest;
     let hash: [u8; 32] =
         sha2::Sha256::digest(format!("interlink-main-machine:{zode_id}").as_bytes()).into();
@@ -35,14 +35,8 @@ fn derive_test_machine_did(zode_id: &str) -> String {
     let caps = MachineKeyCapabilities::SIGN | MachineKeyCapabilities::ENCRYPT;
     let kp = derive_machine_keypair_from_seed(hash, &identity_id, &machine_id, 0, caps)
         .expect("deterministic derivation cannot fail");
-    ed25519_to_did_key(&kp.public_key().ed25519_bytes())
-}
-
-fn build_aad(program_id: &ProgramId, sector_id: &SectorId) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(32 + sector_id.as_bytes().len());
-    aad.extend_from_slice(program_id.as_bytes());
-    aad.extend_from_slice(sector_id.as_bytes());
-    aad
+    let did = ed25519_to_did_key(&kp.public_key().ed25519_bytes());
+    (kp, did)
 }
 
 // ---------------------------------------------------------------------------
@@ -57,9 +51,10 @@ impl ZodeApp {
             .as_ref()
             .map(|z| z.status().zode_id)
             .unwrap_or_default();
-        let machine_did = std::thread::spawn(move || derive_test_machine_did(&zode_id))
-            .join()
-            .expect("key derivation thread panicked");
+        let (signing_keypair, machine_did) =
+            std::thread::spawn(move || derive_test_machine_identity(&zode_id))
+                .join()
+                .expect("key derivation thread panicked");
         let channel_id = ChannelId::from_str_id(TEST_CHANNEL_ID);
         let program_id = ZChatDescriptor::v1()
             .program_id()
@@ -86,6 +81,7 @@ impl ZodeApp {
             compose: String::new(),
             sector_key,
             machine_did,
+            signing_keypair,
             channel_id,
             program_id,
             sector_id,
@@ -143,12 +139,17 @@ impl ZodeApp {
         }
         chat.compose.clear();
 
-        let msg = build_chat_message(chat, text);
-        let aad = build_aad(&chat.program_id, &chat.sector_id);
+        let msg = match build_chat_message(chat, text) {
+            Ok(m) => m,
+            Err(e) => {
+                chat.error = Some(e);
+                return;
+            }
+        };
 
-        match encrypt_message(&msg, &chat.sector_key, &aad) {
+        match encrypt_message(&msg, &chat.sector_key, &chat.program_id, &chat.sector_id) {
             Ok(ciphertext) => {
-                do_append(chat, &storage, zode, ciphertext);
+                do_append(chat, &storage, zode, ciphertext, None);
             }
             Err(e) => {
                 chat.error = Some(e);
@@ -162,6 +163,7 @@ fn do_append(
     storage: &Arc<zfs_storage::RocksStorage>,
     zode: &Arc<zfs_zode::Zode>,
     ciphertext: Vec<u8>,
+    shape_proof: Option<ShapeProof>,
 ) {
     match storage.append(&chat.program_id, &chat.sector_id, &ciphertext) {
         Ok(index) => {
@@ -172,6 +174,7 @@ fn do_append(
                 chat.sector_id.clone(),
                 index,
                 ciphertext,
+                shape_proof,
             );
             let _ = chat.refresh_tx.try_send(());
         }
@@ -185,26 +188,32 @@ fn do_append(
 // Message construction and encryption
 // ---------------------------------------------------------------------------
 
-fn build_chat_message(chat: &ChatState, text: String) -> ZChatMessage {
+fn build_chat_message(chat: &ChatState, text: String) -> Result<ZChatMessage, String> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    ZChatMessage {
-        sender_did: chat.machine_did.clone(),
-        channel_id: chat.channel_id.clone(),
-        content: text,
-        timestamp_ms: now_ms,
-        signature: Vec::new(),
-    }
+    ZChatMessage::new_signed(
+        chat.machine_did.clone(),
+        chat.channel_id.clone(),
+        text,
+        now_ms,
+        |signable| chat.signing_keypair.sign(signable).to_bytes(),
+    )
+    .map_err(|e| format!("Sign failed: {e}"))
 }
 
-fn encrypt_message(msg: &ZChatMessage, key: &SectorKey, aad: &[u8]) -> Result<Vec<u8>, String> {
+fn encrypt_message(
+    msg: &ZChatMessage,
+    key: &SectorKey,
+    program_id: &ProgramId,
+    sector_id: &SectorId,
+) -> Result<Vec<u8>, String> {
     let plaintext = msg
         .encode_canonical()
         .map_err(|e| format!("Encode failed: {e}"))?;
-    let padded = pad_to_bucket(&plaintext);
-    encrypt_sector(&padded, key, aad).map_err(|e| format!("Encrypt failed: {e}"))
+    zfs_sdk::sector_encrypt(&plaintext, key, program_id, sector_id)
+        .map_err(|e| format!("Encrypt failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -245,11 +254,10 @@ fn decrypt_entries(
     program_id: &ProgramId,
     sector_id: &SectorId,
 ) -> ChatUpdate {
-    let aad = build_aad(program_id, sector_id);
     let mut display: Vec<DisplayMessage> = Vec::new();
     let mut first_error: Option<String> = None;
     for ct in &entries {
-        match decrypt_one(ct, sector_key, &aad) {
+        match decrypt_one(ct, sector_key, program_id, sector_id) {
             Ok(msg) => display.push(msg),
             Err(e) if first_error.is_none() => first_error = Some(e),
             Err(_) => {}
@@ -264,16 +272,16 @@ fn decrypt_entries(
 fn decrypt_one(
     ciphertext: &[u8],
     sector_key: &SectorKey,
-    aad: &[u8],
+    program_id: &ProgramId,
+    sector_id: &SectorId,
 ) -> Result<DisplayMessage, String> {
-    let padded =
-        decrypt_sector(ciphertext, sector_key, aad).map_err(|e| format!("Decrypt: {e}"))?;
-    let plaintext = unpad_from_bucket(&padded).map_err(|e| format!("Unpad: {e}"))?;
+    let plaintext = zfs_sdk::sector_decrypt(ciphertext, sector_key, program_id, sector_id)
+        .map_err(|e| format!("Decrypt: {e}"))?;
     let msg = ZChatMessage::decode_canonical(&plaintext).map_err(|e| format!("Decode: {e}"))?;
     let sig_status = if msg.signature.is_empty() {
-        crate::state::SignatureStatus::None
+        SignatureStatus::None
     } else {
-        crate::state::SignatureStatus::Unknown
+        SignatureStatus::Unknown
     };
     Ok(DisplayMessage {
         sender: msg.sender_did,
@@ -293,13 +301,14 @@ fn broadcast_gossip(
     sector_id: SectorId,
     index: u64,
     ciphertext: Vec<u8>,
+    shape_proof: Option<ShapeProof>,
 ) {
     let gossip = GossipSectorAppend {
         program_id,
         sector_id,
         index,
         payload: ciphertext,
-        shape_proof: None,
+        shape_proof,
     };
     let topic = zfs_programs::program_topic(&gossip.program_id);
     if let Ok(data) = zfs_core::encode_canonical(&gossip) {
@@ -407,6 +416,24 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
     let name = short_sender(&msg.sender);
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new(format!("[{time}]")).monospace().weak());
+        match msg.signature_status {
+            SignatureStatus::Verified => {
+                ui.label(
+                    egui::RichText::new("\u{2713}")
+                        .color(egui::Color32::from_rgb(80, 200, 120)),
+                );
+            }
+            SignatureStatus::Failed => {
+                ui.label(
+                    egui::RichText::new("\u{2717}")
+                        .color(egui::Color32::from_rgb(220, 60, 60)),
+                );
+            }
+            SignatureStatus::Unknown => {
+                ui.label(egui::RichText::new("?").color(egui::Color32::GRAY));
+            }
+            SignatureStatus::None => {}
+        }
         ui.label(egui::RichText::new(format!("{name}:")).monospace().strong());
         ui.label(&msg.content);
     });

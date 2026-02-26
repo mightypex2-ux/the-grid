@@ -131,6 +131,7 @@ pub(crate) struct ChatState {
     pub compose: String,
     pub sector_key: SectorKey,
     pub machine_did: String,
+    pub signing_keypair: zero_neural::MachineKeyPair,
     pub channel_id: ChannelId,
     pub program_id: ProgramId,
     /// Per-channel sector ID (one sector per channel in append model).

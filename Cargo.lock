@@ -7664,6 +7664,7 @@ dependencies = [
  "zfs-crypto",
  "zfs-net",
  "zfs-programs",
+ "zfs-sdk",
  "zfs-storage",
  "zfs-zode",
 ]
