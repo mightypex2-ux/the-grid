@@ -117,7 +117,6 @@ pub(crate) enum SignatureStatus {
     None,
     Verified,
     Failed,
-    Unknown,
 }
 
 /// Incremental update carrying only newly-discovered messages.
@@ -131,11 +130,12 @@ pub(crate) struct ChatState {
     pub compose: String,
     pub sector_key: SectorKey,
     pub machine_did: String,
-    pub signing_keypair: zero_neural::MachineKeyPair,
+    pub signing_keypair: Box<zero_neural::MachineKeyPair>,
     pub channel_id: ChannelId,
     pub program_id: ProgramId,
     /// Per-channel sector ID (one sector per channel in append model).
     pub sector_id: SectorId,
+    pub prover: Box<zfs_proof_groth16::Groth16ShapeProver>,
     pub error: Option<String>,
     pub initialized: bool,
     pub scroll_to_bottom: bool,

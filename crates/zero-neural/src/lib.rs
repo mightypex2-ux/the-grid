@@ -10,7 +10,7 @@ pub mod shamir;
 pub mod shares_api;
 pub mod signing;
 
-pub use did::{did_key_to_ed25519, ed25519_to_did_key};
+pub use did::{did_key_to_ed25519, ed25519_to_did_key, verify_did_ed25519};
 pub use encapsulation::{EncapBundle, SharedSecret};
 pub use error::CryptoError;
 pub use machine_key::{MachineKeyCapabilities, MachineKeyPair, MachinePublicKey};

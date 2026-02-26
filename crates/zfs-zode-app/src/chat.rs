@@ -1,13 +1,17 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use ark_serialize::CanonicalSerialize;
 use eframe::egui;
 use hkdf::Hkdf;
 use sha2::Sha256;
+use tracing::info;
 use zero_neural::ed25519_to_did_key;
 use zero_neural::testkit::derive_machine_keypair_from_seed;
 use zero_neural::MachineKeyCapabilities;
 use zfs_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
 use zfs_crypto::SectorKey;
+use zfs_proof_groth16::{generate_keys_for_bucket, Groth16ShapeProver};
 use zfs_programs::zchat::{ChannelId, ZChatDescriptor, ZChatMessage, TEST_CHANNEL_ID};
 use zfs_storage::SectorStore;
 
@@ -26,7 +30,7 @@ fn derive_test_sector_key() -> SectorKey {
     SectorKey::from_bytes(key_bytes)
 }
 
-fn derive_test_machine_identity(zode_id: &str) -> (zero_neural::MachineKeyPair, String) {
+fn derive_test_machine_identity(zode_id: &str) -> (Box<zero_neural::MachineKeyPair>, String) {
     use sha2::Digest;
     let hash: [u8; 32] =
         sha2::Sha256::digest(format!("interlink-main-machine:{zode_id}").as_bytes()).into();
@@ -36,7 +40,7 @@ fn derive_test_machine_identity(zode_id: &str) -> (zero_neural::MachineKeyPair, 
     let kp = derive_machine_keypair_from_seed(hash, &identity_id, &machine_id, 0, caps)
         .expect("deterministic derivation cannot fail");
     let did = ed25519_to_did_key(&kp.public_key().ed25519_bytes());
-    (kp, did)
+    (Box::new(kp), did)
 }
 
 // ---------------------------------------------------------------------------
@@ -51,15 +55,18 @@ impl ZodeApp {
             .as_ref()
             .map(|z| z.status().zode_id)
             .unwrap_or_default();
+        let data_dir = self.settings.data_dir.clone();
         let (signing_keypair, machine_did) =
             std::thread::spawn(move || derive_test_machine_identity(&zode_id))
                 .join()
                 .expect("key derivation thread panicked");
         let channel_id = ChannelId::from_str_id(TEST_CHANNEL_ID);
-        let program_id = ZChatDescriptor::v1()
+        let program_id = ZChatDescriptor::v2()
             .program_id()
             .expect("Interlink descriptor is valid");
         let sector_id = channel_id.sector_id();
+
+        let prover = load_or_generate_prover(&data_dir);
 
         let (update_tx, update_rx) = tokio::sync::mpsc::channel::<ChatUpdate>(4);
         let (refresh_tx, refresh_rx) = tokio::sync::mpsc::channel::<()>(4);
@@ -85,6 +92,7 @@ impl ZodeApp {
             channel_id,
             program_id,
             sector_id,
+            prover,
             error: None,
             initialized: true,
             scroll_to_bottom: true,
@@ -147,9 +155,15 @@ impl ZodeApp {
             }
         };
 
-        match encrypt_message(&msg, &chat.sector_key, &chat.program_id, &chat.sector_id) {
-            Ok(ciphertext) => {
-                do_append(chat, &storage, zode, ciphertext, None);
+        match encrypt_message(
+            &msg,
+            &chat.sector_key,
+            &chat.program_id,
+            &chat.sector_id,
+            &chat.prover,
+        ) {
+            Ok((ciphertext, proof)) => {
+                do_append(chat, &storage, zode, ciphertext, Some(proof));
             }
             Err(e) => {
                 chat.error = Some(e);
@@ -167,6 +181,16 @@ fn do_append(
 ) {
     match storage.append(&chat.program_id, &chat.sector_id, &ciphertext) {
         Ok(index) => {
+            if let Some(ref proof) = shape_proof {
+                if let Ok(proof_bytes) = encode_proof_cbor(proof) {
+                    let _ = storage.store_proof(
+                        &chat.program_id,
+                        &chat.sector_id,
+                        index,
+                        &proof_bytes,
+                    );
+                }
+            }
             chat.error = None;
             broadcast_gossip(
                 zode,
@@ -208,12 +232,14 @@ fn encrypt_message(
     key: &SectorKey,
     program_id: &ProgramId,
     sector_id: &SectorId,
-) -> Result<Vec<u8>, String> {
+    prover: &Groth16ShapeProver,
+) -> Result<(Vec<u8>, ShapeProof), String> {
     let plaintext = msg
         .encode_canonical()
         .map_err(|e| format!("Encode failed: {e}"))?;
-    zfs_sdk::sector_encrypt(&plaintext, key, program_id, sector_id)
-        .map_err(|e| format!("Encrypt failed: {e}"))
+    let schema = ZChatDescriptor::field_schema();
+    zfs_sdk::sector_encrypt_and_prove(&plaintext, key, program_id, sector_id, prover, &schema)
+        .map_err(|e| format!("Encrypt+prove failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -275,13 +301,16 @@ fn decrypt_one(
     program_id: &ProgramId,
     sector_id: &SectorId,
 ) -> Result<DisplayMessage, String> {
-    let plaintext = zfs_sdk::sector_decrypt(ciphertext, sector_key, program_id, sector_id)
-        .map_err(|e| format!("Decrypt: {e}"))?;
+    let plaintext =
+        zfs_sdk::sector_decrypt_poseidon(ciphertext, sector_key, program_id, sector_id)
+            .map_err(|e| format!("Decrypt: {e}"))?;
     let msg = ZChatMessage::decode_canonical(&plaintext).map_err(|e| format!("Decode: {e}"))?;
-    let sig_status = if msg.signature.is_empty() {
-        SignatureStatus::None
-    } else {
-        SignatureStatus::Unknown
+    let sig_status = match msg.verify_signature(|signable, sig_bytes| {
+        zero_neural::verify_did_ed25519(&msg.sender_did, signable, sig_bytes).is_ok()
+    }) {
+        Ok(true) => SignatureStatus::Verified,
+        Ok(false) => SignatureStatus::None,
+        Err(_) => SignatureStatus::Failed,
     };
     Ok(DisplayMessage {
         sender: msg.sender_did,
@@ -314,6 +343,70 @@ fn broadcast_gossip(
     if let Ok(data) = zfs_core::encode_canonical(&gossip) {
         zode.publish(topic, data);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Proof key loading / generation
+// ---------------------------------------------------------------------------
+
+const PROOF_BUCKETS: &[u32] = &[1024, 4096];
+
+fn load_or_generate_prover(data_dir: &str) -> Box<Groth16ShapeProver> {
+    let ver = zfs_proof_groth16::KEY_VERSION;
+    let key_dir = PathBuf::from(data_dir).join("proof_keys");
+    std::fs::create_dir_all(&key_dir).ok();
+
+    let all_cached = PROOF_BUCKETS
+        .iter()
+        .all(|b| key_dir.join(format!("shape_pk_{b}_{ver}.bin")).exists());
+
+    if all_cached {
+        if let Ok(prover) = Groth16ShapeProver::load(&key_dir) {
+            info!("loaded cached Groth16 proving keys");
+            return Box::new(prover);
+        }
+    }
+
+    info!("generating Groth16 keys for buckets {:?} (first launch)...", PROOF_BUCKETS);
+    let dir = key_dir.clone();
+    let prover = std::thread::Builder::new()
+        .name("groth16-keygen".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            for &bucket in PROOF_BUCKETS {
+                if dir.join(format!("shape_pk_{bucket}_{ver}.bin")).exists() {
+                    continue;
+                }
+                info!(bucket, "generating Groth16 keys...");
+                let (pk, vk) = generate_keys_for_bucket(bucket)
+                    .expect("Groth16 key generation failed");
+
+                let mut pk_bytes = Vec::new();
+                pk.serialize_compressed(&mut pk_bytes)
+                    .expect("PK serialization failed");
+                std::fs::write(dir.join(format!("shape_pk_{bucket}_{ver}.bin")), &pk_bytes)
+                    .expect("failed to write proving key");
+
+                let mut vk_bytes = Vec::new();
+                vk.serialize_compressed(&mut vk_bytes)
+                    .expect("VK serialization failed");
+                std::fs::write(dir.join(format!("shape_vk_{bucket}_{ver}.bin")), &vk_bytes)
+                    .expect("failed to write verifying key");
+            }
+            Groth16ShapeProver::load(&dir).expect("failed to load proving keys")
+        })
+        .expect("failed to spawn keygen thread")
+        .join()
+        .expect("keygen thread panicked");
+
+    info!("Groth16 key generation complete");
+    Box::new(prover)
+}
+
+fn encode_proof_cbor(proof: &ShapeProof) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    ciborium::into_writer(proof, &mut buf).map_err(|e| format!("CBOR encode proof: {e}"))?;
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -428,9 +521,6 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
                     egui::RichText::new("\u{2717}")
                         .color(egui::Color32::from_rgb(220, 60, 60)),
                 );
-            }
-            SignatureStatus::Unknown => {
-                ui.label(egui::RichText::new("?").color(egui::Color32::GRAY));
             }
             SignatureStatus::None => {}
         }

@@ -1,4 +1,5 @@
 use crate::error::CryptoError;
+use crate::signing::HybridSignature;
 
 /// Multicodec prefix for Ed25519 public keys: 0xed01 (varint-encoded as two bytes).
 const ED25519_MULTICODEC: [u8; 2] = [0xed, 0x01];
@@ -43,4 +44,31 @@ pub fn did_key_to_ed25519(did: &str) -> Result<[u8; 32], CryptoError> {
     let mut pk = [0u8; 32];
     pk.copy_from_slice(&decoded[2..]);
     Ok(pk)
+}
+
+/// Verify the Ed25519 component of a hybrid signature using a `did:key` DID.
+///
+/// Extracts the Ed25519 public key from the DID and verifies only the
+/// Ed25519 portion (first 64 bytes) of the serialised hybrid signature.
+/// This is sufficient when the full ML-DSA verifying key is not available.
+pub fn verify_did_ed25519(did: &str, msg: &[u8], sig_bytes: &[u8]) -> Result<(), CryptoError> {
+    use ed25519_dalek::Verifier as _;
+
+    if sig_bytes.len() < HybridSignature::ED25519_LEN {
+        return Err(CryptoError::InvalidKeyLength {
+            expected: HybridSignature::ED25519_LEN,
+            got: sig_bytes.len(),
+        });
+    }
+
+    let pk_bytes = did_key_to_ed25519(did)?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes)
+        .map_err(|_| CryptoError::Ed25519VerifyFailed)?;
+
+    let mut ed_sig_bytes = [0u8; 64];
+    ed_sig_bytes.copy_from_slice(&sig_bytes[..64]);
+    let ed_sig = ed25519_dalek::Signature::from_bytes(&ed_sig_bytes);
+
+    vk.verify(msg, &ed_sig)
+        .map_err(|_| CryptoError::Ed25519VerifyFailed)
 }
