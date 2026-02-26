@@ -52,6 +52,13 @@ pub(crate) enum Tab {
     Identity,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AppPhase {
+    ProfileSelect,
+    Unlock { profile_id: String },
+    Running,
+}
+
 pub(crate) struct IdentityState {
     pub shares: Vec<zid::ShamirShare>,
     pub threshold: usize,

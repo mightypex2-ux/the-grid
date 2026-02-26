@@ -6,8 +6,9 @@ use tokio::sync::Mutex;
 use zode::{LogEvent, Zode};
 
 use crate::components::title_bar_icon;
+use crate::profile::{self, ProfileMeta};
 use crate::settings::Settings;
-use crate::state::{AppState, Tab, MAX_LOG_ENTRIES};
+use crate::state::{AppPhase, AppState, Tab, MAX_LOG_ENTRIES};
 
 pub(crate) struct ZodeApp {
     pub rt: Runtime,
@@ -23,10 +24,29 @@ pub(crate) struct ZodeApp {
     pub identity_state: crate::state::IdentityState,
     pub visualization: crate::visualization::NetworkVisualization,
     icon_texture: Option<egui::TextureHandle>,
+    pub phase: AppPhase,
+    pub profiles: Vec<ProfileMeta>,
+    pub unlock_password: String,
+    pub unlock_error: Option<String>,
+    pub active_profile_id: Option<String>,
+    pub session_password: Option<String>,
 }
 
 impl ZodeApp {
     pub fn new(rt: Runtime) -> Self {
+        let base = profile::base_dir();
+        let profiles = profile::list_profiles(&base);
+
+        let phase = if profiles.is_empty() {
+            AppPhase::Running
+        } else if profiles.len() == 1 {
+            AppPhase::Unlock {
+                profile_id: profiles[0].id.clone(),
+            }
+        } else {
+            AppPhase::ProfileSelect
+        };
+
         let mut app = Self {
             rt,
             settings: Settings::default(),
@@ -41,8 +61,17 @@ impl ZodeApp {
             identity_state: Default::default(),
             visualization: Default::default(),
             icon_texture: None,
+            phase: phase.clone(),
+            profiles,
+            unlock_password: String::new(),
+            unlock_error: None,
+            active_profile_id: None,
+            session_password: None,
         };
-        app.boot_zode();
+
+        if phase == AppPhase::Running {
+            app.boot_zode();
+        }
         app
     }
 
@@ -60,6 +89,119 @@ impl ZodeApp {
                 ctx.load_texture("app_icon", color_image, egui::TextureOptions::LINEAR)
             })
             .clone()
+    }
+
+    pub(crate) fn attempt_unlock(&mut self, profile_id: &str) {
+        let base = profile::base_dir();
+        match profile::unlock_profile(&base, profile_id, &self.unlock_password) {
+            Ok(plaintext) => {
+                self.unlock_error = None;
+                self.active_profile_id = Some(profile_id.to_string());
+                self.session_password = Some(self.unlock_password.clone());
+                self.unlock_password.clear();
+
+                let shares: Vec<zid::ShamirShare> = plaintext
+                    .shares
+                    .iter()
+                    .filter_map(|h| zid::ShamirShare::from_hex(h).ok())
+                    .collect();
+                self.identity_state.shares = shares;
+                self.identity_state.identity_id = plaintext.identity_id;
+
+                let libp2p_keypair =
+                    grid_net::Keypair::from_protobuf_encoding(&plaintext.libp2p_keypair).ok();
+
+                let caps = zid::MachineKeyCapabilities::from_bits_truncate(plaintext.capabilities);
+                let mk_result = std::thread::Builder::new()
+                    .name("vault-derive".into())
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn({
+                        let shares = self.identity_state.shares.clone();
+                        let identity_id = plaintext.identity_id;
+                        let machine_id = plaintext.machine_id;
+                        let epoch = plaintext.epoch;
+                        move || {
+                            zid::derive_machine_keypair_from_shares(
+                                &shares,
+                                &identity_id,
+                                &machine_id,
+                                epoch,
+                                caps,
+                            )
+                        }
+                    })
+                    .expect("spawn derive thread")
+                    .join()
+                    .expect("derive thread panicked");
+
+                if let Ok(kp) = mk_result {
+                    let pk = kp.public_key();
+                    let did = zid::ed25519_to_did_key(&pk.ed25519_bytes());
+                    self.identity_state.did = Some(did.clone());
+                    self.identity_state.machine_keys.push(
+                        crate::state::DerivedMachineKey {
+                            machine_id: plaintext.machine_id,
+                            epoch: plaintext.epoch,
+                            capabilities: caps,
+                            did,
+                            public_key: pk,
+                            keypair: std::sync::Arc::new(kp),
+                        },
+                    );
+                }
+
+                let data_dir =
+                    profile::data_dir_for_profile(&base, profile_id);
+                self.settings.data_dir = data_dir.to_string_lossy().to_string();
+
+                if let Some(kp) = libp2p_keypair {
+                    self.boot_zode_with_keypair(Some(kp));
+                } else {
+                    self.boot_zode();
+                }
+                self.phase = AppPhase::Running;
+            }
+            Err(e) => {
+                self.unlock_error = Some(e.to_string());
+            }
+        }
+    }
+
+    pub(crate) fn boot_zode_with_keypair(&mut self, keypair: Option<grid_net::Keypair>) {
+        let config = match self.settings.build_config() {
+            Ok(mut c) => {
+                if let Some(kp) = keypair {
+                    c.network = c.network.with_keypair(kp);
+                }
+                c
+            }
+            Err(e) => {
+                self.settings_error = Some(e);
+                return;
+            }
+        };
+        self.settings_error = None;
+        self.stop_zode();
+
+        let shared = Arc::new(Mutex::new(AppState::default()));
+        self.shared = Arc::clone(&shared);
+
+        let start_result = self.rt.block_on(async { Zode::start(config).await });
+        match start_result {
+            Ok(zode) => {
+                self.settings.data_dir = zode.data_dir().to_string_lossy().to_string();
+                let zode = Arc::new(zode);
+                self.zode = Some(Arc::clone(&zode));
+                let (stop_tx, stop_rx) = tokio::sync::mpsc::channel::<()>(1);
+                self.shutdown_tx = Some(stop_tx);
+                self.poller_handle =
+                    Some(Self::spawn_status_poller(&self.rt, &zode, &shared, stop_rx));
+                Self::spawn_log_listener(&self.rt, &zode, &shared);
+            }
+            Err(e) => {
+                self.settings_error = Some(format!("Start failed: {e}"));
+            }
+        }
     }
 
     pub fn boot_zode(&mut self) {
@@ -427,6 +569,20 @@ impl ZodeApp {
 
 impl eframe::App for ZodeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        match self.phase.clone() {
+            AppPhase::ProfileSelect => {
+                self.render_profile_select(ctx);
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            AppPhase::Unlock { profile_id } => {
+                self.render_unlock_screen(ctx, &profile_id);
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            AppPhase::Running => {}
+        }
+
         let state = self
             .rt
             .block_on(async { self.shared.lock().await.snapshot() });
@@ -444,5 +600,127 @@ impl eframe::App for ZodeApp {
         self.render_central_panel(ctx, &state);
         Self::render_window_border(ctx, maximized);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+}
+
+impl ZodeApp {
+    fn render_profile_select(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::BLACK)
+            .inner_margin(32.0);
+
+        egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(
+                    egui::RichText::new("SELECT PROFILE")
+                        .strong()
+                        .size(14.0)
+                        .color(egui::Color32::from_rgb(140, 140, 145)),
+                );
+                ui.add_space(16.0);
+
+                let profiles = self.profiles.clone();
+                for p in &profiles {
+                    let btn = egui::Button::new(
+                        egui::RichText::new(&p.name).monospace().size(12.0),
+                    )
+                    .min_size(egui::vec2(260.0, 36.0));
+
+                    if ui.add(btn).clicked() {
+                        self.phase = AppPhase::Unlock {
+                            profile_id: p.id.clone(),
+                        };
+                    }
+                    ui.add_space(4.0);
+                }
+
+                ui.add_space(16.0);
+                if crate::components::std_button(ui, "Skip (no profile)") {
+                    self.phase = AppPhase::Running;
+                    self.boot_zode();
+                }
+            });
+        });
+    }
+
+    fn render_unlock_screen(&mut self, ctx: &egui::Context, profile_id: &str) {
+        let profile_id = profile_id.to_string();
+        let profile_name = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| profile_id.clone());
+
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::BLACK)
+            .inner_margin(32.0);
+
+        let mut do_unlock = false;
+
+        egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(60.0);
+                ui.label(
+                    egui::RichText::new("UNLOCK PROFILE")
+                        .strong()
+                        .size(14.0)
+                        .color(egui::Color32::from_rgb(140, 140, 145)),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(&profile_name)
+                        .monospace()
+                        .size(12.0),
+                );
+                ui.add_space(16.0);
+
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.unlock_password)
+                        .password(true)
+                        .desired_width(260.0)
+                        .hint_text("Password"),
+                );
+                if resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                {
+                    do_unlock = true;
+                }
+
+                ui.add_space(8.0);
+
+                if crate::components::action_button(ui, "Unlock") {
+                    do_unlock = true;
+                }
+
+                if let Some(ref err) = self.unlock_error {
+                    ui.add_space(8.0);
+                    crate::components::error_label(ui, err);
+                }
+
+                ui.add_space(16.0);
+
+                if self.profiles.len() > 1 {
+                    if crate::components::std_button(ui, "Back") {
+                        self.unlock_password.clear();
+                        self.unlock_error = None;
+                        self.phase = AppPhase::ProfileSelect;
+                    }
+                }
+
+                ui.add_space(4.0);
+                if crate::components::std_button(ui, "Skip (no profile)") {
+                    self.unlock_password.clear();
+                    self.unlock_error = None;
+                    self.phase = AppPhase::Running;
+                    self.boot_zode();
+                }
+            });
+        });
+
+        if do_unlock {
+            self.attempt_unlock(&profile_id);
+        }
     }
 }
