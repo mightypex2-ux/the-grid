@@ -192,7 +192,7 @@ fn render_proof_section(
 
                 egui::CollapsingHeader::new(
                     egui::RichText::new("Shape Proof")
-                        .color(egui::Color32::from_rgb(80, 200, 120)),
+                        .color(colors::CONNECTED),
                 )
                 .id_salt(format!("proof_{short_id}_{index}"))
                 .show(ui, |ui| {
