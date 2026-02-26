@@ -514,6 +514,102 @@ impl ZodeApp {
         }
     }
 
+    fn render_pre_auth_title_bar(
+        &mut self,
+        ctx: &egui::Context,
+        maximized: bool,
+        on_resize_edge: bool,
+    ) {
+        egui::TopBottomPanel::top("pre_auth_title")
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::BLACK)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                    .stroke(egui::Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                let title_bar_rect = ui.max_rect();
+                let title_resp = ui.interact(
+                    title_bar_rect,
+                    egui::Id::new("pre_auth_title_bar"),
+                    egui::Sense::click_and_drag(),
+                );
+                if !on_resize_edge
+                    && title_resp.drag_started_by(egui::PointerButton::Primary)
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if title_resp.double_clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+
+                ui.visuals_mut().widgets.active = ui.visuals().widgets.hovered;
+                ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
+                ui.visuals_mut().selection.stroke =
+                    egui::Stroke::new(1.0, egui::Color32::WHITE);
+                ui.visuals_mut().widgets.active.fg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::WHITE);
+
+                ui.horizontal(|ui| {
+                    let tex = self.icon_texture(ui.ctx());
+                    ui.add(
+                        egui::Image::new(&tex)
+                            .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                            .rounding(3.0),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("ZODE")
+                            .strong()
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(140, 140, 145)),
+                    );
+
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if title_bar_icon(ui, egui_phosphor::regular::X, false)
+                                .clicked()
+                            {
+                                ui.ctx()
+                                    .send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            let max_icon = if maximized {
+                                egui_phosphor::regular::CORNERS_IN
+                            } else {
+                                egui_phosphor::regular::CORNERS_OUT
+                            };
+                            if title_bar_icon(ui, max_icon, false).clicked() {
+                                ui.ctx().send_viewport_cmd(
+                                    egui::ViewportCommand::Maximized(!maximized),
+                                );
+                            }
+                            if title_bar_icon(
+                                ui,
+                                egui_phosphor::regular::MINUS,
+                                false,
+                            )
+                            .clicked()
+                            {
+                                ui.ctx().send_viewport_cmd(
+                                    egui::ViewportCommand::Minimized(true),
+                                );
+                            }
+                        },
+                    );
+                });
+
+                Self::handle_title_bar_drag(
+                    ui,
+                    &title_resp,
+                    title_bar_rect,
+                    on_resize_edge,
+                );
+            });
+    }
+
     fn render_central_panel(&mut self, ctx: &egui::Context, state: &crate::state::StateSnapshot) {
         let central_frame = egui::Frame::default()
             .fill(egui::Color32::BLACK)
@@ -569,14 +665,25 @@ impl ZodeApp {
 
 impl eframe::App for ZodeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        let on_resize_edge = if !maximized {
+            Self::handle_resize_edges(ctx)
+        } else {
+            false
+        };
+
         match self.phase.clone() {
             AppPhase::ProfileSelect => {
+                self.render_pre_auth_title_bar(ctx, maximized, on_resize_edge);
                 self.render_profile_select(ctx);
+                Self::render_window_border(ctx, maximized);
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 return;
             }
             AppPhase::Unlock { profile_id } => {
+                self.render_pre_auth_title_bar(ctx, maximized, on_resize_edge);
                 self.render_unlock_screen(ctx, &profile_id);
+                Self::render_window_border(ctx, maximized);
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 return;
             }
@@ -589,13 +696,6 @@ impl eframe::App for ZodeApp {
 
         self.sync_visualization(&state);
 
-        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-        let on_resize_edge = if !maximized {
-            Self::handle_resize_edges(ctx)
-        } else {
-            false
-        };
-
         self.render_title_bar(ctx, maximized, on_resize_edge);
         self.render_central_panel(ctx, &state);
         Self::render_window_border(ctx, maximized);
@@ -605,17 +705,28 @@ impl eframe::App for ZodeApp {
 
 impl ZodeApp {
     fn render_profile_select(&mut self, ctx: &egui::Context) {
+        let tex = self.icon_texture(ctx);
         let frame = egui::Frame::default()
             .fill(egui::Color32::BLACK)
             .inner_margin(32.0);
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+            let rect = ui.max_rect();
             ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
+                let content_height = 200.0;
+                ui.add_space(((rect.height() - content_height) / 2.0).max(20.0));
+
+                ui.add(
+                    egui::Image::new(&tex)
+                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
+                        .rounding(8.0),
+                );
+                ui.add_space(16.0);
+
                 ui.label(
                     egui::RichText::new("SELECT PROFILE")
                         .strong()
-                        .size(14.0)
+                        .size(12.0)
                         .color(egui::Color32::from_rgb(140, 140, 145)),
                 );
                 ui.add_space(16.0);
@@ -636,7 +747,17 @@ impl ZodeApp {
                 }
 
                 ui.add_space(16.0);
-                if crate::components::std_button(ui, "Skip (no profile)") {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Skip")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(100, 100, 108)),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
                     self.phase = AppPhase::Running;
                     self.boot_zode();
                 }
@@ -653,6 +774,7 @@ impl ZodeApp {
             .map(|p| p.name.clone())
             .unwrap_or_else(|| profile_id.clone());
 
+        let tex = self.icon_texture(ctx);
         let frame = egui::Frame::default()
             .fill(egui::Color32::BLACK)
             .inner_margin(32.0);
@@ -660,27 +782,33 @@ impl ZodeApp {
         let mut do_unlock = false;
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+            let rect = ui.max_rect();
             ui.vertical_centered(|ui| {
-                ui.add_space(60.0);
-                ui.label(
-                    egui::RichText::new("UNLOCK PROFILE")
-                        .strong()
-                        .size(14.0)
-                        .color(egui::Color32::from_rgb(140, 140, 145)),
+                let content_height = 220.0;
+                ui.add_space(((rect.height() - content_height) / 2.0).max(20.0));
+
+                ui.add(
+                    egui::Image::new(&tex)
+                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
+                        .rounding(8.0),
                 );
-                ui.add_space(4.0);
+
+                ui.add_space(16.0);
+
                 ui.label(
                     egui::RichText::new(&profile_name)
-                        .monospace()
-                        .size(12.0),
+                        .size(13.0)
+                        .color(egui::Color32::from_rgb(160, 160, 165)),
                 );
-                ui.add_space(16.0);
+
+                ui.add_space(20.0);
 
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut self.unlock_password)
                         .password(true)
-                        .desired_width(260.0)
-                        .hint_text("Password"),
+                        .desired_width(280.0)
+                        .hint_text("Enter your password")
+                        .margin(egui::Margin::symmetric(8.0, 6.0)),
                 );
                 if resp.lost_focus()
                     && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -688,7 +816,7 @@ impl ZodeApp {
                     do_unlock = true;
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(12.0);
 
                 if crate::components::action_button(ui, "Unlock") {
                     do_unlock = true;
@@ -699,18 +827,38 @@ impl ZodeApp {
                     crate::components::error_label(ui, err);
                 }
 
-                ui.add_space(16.0);
+                ui.add_space(24.0);
 
                 if self.profiles.len() > 1 {
-                    if crate::components::std_button(ui, "Back") {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Back to profiles")
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(100, 100, 108)),
+                            )
+                            .frame(false),
+                        )
+                        .clicked()
+                    {
                         self.unlock_password.clear();
                         self.unlock_error = None;
                         self.phase = AppPhase::ProfileSelect;
                     }
+                    ui.add_space(4.0);
                 }
 
-                ui.add_space(4.0);
-                if crate::components::std_button(ui, "Skip (no profile)") {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Skip")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(100, 100, 108)),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
                     self.unlock_password.clear();
                     self.unlock_error = None;
                     self.phase = AppPhase::Running;
