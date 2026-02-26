@@ -261,11 +261,11 @@ pub(crate) fn editable_list(
     for (i, item) in items.iter().enumerate() {
         ui.horizontal(|ui| {
             let label_w = ui.available_width() - btn_w;
-            let layout = egui::Layout::left_to_right(egui::Align::Center);
-            ui.allocate_ui_with_layout(egui::vec2(label_w, WIDGET_HEIGHT), layout, |ui| {
-                ui.add(egui::Label::new(egui::RichText::new(item).monospace()).truncate())
-                    .on_hover_text(item);
-            });
+            ui.add_sized(
+                [label_w, WIDGET_HEIGHT],
+                egui::Label::new(egui::RichText::new(item).monospace()).truncate(),
+            )
+            .on_hover_text(item);
             if square_icon_button(ui, egui_phosphor::regular::X) {
                 remove_idx = Some(i);
             }
