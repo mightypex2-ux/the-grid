@@ -15,6 +15,7 @@ pub(crate) struct ZodeApp {
     pub zode: Option<Arc<Zode>>,
     pub shared: Arc<Mutex<AppState>>,
     pub tab: Tab,
+    pub prev_tab: Tab,
     pub settings_error: Option<String>,
     pub shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
     pub poller_handle: Option<tokio::task::JoinHandle<()>>,
@@ -32,6 +33,7 @@ impl ZodeApp {
             zode: None,
             shared: Arc::new(Mutex::new(AppState::default())),
             tab: Tab::Status,
+            prev_tab: Tab::Status,
             settings_error: None,
             shutdown_tx: None,
             poller_handle: None,
@@ -388,6 +390,13 @@ impl ZodeApp {
                     });
                     return;
                 }
+                if self.tab == Tab::Chat && self.prev_tab != Tab::Chat {
+                    if let Some(ref mut chat) = self.chat_state {
+                        chat.focus_compose = true;
+                    }
+                }
+                self.prev_tab = self.tab;
+
                 match self.tab {
                     Tab::Status => crate::render::render_status(self, ui, state),
                     Tab::Storage => crate::render_storage::render_storage(self, ui, state),

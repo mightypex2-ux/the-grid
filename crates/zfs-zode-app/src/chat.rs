@@ -96,6 +96,7 @@ impl ZodeApp {
             error: None,
             initialized: true,
             scroll_to_bottom: true,
+            focus_compose: true,
             update_rx,
             refresh_tx,
         });
@@ -565,10 +566,15 @@ fn render_chat_compose(app: &mut ZodeApp, ui: &mut egui::Ui) {
     let mut do_send = false;
     ui.horizontal(|ui| {
         let chat = app.chat_state.as_mut().unwrap();
+        let should_focus = chat.focus_compose;
+        chat.focus_compose = false;
         let resp = ui.add(
             text_input(&mut chat.compose, ui.available_width() - 70.0)
                 .hint_text("Type a message..."),
         );
+        if should_focus {
+            resp.request_focus();
+        }
         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             do_send = true;
             resp.request_focus();

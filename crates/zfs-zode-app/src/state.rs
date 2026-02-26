@@ -139,6 +139,7 @@ pub(crate) struct ChatState {
     pub error: Option<String>,
     pub initialized: bool,
     pub scroll_to_bottom: bool,
+    pub focus_compose: bool,
     pub update_rx: tokio::sync::mpsc::Receiver<ChatUpdate>,
     pub refresh_tx: tokio::sync::mpsc::Sender<()>,
 }
