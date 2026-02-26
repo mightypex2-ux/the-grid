@@ -1,0 +1,9 @@
+[package]
+name = "programs-zfs"
+version = "0.1.0"
+edition = "2021"
+description = "ZFS file-system program (placeholder for future file-system semantics)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+zfs-core = { path = "../../zfs-core" }

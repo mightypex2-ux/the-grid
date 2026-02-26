@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use zfs_core::{ProgramId, SectorId};
 use zfs_crypto::SectorKey;
-use zfs_programs::zchat::ChannelId;
+use programs_interlink::interlink::ChannelId;
 use zfs_zode::ZodeStatus;
 
 pub(crate) const MAX_LOG_ENTRIES: usize = 500;

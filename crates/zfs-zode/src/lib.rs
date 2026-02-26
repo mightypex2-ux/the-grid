@@ -29,6 +29,7 @@ mod types;
 mod zode;
 
 pub use config::{DefaultProgramsConfig, SectorFilter, SectorLimitsConfig, ZodeConfig};
+pub use config::default_program_ids;
 pub use error::ZodeError;
 pub use metrics::{MetricsSnapshot, ZodeMetrics};
 pub use types::{GossipAppendResult, GossipRejectReason, LogEvent, LogLevel, ZodeStatus};

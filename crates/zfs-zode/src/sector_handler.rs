@@ -200,6 +200,17 @@ impl<S: SectorStore> SectorRequestHandler<S> {
         match self.storage.append(pid, &entry.sector_id, &entry.entry) {
             Ok(index) => {
                 self.metrics.inc_sectors_stored();
+                if let Some(ref proof) = entry.shape_proof {
+                    let mut buf = Vec::new();
+                    if ciborium::into_writer(proof, &mut buf).is_ok() {
+                        let _ = self.storage.store_proof(
+                            pid,
+                            &entry.sector_id,
+                            index,
+                            &buf,
+                        );
+                    }
+                }
                 SectorAppendResult {
                     ok: true,
                     index: Some(index),
@@ -314,9 +325,9 @@ impl<S: SectorStore> SectorRequestHandler<S> {
                     .storage
                     .append(&msg.program_id, &msg.sector_id, &msg.payload)
                 {
-                    Ok(_new_index) => {
+                    Ok(new_index) => {
                         self.metrics.inc_sectors_stored();
-                        self.store_proof_if_present(msg);
+                        self.store_proof_at(msg, new_index);
                         GossipAppendResult::Stored
                     }
                     Err(e) => {
@@ -331,13 +342,17 @@ impl<S: SectorStore> SectorRequestHandler<S> {
     }
 
     fn store_proof_if_present(&self, msg: &GossipSectorAppend) {
+        self.store_proof_at(msg, msg.index);
+    }
+
+    fn store_proof_at(&self, msg: &GossipSectorAppend, index: u64) {
         if let Some(ref proof) = msg.shape_proof {
             let mut buf = Vec::new();
             if ciborium::into_writer(proof, &mut buf).is_ok() {
                 let _ = self.storage.store_proof(
                     &msg.program_id,
                     &msg.sector_id,
-                    msg.index,
+                    index,
                     &buf,
                 );
             }

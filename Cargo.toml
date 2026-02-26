@@ -5,7 +5,6 @@ members = [
   "crates/zfs-core",
   "crates/zfs-crypto",
   "crates/zfs-storage",
-  "crates/zfs-programs",
   "crates/zfs-proof",
   "crates/zfs-proof-groth16",
   "crates/zfs-net",
@@ -13,4 +12,7 @@ members = [
   "crates/zfs-sdk",
   "crates/zfs-zode-cli",
   "crates/zfs-zode-app",
+  "crates/programs/zid",
+  "crates/programs/interlink",
+  "crates/programs/zfs",
 ]

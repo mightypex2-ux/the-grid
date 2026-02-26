@@ -24,7 +24,7 @@ pub mod sector;
 
 pub use client::{Client, SdkConfig};
 pub use error::SdkError;
-pub use helpers::{zchat_descriptor, zchat_descriptor_v2, zid_descriptor, zid_descriptor_v2};
+pub use helpers::{interlink_descriptor, interlink_descriptor_v2, zid_descriptor, zid_descriptor_v2};
 pub use identity::{
     derive_machine_keypair_from_shares, generate_identity, sign_with_shares, verify_shares,
     IdentityBundle, IdentityInfo,
@@ -47,5 +47,7 @@ pub use zfs_crypto::{
     decrypt_sector, encrypt_sector, pad_to_bucket, poseidon_decrypt_sector,
     poseidon_encrypt_sector, poseidon_hash, unpad_from_bucket, SectorKey,
 };
-pub use zfs_programs::{program_topic, ZChatDescriptor, ZChatMessage, ZidDescriptor, ZidMessage};
+pub use zfs_core::program_topic;
+pub use programs_zid::{ZidDescriptor, ZidMessage};
+pub use programs_interlink::{InterlinkDescriptor, ZMessage};
 pub use zfs_proof_groth16::Groth16ShapeProver;

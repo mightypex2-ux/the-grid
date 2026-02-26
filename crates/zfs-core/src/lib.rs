@@ -8,6 +8,7 @@ mod program_descriptor;
 mod program_id;
 mod sector_id;
 mod sector_protocol;
+mod program_topic;
 mod util;
 
 pub use cbor::{decode_canonical, encode_canonical};
@@ -16,6 +17,7 @@ pub use error::{ErrorCode, SectorStoreError, ZfsError};
 pub use field_schema::{CborType, FieldDef, FieldSchema, ProofSystem};
 pub use program_descriptor::ProgramDescriptor;
 pub use program_id::ProgramId;
+pub use program_topic::program_topic;
 pub use sector_id::SectorId;
 pub use sector_protocol::{
     GossipSectorAppend, SectorAppendRequest, SectorAppendResponse, SectorAppendResult,

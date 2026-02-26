@@ -7,7 +7,7 @@ use zfs_core::ProofSystem;
 use zfs_net::{format_zode_id, NetworkEvent, NetworkService, ZodeId};
 use zfs_proof::{NoopVerifier, ProofVerifierRegistry};
 use zfs_proof_groth16::Groth16ShapeVerifier;
-use zfs_programs::ZChatDescriptor;
+use programs_interlink::InterlinkDescriptor;
 use zfs_storage::{RocksStorage, SectorStore};
 
 use crate::config::ZodeConfig;
@@ -93,7 +93,7 @@ impl Zode {
 
         let mut program_proof_config: HashMap<zfs_core::ProgramId, ProofSystem> =
             HashMap::new();
-        if let Ok(pid) = ZChatDescriptor::v2().program_id() {
+        if let Ok(pid) = InterlinkDescriptor::v2().program_id() {
             program_proof_config.insert(pid, ProofSystem::Groth16);
         }
 
@@ -153,7 +153,7 @@ impl Zode {
         let effective = config.effective_topics();
         let mut topic_strings = Vec::new();
         for pid in &effective {
-            let topic = zfs_programs::program_topic(pid);
+            let topic = zfs_core::program_topic(pid);
             network.subscribe(&topic).map_err(ZodeError::Network)?;
             topic_strings.push(topic);
             debug!(program_id = %pid.to_hex(), "subscribed to topic");

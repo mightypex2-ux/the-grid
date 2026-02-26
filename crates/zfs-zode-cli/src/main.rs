@@ -47,7 +47,7 @@ struct Cli {
 
     /// Disable the default Interlink program.
     #[arg(long)]
-    no_zchat: bool,
+    no_interlink: bool,
 
     /// Additional program IDs (hex) to subscribe to (repeatable).
     #[arg(long)]
@@ -129,7 +129,7 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
         storage,
         default_programs: DefaultProgramsConfig {
             zid: !cli.no_zid,
-            zchat: !cli.no_zchat,
+            interlink: !cli.no_interlink,
         },
         topics,
         sector_limits: Default::default(),

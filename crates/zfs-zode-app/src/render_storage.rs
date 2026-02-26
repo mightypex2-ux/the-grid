@@ -26,7 +26,7 @@ pub(crate) fn render_storage(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnap
         return;
     };
 
-    let known_programs: HashMap<zfs_core::ProgramId, &str> = zfs_programs::default_program_ids()
+    let known_programs: HashMap<zfs_core::ProgramId, &str> = zfs_zode::default_program_ids()
         .into_iter()
         .map(|(name, pid)| (pid, name))
         .collect();

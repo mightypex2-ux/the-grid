@@ -4675,6 +4675,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 
 [[package]]
+name = "programs-interlink"
+version = "0.1.0"
+dependencies = [
+ "programs-zid",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "zfs-core",
+]
+
+[[package]]
+name = "programs-zfs"
+version = "0.1.0"
+dependencies = [
+ "zfs-core",
+]
+
+[[package]]
+name = "programs-zid"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_bytes",
+ "zfs-core",
+]
+
+[[package]]
 name = "prometheus-client"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7553,24 +7580,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "zfs-programs"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "serde",
- "serde_bytes",
- "sha2",
- "zfs-core",
-]
-
-[[package]]
 name = "zfs-proof"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
  "zfs-core",
  "zfs-crypto",
- "zfs-programs",
 ]
 
 [[package]]
@@ -7597,6 +7612,8 @@ dependencies = [
 name = "zfs-sdk"
 version = "0.1.0"
 dependencies = [
+ "programs-interlink",
+ "programs-zid",
  "rand_core 0.6.4",
  "thiserror 2.0.18",
  "tokio",
@@ -7605,7 +7622,6 @@ dependencies = [
  "zfs-core",
  "zfs-crypto",
  "zfs-net",
- "zfs-programs",
  "zfs-proof",
  "zfs-proof-groth16",
 ]
@@ -7629,6 +7645,8 @@ name = "zfs-zode"
 version = "0.1.0"
 dependencies = [
  "ciborium",
+ "programs-interlink",
+ "programs-zid",
  "serde",
  "serde_bytes",
  "tempfile",
@@ -7639,7 +7657,6 @@ dependencies = [
  "zfs-core",
  "zfs-crypto",
  "zfs-net",
- "zfs-programs",
  "zfs-proof",
  "zfs-proof-groth16",
  "zfs-storage",
@@ -7650,7 +7667,6 @@ name = "zfs-zode-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ark-serialize",
  "ciborium",
  "eframe",
  "egui-phosphor",
@@ -7658,6 +7674,8 @@ dependencies = [
  "hex",
  "hkdf",
  "image",
+ "programs-interlink",
+ "programs-zid",
  "rand 0.8.5",
  "sha2",
  "tokio",
@@ -7667,7 +7685,6 @@ dependencies = [
  "zfs-core",
  "zfs-crypto",
  "zfs-net",
- "zfs-programs",
  "zfs-proof-groth16",
  "zfs-sdk",
  "zfs-storage",
@@ -7681,13 +7698,14 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "programs-interlink",
+ "programs-zid",
  "ratatui",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",
  "zfs-core",
  "zfs-net",
- "zfs-programs",
  "zfs-storage",
  "zfs-zode",
 ]

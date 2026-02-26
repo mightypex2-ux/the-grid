@@ -11,7 +11,7 @@ use zero_neural::MachineKeyCapabilities;
 use zfs_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
 use zfs_crypto::SectorKey;
 use zfs_proof_groth16::Groth16ShapeProver;
-use zfs_programs::zchat::{ChannelId, ZChatDescriptor, ZChatMessage, TEST_CHANNEL_ID};
+use programs_interlink::interlink::{ChannelId, InterlinkDescriptor, ZMessage, TEST_CHANNEL_ID};
 use zfs_storage::SectorStore;
 
 use crate::app::ZodeApp;
@@ -60,7 +60,7 @@ impl ZodeApp {
                 .join()
                 .expect("key derivation thread panicked");
         let channel_id = ChannelId::from_str_id(TEST_CHANNEL_ID);
-        let program_id = ZChatDescriptor::v2()
+        let program_id = InterlinkDescriptor::v2()
             .program_id()
             .expect("Interlink descriptor is valid");
         let sector_id = channel_id.sector_id();
@@ -212,12 +212,12 @@ fn do_append(
 // Message construction and encryption
 // ---------------------------------------------------------------------------
 
-fn build_chat_message(chat: &ChatState, text: String) -> Result<ZChatMessage, String> {
+fn build_chat_message(chat: &ChatState, text: String) -> Result<ZMessage, String> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    ZChatMessage::new_signed(
+    ZMessage::new_signed(
         chat.machine_did.clone(),
         chat.channel_id.clone(),
         text,
@@ -228,7 +228,7 @@ fn build_chat_message(chat: &ChatState, text: String) -> Result<ZChatMessage, St
 }
 
 fn encrypt_message(
-    msg: &ZChatMessage,
+    msg: &ZMessage,
     key: &SectorKey,
     program_id: &ProgramId,
     sector_id: &SectorId,
@@ -237,7 +237,7 @@ fn encrypt_message(
     let plaintext = msg
         .encode_canonical()
         .map_err(|e| format!("Encode failed: {e}"))?;
-    let schema = ZChatDescriptor::field_schema();
+    let schema = InterlinkDescriptor::field_schema();
     zfs_sdk::sector_encrypt_and_prove(&plaintext, key, program_id, sector_id, prover, &schema)
         .map_err(|e| format!("Encrypt+prove failed: {e}"))
 }
@@ -304,7 +304,7 @@ fn decrypt_one(
     let plaintext =
         zfs_sdk::sector_decrypt_poseidon(ciphertext, sector_key, program_id, sector_id)
             .map_err(|e| format!("Decrypt: {e}"))?;
-    let msg = ZChatMessage::decode_canonical(&plaintext).map_err(|e| format!("Decode: {e}"))?;
+    let msg = ZMessage::decode_canonical(&plaintext).map_err(|e| format!("Decode: {e}"))?;
     let sig_status = match msg.verify_signature(|signable, sig_bytes| {
         zero_neural::verify_did_ed25519(&msg.sender_did, signable, sig_bytes).is_ok()
     }) {
@@ -339,7 +339,7 @@ fn broadcast_gossip(
         payload: ciphertext,
         shape_proof,
     };
-    let topic = zfs_programs::program_topic(&gossip.program_id);
+    let topic = zfs_core::program_topic(&gossip.program_id);
     if let Ok(data) = zfs_core::encode_canonical(&gossip) {
         zode.publish(topic, data);
     }

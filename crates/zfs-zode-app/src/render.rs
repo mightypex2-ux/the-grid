@@ -104,7 +104,7 @@ fn render_default_programs(app: &mut ZodeApp, ui: &mut egui::Ui) {
         );
         ui.add_space(8.0);
         ui.checkbox(&mut app.settings.enable_zid, "ZID (Zero Identity)");
-        ui.checkbox(&mut app.settings.enable_zchat, "Interlink");
+        ui.checkbox(&mut app.settings.enable_interlink, "Interlink");
     });
 }
 

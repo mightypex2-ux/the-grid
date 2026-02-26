@@ -96,7 +96,7 @@ where
     F: FnOnce(&str) -> Option<zero_neural::IdentityVerifyingKey>,
 {
     let plaintext = sector_decrypt_poseidon(ciphertext, sector_key, program_id, sector_id)?;
-    let msg: zfs_programs::ZChatMessage =
+    let msg: programs_interlink::ZMessage =
         zfs_core::decode_canonical(&plaintext).map_err(SdkError::Core)?;
 
     if msg.signature.is_empty() {

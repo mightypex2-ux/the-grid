@@ -12,7 +12,8 @@ path = "src/main.rs"
 zfs-core = { path = "../zfs-core" }
 zfs-zode = { path = "../zfs-zode" }
 zfs-storage = { path = "../zfs-storage" }
-zfs-programs = { path = "../zfs-programs" }
+programs-zid = { path = "../programs/zid" }
+programs-interlink = { path = "../programs/interlink" }
 zfs-net = { path = "../zfs-net" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 clap = { version = "4", features = ["derive"] }

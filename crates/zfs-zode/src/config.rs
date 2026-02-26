@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use programs_interlink::InterlinkDescriptor;
+use programs_zid::ZidDescriptor;
 use zfs_core::{ProgramId, SectorId};
 use zfs_net::NetworkConfig;
-use zfs_programs::{ZChatDescriptor, ZidDescriptor};
 use zfs_storage::StorageConfig;
 
 /// Toggle default programs (ZID, Interlink) on or off.
@@ -16,14 +17,14 @@ pub struct DefaultProgramsConfig {
     /// Enable the ZID (Zero Identity) program. Default: `true`.
     pub zid: bool,
     /// Enable the Interlink program. Default: `true`.
-    pub zchat: bool,
+    pub interlink: bool,
 }
 
 impl Default for DefaultProgramsConfig {
     fn default() -> Self {
         Self {
             zid: true,
-            zchat: true,
+            interlink: true,
         }
     }
 }
@@ -37,8 +38,8 @@ impl DefaultProgramsConfig {
                 set.insert(pid);
             }
         }
-        if self.zchat {
-            if let Ok(pid) = ZChatDescriptor::v2().program_id() {
+        if self.interlink {
+            if let Ok(pid) = InterlinkDescriptor::v2().program_id() {
                 set.insert(pid);
             }
         }
@@ -101,6 +102,21 @@ impl Default for SectorLimitsConfig {
             max_per_program_bytes: None,
         }
     }
+}
+
+/// Returns the ProgramIds of the v0.1.0 default programs (ZID and Interlink).
+///
+/// These are the standard programs a Zode subscribes to out of the box.
+/// Each entry is `(human_name, program_id)`.
+pub fn default_program_ids() -> Vec<(&'static str, ProgramId)> {
+    let mut out = Vec::with_capacity(2);
+    if let Ok(pid) = ZidDescriptor::v1().program_id() {
+        out.push(("ZID", pid));
+    }
+    if let Ok(pid) = InterlinkDescriptor::v2().program_id() {
+        out.push(("Interlink", pid));
+    }
+    out
 }
 
 impl Default for ZodeConfig {
