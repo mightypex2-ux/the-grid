@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use zfs_core::{CborType, FieldDef, FieldSchema, ProgramId, ProofSystem, ZfsError};
+use grid_core::{CborType, FieldDef, FieldSchema, ProgramId, ProofSystem, GridError};
 
 /// ZID (Zero Identity) program descriptor.
 ///
@@ -50,24 +50,24 @@ impl ZidDescriptor {
     }
 
     /// Derive the ProgramId from this descriptor.
-    pub fn program_id(&self) -> Result<ProgramId, ZfsError> {
+    pub fn program_id(&self) -> Result<ProgramId, GridError> {
         let canonical = self.encode_canonical()?;
         Ok(ProgramId::from_descriptor_bytes(&canonical))
     }
 
     /// Build the GossipSub topic string.
-    pub fn topic(&self) -> Result<String, ZfsError> {
-        Ok(zfs_core::program_topic(&self.program_id()?))
+    pub fn topic(&self) -> Result<String, GridError> {
+        Ok(grid_core::program_topic(&self.program_id()?))
     }
 
     /// Encode to canonical CBOR bytes.
-    pub fn encode_canonical(&self) -> Result<Vec<u8>, ZfsError> {
-        zfs_core::encode_canonical(self)
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, GridError> {
+        grid_core::encode_canonical(self)
     }
 
     /// Decode from canonical CBOR bytes.
-    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ZfsError> {
-        zfs_core::decode_canonical(bytes)
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, GridError> {
+        grid_core::decode_canonical(bytes)
     }
 }
 
@@ -87,14 +87,14 @@ pub struct ZidMessage {
 
 impl ZidMessage {
     /// Canonical CBOR of all fields EXCEPT `signature`.
-    pub fn signable_bytes(&self) -> Result<Vec<u8>, ZfsError> {
+    pub fn signable_bytes(&self) -> Result<Vec<u8>, GridError> {
         #[derive(Serialize)]
         struct Signable<'a> {
             owner_did: &'a str,
             display_name: &'a Option<String>,
             timestamp_ms: u64,
         }
-        zfs_core::encode_canonical(&Signable {
+        grid_core::encode_canonical(&Signable {
             owner_did: &self.owner_did,
             display_name: &self.display_name,
             timestamp_ms: self.timestamp_ms,
@@ -102,12 +102,12 @@ impl ZidMessage {
     }
 
     /// Encode to canonical CBOR bytes.
-    pub fn encode_canonical(&self) -> Result<Vec<u8>, ZfsError> {
-        zfs_core::encode_canonical(self)
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, GridError> {
+        grid_core::encode_canonical(self)
     }
 
     /// Decode from canonical CBOR bytes.
-    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ZfsError> {
-        zfs_core::decode_canonical(bytes)
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, GridError> {
+        grid_core::decode_canonical(bytes)
     }
 }

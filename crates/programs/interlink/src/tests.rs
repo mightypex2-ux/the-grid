@@ -1,7 +1,7 @@
 use crate::interlink::{
     sector_id_for_channel, sector_id_for_message, ChannelId, InterlinkDescriptor, ZMessage,
 };
-use zfs_core::ProofSystem;
+use grid_core::ProofSystem;
 
 #[test]
 fn interlink_program_id_deterministic() {
@@ -29,7 +29,7 @@ fn zid_and_interlink_have_different_program_ids() {
 fn program_topic_matches_descriptor_topic() {
     let desc = InterlinkDescriptor::v1();
     let pid = desc.program_id().expect("pid");
-    assert_eq!(zfs_core::program_topic(&pid), desc.topic().expect("topic"));
+    assert_eq!(grid_core::program_topic(&pid), desc.topic().expect("topic"));
 }
 
 #[test]

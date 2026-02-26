@@ -1,5 +1,4 @@
 use crate::zid::{ZidDescriptor, ZidMessage};
-use zfs_core::ProofSystem;
 
 #[test]
 fn zid_program_id_deterministic() {

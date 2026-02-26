@@ -1,0 +1,22 @@
+[package]
+name = "grid-sdk"
+version = "0.2.0"
+edition = "2021"
+description = "Grid client SDK — identity, encrypt, sign, upload, fetch"
+
+[dependencies]
+zero-neural = { path = "../zero-neural" }
+grid-core = { path = "../grid-core" }
+grid-crypto = { path = "../grid-crypto" }
+grid-net = { path = "../grid-net" }
+programs-zid = { path = "../programs/zid" }
+programs-interlink = { path = "../programs/interlink" }
+grid-proof = { path = "../grid-proof" }
+grid-proof-groth16 = { path = "../grid-proof-groth16" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tracing = "0.1"
+thiserror = "2"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

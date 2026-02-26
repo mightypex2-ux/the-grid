@@ -1,0 +1,26 @@
+[package]
+name = "zode"
+version = "0.2.0"
+edition = "2021"
+description = "Zode — ties together storage, network, proof, and programs"
+
+[dependencies]
+grid-core = { path = "../grid-core" }
+grid-crypto = { path = "../grid-crypto" }
+grid-storage = { path = "../grid-storage" }
+grid-net = { path = "../grid-net" }
+programs-zid = { path = "../programs/zid" }
+programs-interlink = { path = "../programs/interlink" }
+grid-proof = { path = "../grid-proof" }
+grid-proof-groth16 = { path = "../grid-proof-groth16" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tracing = "0.1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+ciborium = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+zero-neural = { path = "../zero-neural" }

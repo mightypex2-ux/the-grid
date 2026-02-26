@@ -1,3 +1,4 @@
 /target/
 .cursor/
-zfs-zode-data*/
+zode-data*/
+zfs-zode-*/

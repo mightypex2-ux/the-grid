@@ -1,4 +1,4 @@
-# ZFS v0.1.0 — Programs and topics
+# The Grid v0.1.0 — Programs and topics
 
 ## Purpose
 
@@ -70,6 +70,6 @@ stateDiagram-v2
 
 ## Implementation
 
-- **Crate:** `zfs-programs` (and/or types in `zfs-core`). Canonical encoding and hashing in `zfs-programs` or shared in core.
+- **Crate:** `programs-zid`, `programs-interlink`, `programs-zfs` (and/or types in `grid-core`). Canonical encoding and hashing in program crates or shared in core.
 - **Hashing:** SHA-256; same as Cid derivation in 11-core-types.
-- **Topic naming:** Implemented in `zfs-programs` and used by `zfs-net`, `zfs-zode`, and `zfs-sdk`. No spaces in topic strings; use a single canonical format (hex) across the system.
+- **Topic naming:** Implemented in program crates and used by `grid-net`, `zode`, and `grid-sdk`. No spaces in topic strings; use a single canonical format (hex) across the system.

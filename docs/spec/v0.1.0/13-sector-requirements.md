@@ -33,8 +33,8 @@ Sector IDs are 32 bytes (HKDF-SHA256 output), carried in the existing variable-l
 
 Two-step HKDF-SHA256 to ensure domain separation between ID derivation and payload encryption:
 
-1. **Derivation key**: `HKDF(ikm=shared_secret, salt="zfs:sector:v1", info="zfs:sector:derive-key:v1")`
-2. **Sector ID**: `HKDF(ikm=derivation_key, salt="zfs:sector:v1", info=application_defined_info_string)`
+1. **Derivation key**: `HKDF(ikm=shared_secret, salt="grid:sector:v1", info="grid:sector:derive-key:v1")`
+2. **Sector ID**: `HKDF(ikm=derivation_key, salt="grid:sector:v1", info=application_defined_info_string)`
 
 The `shared_secret` is typically a `SectorKey` or derived from one. The intermediate derivation key MUST be zeroized after use. The raw `SectorKey` is never used directly as HKDF input for sector IDs — it is reserved exclusively for AEAD encryption.
 
@@ -43,14 +43,14 @@ The `shared_secret` is typically a `SectorKey` or derived from one. The intermed
 - **Deterministic**: All parties sharing the same secret and info string compute the same sector ID.
 - **Unlinkable**: Different info strings produce unrelated IDs; the Zode cannot determine two IDs share a secret.
 - **Collision-resistant**: 32-byte output; negligible collision probability.
-- **Domain-separated**: Fixed salt `"zfs:sector:v1"` prevents cross-use collisions.
+- **Domain-separated**: Fixed salt `"grid:sector:v1"` prevents cross-use collisions.
 
 ### 4.4 Info String Conventions
 
-Format: `"zfs:{program_short_name}:{purpose}:{...application_fields}"`
+Format: `"grid:{program_short_name}:{purpose}:{...application_fields}"`
 
 Rules:
-- MUST begin with `"zfs:"`.
+- MUST begin with `"grid:"`.
 - Variable-length fields (IDs, hashes) MUST be hex-encoded to avoid delimiter collisions.
 - MUST NOT reuse the same info string for slots with different semantics.
 
@@ -58,7 +58,7 @@ Rules:
 
 ### 5.1 Protocol String
 
-`/zfs/sector/1.0.0` — separate from the base protocol (`/zfs/1.0.0`). A Zode MAY serve both simultaneously. Serialization is canonical CBOR.
+`/grid/sector/1.0.0` — separate from the base protocol (`/grid/1.0.0`). A Zode MAY serve both simultaneously. Serialization is canonical CBOR.
 
 ### 5.2 Request/Response Enums
 
@@ -209,7 +209,7 @@ A future version MAY add a lightweight notification mechanism where Zodes push s
 
 ### 10.1 Multiplexing
 
-Both `/zfs/1.0.0` and `/zfs/sector/1.0.0` are registered as separate libp2p request-response protocols on the same Swarm. Multistream-select handles routing by protocol string.
+Both `/grid/1.0.0` and `/grid/sector/1.0.0` are registered as separate libp2p request-response protocols on the same Swarm. Multistream-select handles routing by protocol string.
 
 ### 10.2 Shared Infrastructure
 
@@ -225,7 +225,7 @@ Clients discover supported protocols via libp2p Identify (advertised protocol st
 
 ## 11. Versioning
 
-Protocol string follows semver (`/zfs/sector/{major}.{minor}.{patch}`).
+Protocol string follows semver (`/grid/sector/{major}.{minor}.{patch}`).
 
 - **Major**: Breaking wire-format changes. Incompatible with prior major versions.
 - **Minor**: Additive changes (new optional fields, new request types). Backward-compatible. Unknown CBOR fields are silently ignored via `#[serde(default)]`.
@@ -262,9 +262,9 @@ A Zode MAY advertise multiple versions. Clients select the highest mutually supp
 
 ## 15. Implementation Crate Responsibilities
 
-- **zfs-core**: `GossipSector`, sector wire types (`SectorRequest`/`SectorResponse` and inner structs), extended `ErrorCode` enum, `SectorStoreError`.
-- **zfs-crypto**: `derive_sector_id` (two-step HKDF), `pad_to_bucket`/`unpad_from_bucket`. Existing `SectorKey` and `encrypt_sector`/`decrypt_sector` are reused unchanged.
-- **zfs-storage**: `SectorStore` trait (put, get, batch_put, batch_get, stats). `RocksStorage` adds `sectors` column family. CAS put uses atomic read-modify-write.
-- **zfs-net**: Registers `/zfs/sector/1.0.0` as separate request-response protocol. Extends GossipSub handling for `GossipSector` (distinguished by CBOR tag). Publishes gossip on successful client store.
-- **zfs-zode**: Sector request handler (no CID/proof/head logic). Idempotent gossip handling. Policy enforcement for both client and gossip writes.
-- **zfs-sdk**: `derive_sector_id`, padding helpers, batch helpers, optional multi-send, convenience `sector_encrypt` (pad + AAD + encrypt in one call). Application logic lives above this layer.
+- **grid-core**: `GossipSector`, sector wire types (`SectorRequest`/`SectorResponse` and inner structs), extended `ErrorCode` enum, `SectorStoreError`.
+- **grid-crypto**: `derive_sector_id` (two-step HKDF), `pad_to_bucket`/`unpad_from_bucket`. Existing `SectorKey` and `encrypt_sector`/`decrypt_sector` are reused unchanged.
+- **grid-storage**: `SectorStore` trait (put, get, batch_put, batch_get, stats). `RocksStorage` adds `sectors` column family. CAS put uses atomic read-modify-write.
+- **grid-net**: Registers `/grid/sector/1.0.0` as separate request-response protocol. Extends GossipSub handling for `GossipSector` (distinguished by CBOR tag). Publishes gossip on successful client store.
+- **zode**: Sector request handler (no CID/proof/head logic). Idempotent gossip handling. Policy enforcement for both client and gossip writes.
+- **grid-sdk**: `derive_sector_id`, padding helpers, batch helpers, optional multi-send, convenience `sector_encrypt` (pad + AAD + encrypt in one call). Application logic lives above this layer.

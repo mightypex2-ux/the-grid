@@ -1,8 +1,8 @@
-# ZFS v0.1.0 — Network Visualization (Zode App)
+# The Grid v0.1.0 — Network Visualization (Zode App)
 
 ## Purpose
 
-The **Network Visualization** panel provides a GPU-accelerated, real-time graph of the local Zode and all connected / discovered Zodes. It is rendered inside the **ZODE** tab of `zfs-zode-app`, positioned **above** the existing Node section, giving the operator an immediate spatial overview of their node's place in the network.
+The **Network Visualization** panel provides a GPU-accelerated, real-time graph of the local Zode and all connected / discovered Zodes. It is rendered inside the **ZODE** tab of `zode-app`, positioned **above** the existing Node section, giving the operator an immediate spatial overview of their node's place in the network.
 
 ## Requirements
 
@@ -37,7 +37,7 @@ The **Network Visualization** panel provides a GPU-accelerated, real-time graph 
 
 ## Data sources
 
-The visualization consumes data already exposed by `zfs-zode`:
+The visualization consumes data already exposed by `zode`:
 
 | Data | Source | Update trigger |
 |------|--------|----------------|
@@ -113,7 +113,7 @@ Fields that cannot be resolved display "Unknown". The popup disappears on click-
 
 ### GPU acceleration via egui + wgpu
 
-`zfs-zode-app` already runs on `eframe` which uses `wgpu` as its rendering backend. The visualization uses egui's `PaintCallback` to issue custom wgpu draw calls inside the allocated UI rect:
+`zode-app` already runs on `eframe` which uses `wgpu` as its rendering backend. The visualization uses egui's `PaintCallback` to issue custom wgpu draw calls inside the allocated UI rect:
 
 ```rust
 pub struct NetworkCanvas {
@@ -193,7 +193,7 @@ pub struct GeoResult {
 
 ## Impact on existing code
 
-### zfs-zode-app
+### zode-app
 
 | File | Change |
 |------|--------|
@@ -203,11 +203,11 @@ pub struct GeoResult {
 | new: `visualization.rs` | Contains `NetworkCanvas`, force layout, wgpu paint callback, popup rendering, pan/zoom input handling. |
 | `Cargo.toml` | Add optional dependency on a GeoIP reader crate (e.g. `maxminddb`). |
 
-### zfs-zode
+### zode
 
 No changes required. The visualization consumes `ZodeStatus` and `NetworkEvent` which are already public.
 
-### zfs-net
+### grid-net
 
 No changes required for v0.1.0. Future work (V-12, V-13) may need additional event data (traffic counters per peer, topic lists per peer).
 
@@ -217,13 +217,13 @@ No changes required for v0.1.0. Future work (V-12, V-13) may need additional eve
 
 ```mermaid
 flowchart LR
-    subgraph zfs-net
+    subgraph grid-net
         Events[NetworkEvent stream]
     end
-    subgraph zfs-zode
+    subgraph zode
         Status[ZodeStatus poll]
     end
-    subgraph zfs-zode-app
+    subgraph zode-app
         Viz[NetworkVisualizationState]
         Canvas[NetworkCanvas wgpu]
         Geo[GeoIP Cache]
@@ -266,7 +266,7 @@ stateDiagram-v2
 
 ## Implementation
 
-- **Crate:** `zfs-zode-app`. New module `visualization.rs`.
+- **Crate:** `zode-app`. New module `visualization.rs`.
 - **GPU backend:** Uses the existing `eframe` / `wgpu` pipeline via `egui::PaintCallback`. No additional GPU framework needed.
 - **GeoIP:** Optional dependency `maxminddb` for reading `.mmdb` files. The GeoLite2-City database is not shipped in the repo; the operator places it in the data directory or the build bundles it. If absent, location fields show "Unknown".
 - **Performance budget:** Layout + draw must complete in < 2 ms per frame for 50 nodes to maintain 60 fps alongside the rest of the UI.

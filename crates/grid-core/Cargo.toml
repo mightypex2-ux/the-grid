@@ -1,0 +1,17 @@
+[package]
+name = "grid-core"
+version = "0.2.0"
+edition = "2021"
+description = "Grid shared types, canonical CBOR serialization, and protocol messages"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ciborium = "0.2"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+sha2 = "0.10"
+thiserror = "2"
+zero-neural = { path = "../zero-neural" }
+
+[dev-dependencies]

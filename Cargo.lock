@@ -2469,6 +2469,113 @@ dependencies = [
 ]
 
 [[package]]
+name = "grid-core"
+version = "0.2.0"
+dependencies = [
+ "ciborium",
+ "hex",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "thiserror 2.0.18",
+ "zero-neural",
+]
+
+[[package]]
+name = "grid-crypto"
+version = "0.2.0"
+dependencies = [
+ "ark-bn254",
+ "ark-crypto-primitives",
+ "ark-ff",
+ "ark-serialize",
+ "chacha20poly1305",
+ "grid-core",
+ "hkdf",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "zero-neural",
+ "zeroize",
+]
+
+[[package]]
+name = "grid-net"
+version = "0.2.0"
+dependencies = [
+ "futures",
+ "grid-core",
+ "libp2p",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "grid-proof"
+version = "0.2.0"
+dependencies = [
+ "grid-core",
+ "grid-crypto",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "grid-proof-groth16"
+version = "0.2.0"
+dependencies = [
+ "ark-bn254",
+ "ark-crypto-primitives",
+ "ark-ff",
+ "ark-groth16",
+ "ark-r1cs-std",
+ "ark-relations",
+ "ark-serialize",
+ "ark-snark",
+ "ark-std",
+ "grid-core",
+ "grid-crypto",
+ "grid-proof",
+ "rand 0.8.5",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "grid-sdk"
+version = "0.2.0"
+dependencies = [
+ "grid-core",
+ "grid-crypto",
+ "grid-net",
+ "grid-proof",
+ "grid-proof-groth16",
+ "programs-interlink",
+ "programs-zid",
+ "rand_core 0.6.4",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "zero-neural",
+]
+
+[[package]]
+name = "grid-storage"
+version = "0.2.0"
+dependencies = [
+ "ciborium",
+ "grid-core",
+ "rocksdb",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "h2"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4676,29 +4783,29 @@ checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 
 [[package]]
 name = "programs-interlink"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "grid-core",
  "programs-zid",
  "serde",
  "serde_bytes",
  "sha2",
- "zfs-core",
 ]
 
 [[package]]
 name = "programs-zfs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "zfs-core",
+ "grid-core",
 ]
 
 [[package]]
 name = "programs-zid"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "grid-core",
  "serde",
  "serde_bytes",
- "zfs-core",
 ]
 
 [[package]]
@@ -7418,7 +7525,7 @@ dependencies = [
 
 [[package]]
 name = "zero-neural"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags 2.11.0",
  "bs58",
@@ -7534,117 +7641,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "zfs-core"
-version = "0.1.0"
+name = "zmij"
+version = "1.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zode"
+version = "0.2.0"
 dependencies = [
  "ciborium",
- "hex",
- "serde",
- "serde_bytes",
- "sha2",
- "thiserror 2.0.18",
- "zero-neural",
-]
-
-[[package]]
-name = "zfs-crypto"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-crypto-primitives",
- "ark-ff",
- "ark-serialize",
- "chacha20poly1305",
- "hkdf",
- "rand 0.8.5",
- "rand_core 0.6.4",
- "serde",
- "serde_bytes",
- "sha2",
- "zero-neural",
- "zeroize",
- "zfs-core",
-]
-
-[[package]]
-name = "zfs-net"
-version = "0.1.0"
-dependencies = [
- "futures",
- "libp2p",
- "serde",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "zfs-core",
-]
-
-[[package]]
-name = "zfs-proof"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.18",
- "zfs-core",
- "zfs-crypto",
-]
-
-[[package]]
-name = "zfs-proof-groth16"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-crypto-primitives",
- "ark-ff",
- "ark-groth16",
- "ark-r1cs-std",
- "ark-relations",
- "ark-serialize",
- "ark-snark",
- "ark-std",
- "rand 0.8.5",
- "thiserror 2.0.18",
- "zfs-core",
- "zfs-crypto",
- "zfs-proof",
-]
-
-[[package]]
-name = "zfs-sdk"
-version = "0.1.0"
-dependencies = [
- "programs-interlink",
- "programs-zid",
- "rand_core 0.6.4",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "zero-neural",
- "zfs-core",
- "zfs-crypto",
- "zfs-net",
- "zfs-proof",
- "zfs-proof-groth16",
-]
-
-[[package]]
-name = "zfs-storage"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "rocksdb",
- "serde",
- "serde_bytes",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "zfs-core",
-]
-
-[[package]]
-name = "zfs-zode"
-version = "0.1.0"
-dependencies = [
- "ciborium",
+ "grid-core",
+ "grid-crypto",
+ "grid-net",
+ "grid-proof",
+ "grid-proof-groth16",
+ "grid-storage",
  "programs-interlink",
  "programs-zid",
  "serde",
@@ -7654,23 +7666,23 @@ dependencies = [
  "tokio",
  "tracing",
  "zero-neural",
- "zfs-core",
- "zfs-crypto",
- "zfs-net",
- "zfs-proof",
- "zfs-proof-groth16",
- "zfs-storage",
 ]
 
 [[package]]
-name = "zfs-zode-app"
-version = "0.1.0"
+name = "zode-app"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "ciborium",
  "eframe",
  "egui-phosphor",
  "egui_extras",
+ "grid-core",
+ "grid-crypto",
+ "grid-net",
+ "grid-proof-groth16",
+ "grid-sdk",
+ "grid-storage",
  "hex",
  "hkdf",
  "image",
@@ -7682,39 +7694,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "zero-neural",
- "zfs-core",
- "zfs-crypto",
- "zfs-net",
- "zfs-proof-groth16",
- "zfs-sdk",
- "zfs-storage",
- "zfs-zode",
+ "zode",
 ]
 
 [[package]]
-name = "zfs-zode-cli"
-version = "0.1.0"
+name = "zode-cli"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "grid-core",
+ "grid-net",
+ "grid-storage",
  "programs-interlink",
  "programs-zid",
  "ratatui",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",
- "zfs-core",
- "zfs-net",
- "zfs-storage",
- "zfs-zode",
+ "zode",
 ]
-
-[[package]]
-name = "zmij"
-version = "1.0.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zstd-sys"

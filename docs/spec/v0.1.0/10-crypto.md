@@ -1,18 +1,18 @@
-# ZFS v0.1.0 — Crypto (client-side encryption)
+# The Grid v0.1.0 — Crypto (client-side encryption)
 
 ## Purpose
 
-The `zfs-crypto` crate provides client-side encryption for sector payloads. ZFS is **encrypted-by-default**: only ciphertext exists at rest and on the wire; Zodes never see plaintext. Encryption and decryption are performed by the client (SDK); the Zode only stores and serves opaque bytes.
+The `grid-crypto` crate provides client-side encryption for sector payloads. The Grid is **encrypted-by-default**: only ciphertext exists at rest and on the wire; Zodes never see plaintext. Encryption and decryption are performed by the client (SDK); the Zode only stores and serves opaque bytes.
 
 ## Properties
 
 - **Ciphertext-only at rest:** Zode stores and serves ciphertext. No key material is stored on the Zode.
 - **Client encrypts before upload:** SDK (or client using the crate) encrypts the sector payload before sending a StoreRequest.
-- **Key hierarchy:** Key derivation is rooted in `zero-neural` — a standalone PQ-Hybrid key crate. `zfs-crypto` depends on `zero-neural` for `MachineKeyPair`, `MachinePublicKey`, hybrid key encapsulation, and HKDF.
+- **Key hierarchy:** Key derivation is rooted in `zero-neural` — a standalone PQ-Hybrid key crate. `grid-crypto` depends on `zero-neural` for `MachineKeyPair`, `MachinePublicKey`, hybrid key encapsulation, and HKDF.
 
 ## Key hierarchy
 
-All keys derive from a **NeuralKey** (256-bit root secret) via HKDF-SHA256 with zero-id-compatible domain separation. The full hierarchy is defined in the `zero-neural` crate; `zfs-crypto` consumes the derived Machine Key Pairs.
+All keys derive from a **NeuralKey** (256-bit root secret) via HKDF-SHA256 with zero-id-compatible domain separation. The full hierarchy is defined in the `zero-neural` crate; `grid-crypto` consumes the derived Machine Key Pairs.
 
 ```
 NeuralKey (256-bit CSPRNG)
@@ -132,7 +132,7 @@ flowchart TB
 
 ### Key wrapping — always hybrid
 
-Key wrapping is a **two-step** process that separates the key agreement (in `zero-neural`) from the sector-specific wrapping (in `zfs-crypto`):
+Key wrapping is a **two-step** process that separates the key agreement (in `zero-neural`) from the sector-specific wrapping (in `grid-crypto`):
 
 **Step 1 — Hybrid key agreement (`zero-neural`):**
 
@@ -151,7 +151,7 @@ shared_secret = HKDF-SHA256(
 
 This produces a `SharedSecret` (32 bytes) and an `EncapBundle` (sender's X25519 public key + ML-KEM ciphertext). The ML-KEM encapsulation uses `OsRng` directly (not injectable); the result is non-deterministic per encapsulation even with the same keys.
 
-**Step 2 — Sector key wrapping (`zfs-crypto`):**
+**Step 2 — Sector key wrapping (`grid-crypto`):**
 
 The shared secret is used to derive a context-bound wrap key, then the SectorKey is encrypted:
 
@@ -159,7 +159,7 @@ The shared secret is used to derive a context-bound wrap key, then the SectorKey
 wrap_key = HKDF-SHA256(
     ikm  = shared_secret,
     salt = None,
-    info = "zfs:sector-key-wrap:v1" || program_id || sector_id
+    info = "grid:sector-key-wrap:v1" || program_id || sector_id
 )
 
 wrapped_sector_key = XChaCha20-Poly1305(
@@ -252,7 +252,7 @@ pub fn unwrap_sector_key(
 
 ### zero-neural types and functions (implemented)
 
-These are the `zero-neural` primitives used by `zfs-crypto` and `zfs-sdk`. All types listed here are publicly exported from the `zero-neural` crate.
+These are the `zero-neural` primitives used by `grid-crypto` and `grid-sdk`. All types listed here are publicly exported from the `zero-neural` crate.
 
 #### NeuralKey
 
@@ -419,8 +419,8 @@ stateDiagram-v2
 
 ## Implementation
 
-- **Crate:** `zfs-crypto`. Deps: `zero-neural`, `zfs-core`.
+- **Crate:** `grid-crypto`. Deps: `zero-neural`, `grid-core`.
 - **Use only in:** SDK and client code. Zode does **not** use this crate for payload crypto.
 - **Algorithm:** XChaCha20-Poly1305 for sector encryption and key wrapping. Hybrid (X25519 + ML-KEM-768) for key agreement.
-- **Two-step wrapping:** Step 1 (key agreement) is in `zero-neural`; step 2 (sector-context-bound wrapping) is in `zfs-crypto`.
+- **Two-step wrapping:** Step 1 (key agreement) is in `zero-neural`; step 2 (sector-context-bound wrapping) is in `grid-crypto`.
 - **Errors:** `CryptoError` for decryption failure, invalid length, etc.; do not leak key material.

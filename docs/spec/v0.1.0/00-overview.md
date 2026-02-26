@@ -1,8 +1,8 @@
-# ZFS v0.1.0 — Overview
+# The Grid v0.1.0 — Overview
 
 ## System definition
 
-**ZFS (Zero File System)** is a peer-to-peer encrypted datastore. It is **not** a blockchain and has no tokens or consensus layer. Clients store and retrieve content-addressed sectors through **Zodes** (storage nodes); data is encrypted by the client before upload, and Zodes only ever see ciphertext.
+**The Grid** is a peer-to-peer encrypted datastore. It is **not** a blockchain and has no tokens or consensus layer. Clients store and retrieve content-addressed sectors through **Zodes** (storage nodes); data is encrypted by the client before upload, and Zodes only ever see ciphertext.
 
 ## Core properties
 
@@ -20,17 +20,17 @@
 - Zodes persist blocks and heads in RocksDB, verify proofs when required, and enforce local storage policy.
 - Console CLI (zode-cli) and standalone app (zode-app) can run a Zode and show status, programs, peers, and live log.
 - SDK supports connect, program_id/topic, encrypt, prove (optional), upload, fetch, and head helpers; ZID and Interlink helpers are available.
-- No RocksDB usage outside `zfs-storage`; no direct libp2p outside `zfs-net`.
+- No RocksDB usage outside `grid-storage`; no direct libp2p outside `grid-net`.
 
 ## Context diagram
 
 ```mermaid
 flowchart LR
     subgraph Client
-        SDK[zfs-sdk]
+        SDK[grid-sdk]
     end
     subgraph Zode
-        ZodeLib[zfs-zode]
+        ZodeLib[zode]
     end
     subgraph Storage
         RocksDB[(RocksDB)]
@@ -40,8 +40,8 @@ flowchart LR
 ```
 
 - **Client** uses the SDK to encrypt, (optionally) prove, and send store/fetch requests to Zodes.
-- **Zode** runs libp2p, subscribes to program topics, verifies proofs, and persists via `zfs-storage` only.
-- **RocksDB** is used exclusively by `zfs-storage`; no other crate touches it.
+- **Zode** runs libp2p, subscribes to program topics, verifies proofs, and persists via `grid-storage` only.
+- **RocksDB** is used exclusively by `grid-storage`; no other crate touches it.
 
 ## Document index
 

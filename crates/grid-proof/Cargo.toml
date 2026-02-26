@@ -1,0 +1,11 @@
+[package]
+name = "grid-proof"
+version = "0.2.0"
+edition = "2021"
+description = "Grid pluggable Valid-Sector proof verification"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+grid-core = { path = "../grid-core" }
+grid-crypto = { path = "../grid-crypto" }
+thiserror = "2"

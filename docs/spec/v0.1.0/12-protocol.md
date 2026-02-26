@@ -1,8 +1,8 @@
-# ZFS v0.1.0 — Protocol (v1)
+# The Grid v0.1.0 — Protocol (v1)
 
 ## Purpose
 
-This document defines the v1 protocol: message types, wire format, transport (how store/fetch are sent), discovery, replication semantics, and cryptographic authentication. Implemented in `zfs-net` (wire) and used by `zfs-zode` and `zfs-sdk`.
+This document defines the v1 protocol: message types, wire format, transport (how store/fetch are sent), discovery, replication semantics, and cryptographic authentication. Implemented in `grid-net` (wire) and used by `zode` and `grid-sdk`.
 
 ## Message types
 
@@ -48,7 +48,7 @@ pub struct StoreRequest {
 ```rust
 pub struct StoreResponse {
     pub ok: bool,
-    pub error_code: Option<ZfsError>,  // if !ok
+    pub error_code: Option<GridError>,  // if !ok
 }
 ```
 
@@ -71,7 +71,7 @@ pub struct FetchRequest {
 pub struct FetchResponse {
     pub ciphertext: Option<Vec<u8>>,
     pub head: Option<Head>,
-    pub error_code: Option<ZfsError>,
+    pub error_code: Option<GridError>,
 }
 ```
 
@@ -125,8 +125,8 @@ Policy is configurable per Zode.
 
 - **Message structs:** `StoreRequest`, `StoreResponse`, `FetchRequest`, `FetchResponse` (and optional envelope).
 - **Serialization:** `encode_canonical` / `decode_canonical` (CBOR).
-- **Discovery:** `bootstrap_peers` in config; `connect(peers, config)` in `zfs-net` API.
-- **Send/receive:** Implemented in `zfs-net`; Zode and SDK use the same API (send store request, receive store response, etc.).
+- **Discovery:** `bootstrap_peers` in config; `connect(peers, config)` in `grid-net` API.
+- **Send/receive:** Implemented in `grid-net`; Zode and SDK use the same API (send store request, receive store response, etc.).
 
 ## Sequence diagrams
 
@@ -162,7 +162,7 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant Config as Config
-    participant Net as zfs-net
+    participant Net as grid-net
     Config->>Net: bootstrap_peers
     Net->>Net: connect to peers
     Net-->>C: Connection ready
@@ -170,6 +170,6 @@ sequenceDiagram
 
 ## Implementation
 
-- **Crate:** `zfs-net`. Implements wire format, request-response, and discovery; used by `zfs-zode` and `zfs-sdk`.
+- **Crate:** `grid-net`. Implements wire format, request-response, and discovery; used by `zode` and `grid-sdk`.
 - **06-zode and 09-sdk** reference this spec for message shapes and replication semantics.
 - **Signing:** `zero-neural` types (`HybridSignature`, `MachineKeyPair`, `MachinePublicKey`) are used for request signing and verification. SDK signs via `MachineKeyPair::sign()`; Zodes verify via `MachinePublicKey::verify()`. See [10-crypto](10-crypto.md) for full API.

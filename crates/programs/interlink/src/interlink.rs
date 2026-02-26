@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zfs_core::{CborType, FieldDef, FieldSchema, ProgramId, ProofSystem, SectorId, ZfsError};
+use grid_core::{CborType, FieldDef, FieldSchema, ProgramId, ProofSystem, SectorId, GridError};
 
 /// Maximum Interlink message size (64 KiB).
 pub const MAX_MESSAGE_SIZE: usize = 64 * 1024;
@@ -58,24 +58,24 @@ impl InterlinkDescriptor {
     }
 
     /// Derive the ProgramId from this descriptor.
-    pub fn program_id(&self) -> Result<ProgramId, ZfsError> {
+    pub fn program_id(&self) -> Result<ProgramId, GridError> {
         let canonical = self.encode_canonical()?;
         Ok(ProgramId::from_descriptor_bytes(&canonical))
     }
 
     /// Build the GossipSub topic string.
-    pub fn topic(&self) -> Result<String, ZfsError> {
-        Ok(zfs_core::program_topic(&self.program_id()?))
+    pub fn topic(&self) -> Result<String, GridError> {
+        Ok(grid_core::program_topic(&self.program_id()?))
     }
 
     /// Encode to canonical CBOR bytes.
-    pub fn encode_canonical(&self) -> Result<Vec<u8>, ZfsError> {
-        zfs_core::encode_canonical(self)
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, GridError> {
+        grid_core::encode_canonical(self)
     }
 
     /// Decode from canonical CBOR bytes.
-    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ZfsError> {
-        zfs_core::decode_canonical(bytes)
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, GridError> {
+        grid_core::decode_canonical(bytes)
     }
 }
 
@@ -171,7 +171,7 @@ impl ZMessage {
         content: String,
         timestamp_ms: u64,
         sign_fn: impl FnOnce(&[u8]) -> Vec<u8>,
-    ) -> Result<Self, ZfsError> {
+    ) -> Result<Self, GridError> {
         let mut msg = Self {
             sender_did,
             channel_id,
@@ -192,7 +192,7 @@ impl ZMessage {
     pub fn verify_signature(
         &self,
         verify_fn: impl FnOnce(&[u8], &[u8]) -> bool,
-    ) -> Result<bool, ZfsError> {
+    ) -> Result<bool, GridError> {
         if self.signature.is_empty() {
             return Ok(false);
         }
@@ -202,7 +202,7 @@ impl ZMessage {
 
     /// Canonical CBOR of all fields EXCEPT `signature`.
     /// This is the payload that gets signed and later verified.
-    pub fn signable_bytes(&self) -> Result<Vec<u8>, ZfsError> {
+    pub fn signable_bytes(&self) -> Result<Vec<u8>, GridError> {
         #[derive(Serialize)]
         struct Signable<'a> {
             sender_did: &'a str,
@@ -210,7 +210,7 @@ impl ZMessage {
             content: &'a str,
             timestamp_ms: u64,
         }
-        zfs_core::encode_canonical(&Signable {
+        grid_core::encode_canonical(&Signable {
             sender_did: &self.sender_did,
             channel_id: &self.channel_id,
             content: &self.content,
@@ -219,10 +219,10 @@ impl ZMessage {
     }
 
     /// Encode to canonical CBOR bytes, enforcing the size limit.
-    pub fn encode_canonical(&self) -> Result<Vec<u8>, ZfsError> {
-        let bytes = zfs_core::encode_canonical(self)?;
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, GridError> {
+        let bytes = grid_core::encode_canonical(self)?;
         if bytes.len() > MAX_MESSAGE_SIZE {
-            return Err(ZfsError::InvalidPayload(format!(
+            return Err(GridError::InvalidPayload(format!(
                 "ZMessage exceeds max size: {} > {}",
                 bytes.len(),
                 MAX_MESSAGE_SIZE
@@ -232,8 +232,8 @@ impl ZMessage {
     }
 
     /// Decode from canonical CBOR bytes.
-    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ZfsError> {
-        zfs_core::decode_canonical(bytes)
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, GridError> {
+        grid_core::decode_canonical(bytes)
     }
 }
 

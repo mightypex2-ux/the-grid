@@ -1,10 +1,10 @@
-# ZFS v0.1.0 — Kademlia DHT Peer Discovery
+# The Grid v0.1.0 — Kademlia DHT Peer Discovery
 
 ## Purpose
 
 [12-protocol](12-protocol.md) defines peer discovery via bootstrap peers only. This works for small, manually-configured networks but does not scale: each node must be told about every peer it should connect to, and there is no automatic propagation of new peers through the network.
 
-This document specifies **Kademlia DHT-based peer discovery** for `zfs-net`, enabling automatic multi-hop peer discovery where nodes find each other transitively through the routing table. A node that bootstraps to a single known peer will eventually discover the full network.
+This document specifies **Kademlia DHT-based peer discovery** for `grid-net`, enabling automatic multi-hop peer discovery where nodes find each other transitively through the routing table. A node that bootstraps to a single known peer will eventually discover the full network.
 
 ## Requirements
 
@@ -12,12 +12,12 @@ This document specifies **Kademlia DHT-based peer discovery** for `zfs-net`, ena
 
 | # | Requirement |
 |---|-------------|
-| D-1 | Add `libp2p::kad::Behaviour` (Kademlia DHT) to the `zfs-net` swarm behaviour. |
-| D-2 | Kademlia must use a ZFS-specific protocol name (e.g. `/zfs/kad/1.0.0`) so ZFS nodes only discover other ZFS nodes, not unrelated libp2p peers. |
+| D-1 | Add `libp2p::kad::Behaviour` (Kademlia DHT) to the `grid-net` swarm behaviour. |
+| D-2 | Kademlia must use a Grid-specific protocol name (e.g. `/grid/kad/1.0.0`) so Grid nodes only discover other Grid nodes, not unrelated libp2p peers. |
 | D-3 | On startup, if bootstrap peers are configured, add them to the Kademlia routing table and trigger an initial bootstrap (`kad::Behaviour::bootstrap()`). |
 | D-4 | Perform periodic random walks (`kad::Behaviour::get_closest_peers(random_key)`) to keep the routing table populated and discover new peers joining the network. |
 | D-5 | DHT discovery must be **opt-in** via `NetworkConfig`. Existing bootstrap-only behaviour must remain the default for backward compatibility. |
-| D-6 | Expose a `NetworkEvent::PeerDiscovered { zode_id, addresses }` event so `zfs-zode` and `zfs-sdk` can observe newly discovered Zodes. |
+| D-6 | Expose a `NetworkEvent::PeerDiscovered { zode_id, addresses }` event so `zode` and `grid-sdk` can observe newly discovered Zodes. |
 | D-7 | Newly discovered peers must be automatically dialed so that GossipSub and request-response can operate over the expanded peer set. |
 
 ### Should
@@ -87,7 +87,7 @@ pub enum KademliaMode {
 
 ```rust
 #[derive(NetworkBehaviour)]
-pub(crate) struct ZfsBehaviour {
+pub(crate) struct GridBehaviour {
     pub(crate) gossipsub: libp2p::gossipsub::Behaviour,
     pub(crate) request_response: libp2p::request_response::cbor::Behaviour<ZfsRequest, ZfsResponse>,
 
@@ -104,7 +104,7 @@ Kademlia is always present in the behaviour struct but only actively used (boots
 
 When `enable_kademlia` is true:
 
-1. Configure Kademlia with protocol name `/zfs/kad/1.0.0` and `MemoryStore`.
+1. Configure Kademlia with protocol name `/grid/kad/1.0.0` and `MemoryStore`.
 2. Set mode to `Server` or `Client` per config.
 3. For each bootstrap peer multiaddr, add the peer to the Kademlia routing table via `kad::Behaviour::add_address`.
 4. Call `kad::Behaviour::bootstrap()` to trigger the initial routing table population.
@@ -156,19 +156,19 @@ pub enum NetworkEvent {
 
 ## Impact on other crates
 
-### zfs-zode
+### zode
 
 - **`ZodeConfig`**: No changes required. `ZodeConfig.network` already contains `NetworkConfig`; the new `DiscoveryConfig` field is added there.
 - **Event loop**: Handle the new `NetworkEvent::PeerDiscovered` variant (log it, optionally emit a `LogEvent`).
 - **Status**: Consider exposing routing table size alongside `peer_count` (known vs connected).
 
-### zfs-sdk
+### grid-sdk
 
 - **`SdkConfig`**: No changes required; inherits `NetworkConfig` expansion.
 - **Client event loop**: Handle `PeerDiscovered` — discovered Zodes can be added to the zode list for upload/fetch.
 - **Client mode Kademlia**: SDK clients should default to `KademliaMode::Client` so they don't serve as DHT routers.
 
-### zfs-zode-cli / zfs-zode-app
+### zode-cli / zode-app
 
 - Display "Known peers" (routing table size) in addition to "Connected peers" in Status/Peers screens.
 - Show `[DHT] discovered <zode_id>` events in the live log.
@@ -233,7 +233,7 @@ flowchart LR
 
 ## Implementation
 
-- **Crate:** `zfs-net`. This is the only crate that touches libp2p (per [01-architecture](01-architecture.md)).
+- **Crate:** `grid-net`. This is the only crate that touches libp2p (per [01-architecture](01-architecture.md)).
 - **Dependencies:** `libp2p` already includes `kad` and `mdns` modules; no new crate dependencies needed, just feature flags.
 - **Backward compatible:** `DiscoveryConfig::default()` disables Kademlia, preserving current behaviour. Existing tests and configurations continue to work unchanged.
-- **Config surface:** `zfs-zode-cli` flags: `--enable-kademlia`, `--kademlia-mode server|client`, `--random-walk-interval <seconds>`. `zfs-zode-app` Settings tab: checkbox for Kademlia, mode selector, interval slider.
+- **Config surface:** `zode-cli` flags: `--enable-kademlia`, `--kademlia-mode server|client`, `--random-walk-interval <seconds>`. `zode-app` Settings tab: checkbox for Kademlia, mode selector, interval slider.

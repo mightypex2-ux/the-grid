@@ -1,14 +1,14 @@
-# ZFS v0.1.0 — Storage
+# The Grid v0.1.0 — Storage
 
 ## Purpose
 
-RocksDB is the **mandatory** storage engine for ZFS v0.1.0. All access to RocksDB is abstracted behind the `zfs-storage` crate; no other crate may use RocksDB directly. This document defines the abstraction, key/value schemas, config, and isolation (namespaces, column families).
+RocksDB is the **mandatory** storage engine for the Grid v0.1.0. All access to RocksDB is abstracted behind the `grid-storage` crate; no other crate may use RocksDB directly. This document defines the abstraction, key/value schemas, config, and isolation (namespaces, column families).
 
 ## Storage engine
 
 - **Engine:** RocksDB only.
-- **Abstraction:** `zfs-storage` exposes traits/types (`StorageBackend`, `BlockStore`, `HeadStore`, `ProgramIndex`); implementation uses RocksDB internally.
-- **Rule:** No RocksDB dependency or raw DB access outside `zfs-storage`.
+- **Abstraction:** `grid-storage` exposes traits/types (`StorageBackend`, `BlockStore`, `HeadStore`, `ProgramIndex`); implementation uses RocksDB internally.
+- **Rule:** No RocksDB dependency or raw DB access outside `grid-storage`.
 
 ## Four responsibilities and key/value schemas
 
@@ -97,7 +97,7 @@ pub struct StorageConfig {
 }
 ```
 
-- **StorageError:** Wraps RocksDB errors; may include `ZfsError::StorageFull` when at capacity (see [11-core-types](11-core-types.md)).
+- **StorageError:** Wraps RocksDB errors; may include `GridError::StorageFull` when at capacity (see [11-core-types](11-core-types.md)).
 - **StorageStats:** For UI and policy; e.g. total size, key count per CF (implementation-defined).
 
 ## State machine (write flow)

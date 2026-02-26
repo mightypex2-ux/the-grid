@@ -1,15 +1,15 @@
-# ZFS v0.1.0 — Zode (node)
+# The Grid v0.1.0 — Zode (node)
 
 ## Purpose
 
-The Zode is the storage node: it runs libp2p + QUIC, uses GossipSub for topic subscription, persists blocks and heads in RocksDB via `zfs-storage`, verifies proofs when required, enforces local storage policy, and exposes metrics/state for the UI. This document defines requirements, config, storage policy, and integration with proof and verifier key storage.
+The Zode is the storage node: it runs libp2p + QUIC, uses GossipSub for topic subscription, persists blocks and heads in RocksDB via `grid-storage`, verifies proofs when required, enforces local storage policy, and exposes metrics/state for the UI. This document defines requirements, config, storage policy, and integration with proof and verifier key storage.
 
 ## Requirements (must)
 
-- **Run libp2p + QUIC:** Transport and discovery via `zfs-net`; no direct libp2p outside `zfs-net`.
+- **Run libp2p + QUIC:** Transport and discovery via `grid-net`; no direct libp2p outside `grid-net`.
 - **Use GossipSub:** Subscribe to configured program topics (`prog/{program_id}`).
 - **Subscribe to configured program topics:** Only accept store/fetch for subscribed programs (policy).
-- **Persist in RocksDB:** All persistence via `zfs-storage` only (BlockStore, HeadStore, ProgramIndex). No direct RocksDB.
+- **Persist in RocksDB:** All persistence via `grid-storage` only (BlockStore, HeadStore, ProgramIndex). No direct RocksDB.
 - **Verify proofs when required:** Before persisting a block, if the program requires proof, call `ProofVerifier::verify`; reject with `ProofInvalid` on failure (see [04-proof](04-proof.md), [11-core-types](11-core-types.md)).
 - **Enforce local storage policy:** See [Storage policy](#storage-policy).
 - **Expose metrics/state to UI:** Counters and gauges (e.g. blocks stored, peer count, storage usage) for [07-zode-cli](07-zode-cli.md) and [08-zode-app](08-zode-app.md).
@@ -29,13 +29,13 @@ Full Zode config (single place for node behavior):
 
 **Storage config:** Same as [02-storage](02-storage.md): path, max_open_files, compression, max_db_size_bytes.
 
-**Proof config:** Base path or config for verifier key storage (e.g. `program_store_path` or `verifier_key_path`). Passed to `zfs-proof` for loading verifier keys (see [04-proof](04-proof.md)).
+**Proof config:** Base path or config for verifier key storage (e.g. `program_store_path` or `verifier_key_path`). Passed to `grid-proof` for loading verifier keys (see [04-proof](04-proof.md)).
 
 **Format:** Config file (YAML/TOML) and/or env vars; implementation-defined. Document in crate.
 
 ## Default programs
 
-ZFS ships with **default programs** — the standard programs defined in [05-standard-programs](05-standard-programs.md) that a Zode subscribes to out of the box. In v0.1.0 the default programs are **ZID** and **Interlink**.
+The Grid ships with **default programs** — the standard programs defined in [05-standard-programs](05-standard-programs.md) that a Zode subscribes to out of the box. In v0.1.0 the default programs are **ZID** and **Interlink**.
 
 Default programs are **enabled by default** but can be individually toggled off in the Zode settings. This lets operators run lean nodes that serve only specific workloads (e.g. ZID-only, or only custom programs via `topics`).
 
@@ -43,8 +43,8 @@ Default programs are **enabled by default** but can be individually toggled off 
 
 ```rust
 pub struct DefaultProgramsConfig {
-    pub zid: bool,    // default: true
-    pub zchat: bool,  // default: true
+    pub zid: bool,       // default: true
+    pub interlink: bool, // default: true
 }
 ```
 
@@ -81,7 +81,7 @@ Policy is enforced in the Zode request handler **before** or **after** proof ver
 ## Interfaces
 
 - **Zode config:** Struct as above; load from file/env.
-- **Hooks:** Storage (via `zfs-storage`), proof (via `ProofVerifier`), policy (check program + limits before/after persist).
+- **Hooks:** Storage (via `grid-storage`), proof (via `ProofVerifier`), policy (check program + limits before/after persist).
 - **Metrics surface:** Counters (e.g. `blocks_stored_total`, `store_rejections_total` by reason), gauges (e.g. `peer_count`, `db_size_bytes`). Exposed for UI (see [07-zode-cli](07-zode-cli.md)).
 
 ## State machine (lifecycle)
@@ -91,8 +91,8 @@ stateDiagram-v2
     direction LR
     [*] --> Init
     Init --> LoadConfig: load config
-    LoadConfig --> OpenStorage: open RocksDB via zfs-storage
-    OpenStorage --> StartNet: start libp2p (zfs-net)
+LoadConfig --> OpenStorage: open RocksDB via grid-storage
+OpenStorage --> StartNet: start libp2p (grid-net)
     StartNet --> SubscribeTopics: subscribe to program topics
     SubscribeTopics --> Serving: accept store/fetch
     Serving --> [*]
@@ -114,7 +114,7 @@ stateDiagram-v2
 
 ## Implementation
 
-- **Crate:** `zfs-zode`. Deps: zfs-core, zfs-crypto, zfs-programs, zfs-proof, zfs-net, zfs-storage.
-- **No direct RocksDB:** Call `zfs-storage` only.
+- **Crate:** `zode`. Deps: grid-core, grid-crypto, grid-proof, grid-net, grid-storage.
+- **No direct RocksDB:** Call `grid-storage` only.
 - **Config:** Config file and env; document schema in crate and reference [02-storage](02-storage.md) for storage, [04-proof](04-proof.md) for verifier key path.
 - **Verifier key storage:** Zode passes config (e.g. `program_store_path`) to proof layer; proof crate loads verifier keys from that location (see [04-proof](04-proof.md)).

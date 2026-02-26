@@ -1,8 +1,8 @@
-# ZFS v0.1.0 — Core types
+# The Grid v0.1.0 — Core types
 
 ## Purpose
 
-The `zfs-core` crate provides shared types and identifiers used by storage, programs, proof, net, zode, and SDK. It has **no I/O**: no RocksDB, no network. All serialization and canonical encoding rules are defined here for consistency across the system.
+The `grid-core` crate provides shared types and identifiers used by storage, programs, proof, net, zode, and SDK. It has **no I/O**: no RocksDB, no network. All serialization and canonical encoding rules are defined here for consistency across the system.
 
 ## Canonical serialization
 
@@ -90,7 +90,7 @@ pub struct ProgramDescriptor { /* program-specific; canonical CBOR */ }
 
 ## Shared error and rejection codes
 
-Used by Zode, SDK, and UI so that rejections and errors have a common semantics. Stored in `zfs-core` (or a shared error module referenced by core).
+Used by Zode, SDK, and UI so that rejections and errors have a common semantics. Stored in `grid-core` (or a shared error module referenced by core).
 
 | Code | Name | Meaning |
 |------|------|---------|
@@ -102,7 +102,7 @@ Used by Zode, SDK, and UI so that rejections and errors have a common semantics.
 | `ProgramMismatch` | Program mismatch | Cid/program_id does not match topic or index. |
 
 ```rust
-pub enum ZfsError {
+pub enum GridError {
     StorageFull,
     ProofInvalid,
     PolicyReject,
@@ -130,6 +130,6 @@ flowchart LR
 
 ## Implementation notes
 
-- **Crate:** `zfs-core`. No dependencies on RocksDB or network crates.
-- **Used by:** zfs-storage, zfs-programs, zfs-proof, zfs-net, zfs-zode, zfs-sdk.
+- **Crate:** `grid-core`. No dependencies on RocksDB or network crates.
+- **Used by:** grid-storage, program crates, grid-proof, grid-net, zode, grid-sdk.
 - **Serialization:** Use a single CBOR library with deterministic encoding; same choice in [12-protocol](12-protocol.md) for protocol messages.

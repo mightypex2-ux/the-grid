@@ -1,6 +1,6 @@
 [package]
 name = "zero-neural"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "PQ-Hybrid key generation, HKDF derivation, Ed25519 + ML-DSA-65 signing, ML-KEM-768 encapsulation (zero-id compatible)"
 license = "MIT OR Apache-2.0"

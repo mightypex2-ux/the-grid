@@ -1,8 +1,8 @@
-# ZFS v0.1.0 — Zode CLI (console-only)
+# The Grid v0.1.0 — Zode CLI (console-only)
 
 ## Purpose
 
-The **zfs-zode-cli** crate provides a **console-only** Zode experience: CLI/TUI for status, datastore traversal, peers, live log, and Zode info. It runs the Zode in console only (e.g. binary `zode` or `zode-cli`). It does **not** touch RocksDB directly—all data comes from the Zode library (shared state, in-process API, or future RPC).
+The **zode-cli** crate provides a **console-only** Zode experience: CLI/TUI for status, datastore traversal, peers, live log, and Zode info. It runs the Zode in console only (e.g. binary `zode` or `zode-cli`). It does **not** touch RocksDB directly—all data comes from the Zode library (shared state, in-process API, or future RPC).
 
 ## Requirements
 
@@ -55,13 +55,13 @@ pub enum LogEvent {
     Announce { program_id: ProgramId },
     StoreRequest { cid: Cid, program_id: ProgramId },
     ProofResult { cid: Cid, ok: bool },
-    Rejection { reason: String, code: ZfsError },
+    Rejection { reason: String, code: GridError },
 }
 ```
 
 - **ZodeStatus:** Returned by Zode for status screen.
 - **Program list / CID list / Head metadata:** From Zode (via storage abstraction or Zode API); UI does not call RocksDB.
-- **Zode list:** From Zode (zfs-net); PeerInfo list.
+- **Zode list:** From Zode (grid-net); PeerInfo list.
 - **Log events:** Stream or poll from Zode; event types as above.
 
 ## Diagrams (optional)
@@ -95,7 +95,7 @@ The **Settings** screen (TUI or CLI subcommand) lets the operator toggle default
 
 ```
 zode settings                          # show current default-program states
-zode settings --enable zchat           # enable Interlink
+zode settings --enable interlink      # enable Interlink
 zode settings --disable zid            # disable ZID
 ```
 
@@ -103,7 +103,7 @@ Changes are persisted to the Zode config file. A restart (or hot-reload, if supp
 
 ## Implementation
 
-- **Crate:** `zfs-zode-cli`. Deps: zfs-core, zfs-zode.
-- **Binary:** Run Zode in console only (e.g. `zode` or `zode-cli`). Binary links to zfs-zode and starts the node; CLI reads from Zode via in-process API (e.g. Zode exposes `status()`, `programs()`, `peers()`, `log_stream()`).
+- **Crate:** `zode-cli`. Deps: grid-core, zode.
+- **Binary:** Run Zode in console only (e.g. `zode` or `zode-cli`). Binary links to zode and starts the node; CLI reads from Zode via in-process API (e.g. Zode exposes `status()`, `programs()`, `peers()`, `log_stream()`).
 - **Data source:** No direct RocksDB—all data from Zode (shared state or API). How the UI gets data: in-process function calls, or future RPC/socket; document in crate.
 - **CLI flags:** e.g. config path, listen address; pass through to Zode config.
