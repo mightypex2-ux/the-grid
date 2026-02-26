@@ -1,6 +1,6 @@
 # Zode
 
-A decentralized storage node with Groth16 zero-knowledge proofs and post-quantum hybrid cryptography.
+A decentralized storage network powered by zero-knowledge proofs and post-quantum encryption.
 
 ## Overview
 
