@@ -28,7 +28,6 @@ pub(crate) struct ZodeApp {
     pub profiles: Vec<ProfileMeta>,
     pub unlock_password: String,
     pub unlock_error: Option<String>,
-    pub unlock_rendered: bool,
     pub reveal_start: Option<f64>,
     pub active_profile_id: Option<String>,
     pub session_password: Option<String>,
@@ -67,7 +66,6 @@ impl ZodeApp {
             profiles,
             unlock_password: String::new(),
             unlock_error: None,
-            unlock_rendered: false,
             reveal_start: None,
             active_profile_id: None,
             session_password: None,
@@ -725,19 +723,6 @@ impl eframe::App for ZodeApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 return;
             }
-            AppPhase::Unlocking { profile_id } => {
-                self.render_pre_auth_title_bar(ctx, maximized, on_resize_edge);
-                self.render_unlocking_screen(ctx, &profile_id);
-                Self::render_window_border(ctx, maximized);
-                if self.unlock_rendered {
-                    self.unlock_rendered = false;
-                    self.attempt_unlock(&profile_id);
-                } else {
-                    self.unlock_rendered = true;
-                    ctx.request_repaint();
-                }
-                return;
-            }
             AppPhase::Revealing | AppPhase::Running => {}
         }
 
@@ -773,50 +758,6 @@ impl eframe::App for ZodeApp {
 
 impl ZodeApp {
     const REVEAL_DURATION: f64 = 0.75;
-
-    fn render_unlocking_screen(&mut self, ctx: &egui::Context, profile_id: &str) {
-        let profile_name = self
-            .profiles
-            .iter()
-            .find(|p| p.id == profile_id)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| profile_id.to_string());
-
-        let tex = self.icon_texture(ctx);
-        let frame = egui::Frame::default()
-            .fill(egui::Color32::BLACK)
-            .inner_margin(32.0);
-
-        egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            let rect = ui.max_rect();
-            ui.vertical_centered(|ui| {
-                let content_height = 220.0;
-                ui.add_space(((rect.height() - content_height) / 2.0).max(20.0));
-
-                ui.add(
-                    egui::Image::new(&tex)
-                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
-                        .rounding(8.0),
-                );
-                ui.add_space(16.0);
-
-                ui.label(
-                    egui::RichText::new(&profile_name)
-                        .size(13.0)
-                        .color(egui::Color32::from_rgb(160, 160, 165)),
-                );
-                ui.add_space(20.0);
-
-                ui.spinner();
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new("Unlocking\u{2026}")
-                        .size(11.0)
-                        .color(egui::Color32::from_rgb(100, 100, 108)),
-                );
-            });
-        });
-    }
 
     fn render_reveal_overlay(ctx: &egui::Context, progress: f32) {
         fn ease_out_cubic(t: f32) -> f32 {
@@ -1067,10 +1008,7 @@ impl ZodeApp {
         });
 
         if do_unlock {
-            self.phase = AppPhase::Unlocking {
-                profile_id: profile_id.clone(),
-            };
-            self.unlock_rendered = false;
+            self.attempt_unlock(&profile_id);
         }
     }
 }

@@ -56,7 +56,6 @@ pub(crate) enum Tab {
 pub(crate) enum AppPhase {
     ProfileSelect,
     Unlock { profile_id: String },
-    Unlocking { profile_id: String },
     Revealing,
     Running,
 }
