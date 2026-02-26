@@ -13,7 +13,7 @@ const GRID_KAD_PROTOCOL: &str = "/grid/kad/1.0.0";
 
 pub(crate) fn build_swarm(
     keypair: Option<libp2p::identity::Keypair>,
-) -> Result<libp2p::Swarm<GridBehaviour>, NetworkError> {
+) -> Result<(libp2p::Swarm<GridBehaviour>, libp2p::identity::Keypair), NetworkError> {
     let message_id_fn = |message: &gossipsub::Message| {
         let mut s = DefaultHasher::new();
         message.data.hash(&mut s);
@@ -27,12 +27,9 @@ pub(crate) fn build_swarm(
         .build()
         .map_err(|e| NetworkError::Config(format!("{e}")))?;
 
-    let builder = match keypair {
-        Some(kp) => libp2p::SwarmBuilder::with_existing_identity(kp),
-        None => libp2p::SwarmBuilder::with_new_identity(),
-    };
+    let kp = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
 
-    let swarm = builder
+    let swarm = libp2p::SwarmBuilder::with_existing_identity(kp.clone())
         .with_tokio()
         .with_tcp(
             libp2p::tcp::Config::default(),
@@ -44,7 +41,7 @@ pub(crate) fn build_swarm(
         .with_behaviour(|key| build_behaviour(key, gossipsub_config))
         .map_err(|e| NetworkError::Transport(format!("{e}")))?
         .build();
-    Ok(swarm)
+    Ok((swarm, kp))
 }
 
 fn build_behaviour(

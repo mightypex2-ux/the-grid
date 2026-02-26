@@ -17,6 +17,7 @@ use crate::event::NetworkEvent;
 /// in a loop, handling events and issuing commands via the other methods.
 pub struct NetworkService {
     swarm: libp2p::Swarm<GridBehaviour>,
+    keypair: libp2p::identity::Keypair,
     kademlia_enabled: bool,
     random_walk_interval: Duration,
     max_discovery_dials: usize,
@@ -36,7 +37,7 @@ impl NetworkService {
         let max_discovery_dials = config.discovery.max_concurrent_discovery_dials;
         let kademlia_mode = config.discovery.kademlia_mode;
 
-        let mut swarm = build_swarm(config.keypair)?;
+        let (mut swarm, keypair) = build_swarm(config.keypair)?;
 
         if kademlia_enabled {
             let mode = match kademlia_mode {
@@ -60,6 +61,7 @@ impl NetworkService {
 
         Ok(Self {
             swarm,
+            keypair,
             kademlia_enabled,
             random_walk_interval,
             max_discovery_dials,
@@ -71,6 +73,13 @@ impl NetworkService {
     /// The local Zode ID.
     pub fn local_zode_id(&self) -> &PeerId {
         self.swarm.local_peer_id()
+    }
+
+    /// The libp2p keypair as protobuf-encoded bytes for vault persistence.
+    pub fn keypair_to_protobuf(&self) -> Vec<u8> {
+        self.keypair
+            .to_protobuf_encoding()
+            .expect("ed25519 keypair protobuf encoding cannot fail")
     }
 
     /// Subscribe to a GossipSub topic (e.g. `"prog/{program_id_hex}"`).

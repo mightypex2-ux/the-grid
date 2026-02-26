@@ -399,23 +399,11 @@ fn save_profile_to_disk(app: &mut ZodeApp) {
         }
     };
 
-    let libp2p_keypair_bytes = app
+    let libp2p_bytes = app
         .zode
         .as_ref()
-        .and_then(|z| {
-            let net = app.rt.block_on(z.network().lock());
-            let peer_id = *net.local_zode_id();
-            drop(net);
-            let _ = peer_id;
-            None::<Vec<u8>>
-        })
+        .map(|z| z.keypair_protobuf().to_vec())
         .unwrap_or_default();
-
-    let libp2p_bytes = if libp2p_keypair_bytes.is_empty() {
-        Vec::new()
-    } else {
-        libp2p_keypair_bytes
-    };
 
     let plaintext = VaultPlaintext {
         shares: app.identity_state.shares.iter().map(|s| s.to_hex()).collect(),

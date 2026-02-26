@@ -27,6 +27,7 @@ pub struct Zode {
     storage: Arc<RocksStorage>,
     network: Arc<Mutex<NetworkService>>,
     zode_id: ZodeId,
+    keypair_protobuf: Vec<u8>,
     data_dir: std::path::PathBuf,
     topics: Vec<String>,
     connected_peers: Arc<RwLock<Vec<String>>>,
@@ -44,7 +45,8 @@ impl Zode {
     /// ensures proof keys exist, opens storage, and begins the event loop.
     pub async fn start(mut config: ZodeConfig) -> Result<Self, ZodeError> {
         let has_keypair = config.network.keypair.is_some();
-        let (network, zode_id, topic_strings, effective) = Self::start_network(&config).await?;
+        let (network, zode_id, keypair_protobuf, topic_strings, effective) =
+            Self::start_network(&config).await?;
 
         if !has_keypair {
             let zode_id_str = format_zode_id(&zode_id);
@@ -126,6 +128,7 @@ impl Zode {
             storage,
             network,
             zode_id,
+            keypair_protobuf,
             data_dir,
             topics: topic_strings,
             connected_peers,
@@ -142,6 +145,7 @@ impl Zode {
         (
             NetworkService,
             ZodeId,
+            Vec<u8>,
             Vec<String>,
             std::collections::HashSet<grid_core::ProgramId>,
         ),
@@ -151,6 +155,7 @@ impl Zode {
             .await
             .map_err(ZodeError::Network)?;
         let zode_id = *network.local_zode_id();
+        let keypair_protobuf = network.keypair_to_protobuf();
         info!(%zode_id, "network started");
 
         let effective = config.effective_topics();
@@ -161,7 +166,7 @@ impl Zode {
             topic_strings.push(topic);
             debug!(program_id = %pid.to_hex(), "subscribed to topic");
         }
-        Ok((network, zode_id, topic_strings, effective))
+        Ok((network, zode_id, keypair_protobuf, topic_strings, effective))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -214,6 +219,11 @@ impl Zode {
     /// Access the metrics (for direct reads from atomic counters).
     pub fn metrics(&self) -> &Arc<ZodeMetrics> {
         &self.metrics
+    }
+
+    /// The libp2p keypair as protobuf-encoded bytes (for vault persistence).
+    pub fn keypair_protobuf(&self) -> &[u8] {
+        &self.keypair_protobuf
     }
 
     /// The actual data directory (unique per peer ID).
