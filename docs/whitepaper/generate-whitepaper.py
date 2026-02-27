@@ -1,11 +1,17 @@
 """Generate an arXiv-style two-column whitepaper PDF from the Grid Protocol spec.
 
-Uses Edge headless --print-to-pdf for rendering.
+Uses Edge headless via Chrome DevTools Protocol for proper running footer support.
 """
 
+import base64
+import json
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
 
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
@@ -15,18 +21,16 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title>THE GRID</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Source+Code+Pro:wght@400;500&display=swap');
-
 @page {
     size: letter;
-    margin: 1.8cm 1.6cm 2.8cm 1.6cm;
+    margin: 1.8cm 2.2cm 2.8cm 2.2cm;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-    font-family: 'Libre Baskerville', 'Georgia', 'Times New Roman', serif;
-    font-size: 8.5pt;
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 9pt;
     line-height: 1.4;
     color: #111;
     text-rendering: optimizeLegibility;
@@ -36,40 +40,35 @@ body {
 /* ── Title block (full-width, above columns) ── */
 .title-block {
     text-align: center;
-    padding-bottom: 1.4em;
-    margin-bottom: 0.2em;
+    padding-top: 10em;
+    padding-bottom: 4em;
+    margin-bottom: 0.4em;
 }
 
 .title-block h1 {
-    font-size: 17pt;
+    font-size: 14pt;
     font-weight: 700;
-    margin: 0 0 0.55em 0;
+    margin: 0 0 0.8em 0;
     letter-spacing: -0.01em;
     line-height: 1.18;
 }
 
 .authors {
-    font-size: 11pt;
-    margin-bottom: 0.1em;
-}
-
-.affiliation {
-    font-size: 9pt;
-    font-style: italic;
-    color: #555;
+    font-size: 10pt;
     margin-bottom: 0em;
 }
 
-.version-tag {
-    font-size: 7.5pt;
-    color: #888;
-    margin-top: 0.5em;
+.affiliation {
+    font-size: 8.5pt;
+    font-style: italic;
+    color: #555;
+    margin-bottom: 0.6em;
 }
 
 /* ── Two-column body ── */
 .two-col {
     column-count: 2;
-    column-gap: 1.4em;
+    column-gap: 1.8em;
     column-rule: none;
     column-fill: auto;
 }
@@ -144,7 +143,7 @@ tr:last-child td {
 
 /* ── Code blocks ── */
 pre {
-    font-family: 'Source Code Pro', 'Consolas', 'Courier New', monospace;
+    font-family: 'Times New Roman', Times, serif;
     font-size: 7pt;
     line-height: 1.32;
     background: #f5f5f5;
@@ -158,7 +157,7 @@ pre {
 }
 
 code {
-    font-family: 'Source Code Pro', 'Consolas', 'Courier New', monospace;
+    font-family: 'Times New Roman', Times, serif;
     font-size: 7.5pt;
     background: #eee;
     padding: 0.3pt 1.5pt;
@@ -191,44 +190,15 @@ hr {
 strong { font-weight: 700; }
 em { font-style: italic; }
 
-.footer-note {
-    text-align: center;
-    font-size: 7.5pt;
-    color: #999;
-    margin-top: 1.5em;
-    padding-top: 0.5em;
-    border-top: 0.4pt solid #ddd;
-}
-
-/* ── Page footer (fixed = repeats on every printed page) ── */
-.page-footer {
-    position: fixed;
-    bottom: -1.8cm;
-    left: 0;
-    right: 0;
-    font-size: 7.5pt;
-    color: #666;
-    display: flex;
-    justify-content: space-between;
-    padding-top: 0.3em;
-    border-top: 0.4pt solid #ccc;
-}
-
 sup { font-size: 65%; vertical-align: super; }
 </style>
 </head>
 <body>
 
-<div class="page-footer">
-    <span>CYPHER, INC.</span>
-    <span>THE GRID &mdash; v0.2.0</span>
-</div>
-
 <div class="title-block">
     <h1>THE GRID</h1>
-    <div class="authors">n3o</div>
     <div class="affiliation">The Global Resilient Internet Datalink</div>
-    <div class="version-tag">Version 0.2.0 &mdash; February 2025</div>
+    <div class="authors">n3o</div>
 </div>
 
 <div class="two-col">
@@ -270,7 +240,9 @@ in sufficient detail for independent, interoperable implementations.
 
 <p>The Grid is a peer-to-peer encrypted storage protocol. Participating nodes&mdash;called <strong>ZODES</strong>&mdash;form a network of program-scoped, append-only log stores. Clients encrypt all data locally before upload; ZODES store and serve only opaque ciphertext. The protocol has no consensus layer, no tokens, and no global state.</p>
 
-<p>This document defines the Grid protocol in implementation-neutral terms. Any conforming implementation&mdash;regardless of programming language&mdash;that follows the wire formats, cryptographic constructions, and behavioral rules described here can interoperate with any other conforming implementation.</p>
+<p>Existing decentralized storage systems typically require participants to reach consensus on a shared ledger, introduce protocol-native tokens to incentivize storage providers, or maintain globally replicated state that every node must process. These design choices impose coordination overhead, economic complexity, and scalability ceilings that are unnecessary when the primary goal is simply to store and retrieve encrypted blobs. The Grid sidesteps these concerns entirely: a ZODE is a stateless relay that accepts ciphertext, appends it to a local log, and optionally gossips it to peers. There is no ordering protocol beyond append indexing, no fee market, and no finality mechanism. The result is a minimal, high-throughput substrate on which higher-level applications&mdash;identity registries, messaging channels, document stores&mdash;can be composed as <em>programs</em> without inheriting the weight of a full blockchain stack.</p>
+
+<p>Cryptographic privacy is a first-class invariant rather than an optional feature. Every entry is encrypted client-side with either XChaCha20-Poly1305 or a ZK-friendly Poseidon sponge, and signatures are embedded inside the ciphertext so that ZODES can never observe authorship, content structure, or access patterns beyond coarse timing and payload size. Post-quantum resistance is likewise non-negotiable: all signing and key-agreement operations use hybrid constructions that pair classical algorithms (Ed25519, X25519) with their post-quantum counterparts (ML-DSA-65, ML-KEM-768), ensuring that an attacker must break both families simultaneously. This document defines the Grid protocol in implementation-neutral terms. Any conforming implementation&mdash;regardless of programming language&mdash;that follows the wire formats, cryptographic constructions, and behavioral rules described here can interoperate with any other conforming implementation.</p>
 
 <h2>2 &ensp;Terminology</h2>
 
@@ -933,15 +905,42 @@ sector_id = HKDF-SHA256(
 <li>Accept gossip with conflict resolution per &sect;12.2.</li>
 </ol>
 
-<div class="footer-note">
-Version 0.2.0 &mdash; Derived from the reference implementation<br/>
-Copyright &copy; 2025 CYPHER, INC. All rights reserved.
-</div>
-
 </div>
 
 </body>
 </html>"""
+
+
+CDP_PORT = 9333
+
+FOOTER_TEMPLATE = (
+    '<div style="width:100%;font-size:8px;color:#888;font-family:Georgia,serif;'
+    'padding:0 12px;box-sizing:border-box;">'
+    '<span style="display:inline-block;width:33%;text-align:left;">'
+    "Version 0.2.0 &mdash; February 2025"
+    "</span>"
+    '<span style="display:inline-block;width:34%;text-align:center;">'
+    "THE GRID"
+    "</span>"
+    '<span style="display:inline-block;width:33%;text-align:right;">'
+    '<span class="pageNumber"></span>'
+    "</span>"
+    "</div>"
+)
+
+
+def _wait_for_devtools(port, retries=40, delay=0.5):
+    """Poll until Edge DevTools is reachable and return the page WS URL."""
+    for _ in range(retries):
+        time.sleep(delay)
+        try:
+            resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/json")
+            for target in json.loads(resp.read()):
+                if target.get("type") == "page":
+                    return target["webSocketDebuggerUrl"]
+        except Exception:
+            pass
+    return None
 
 
 def main():
@@ -952,29 +951,90 @@ def main():
     html_path.write_text(HTML_CONTENT, encoding="utf-8")
     print(f"Wrote HTML -> {html_path}")
 
+    try:
+        import websocket
+    except ImportError:
+        print("Installing websocket-client...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", "websocket-client"]
+        )
+        import websocket
+
     html_uri = html_path.resolve().as_uri()
-    cmd = [
-        EDGE,
-        "--headless",
-        "--disable-gpu",
-        "--run-all-compositor-stages-before-draw",
-        "--no-pdf-header-footer",
-        f"--print-to-pdf={pdf_path.resolve()}",
-        html_uri,
-    ]
+    tmp_profile = tempfile.mkdtemp(prefix="edge_wp_")
 
-    print("Running Edge headless print-to-pdf...")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        print(f"STDERR: {result.stderr}")
-        sys.exit(1)
+    print("Launching Edge headless (CDP)...")
+    proc = subprocess.Popen(
+        [
+            EDGE,
+            "--headless",
+            "--disable-gpu",
+            f"--remote-debugging-port={CDP_PORT}",
+            f"--user-data-dir={tmp_profile}",
+            "--remote-allow-origins=*",
+            "--no-first-run",
+            "--no-default-browser-check",
+            html_uri,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
-    if pdf_path.exists():
-        size_kb = pdf_path.stat().st_size / 1024
+    try:
+        ws_url = _wait_for_devtools(CDP_PORT)
+        if not ws_url:
+            print("ERROR: Could not connect to Edge DevTools")
+            sys.exit(1)
+
+        time.sleep(3)
+
+        ws = websocket.create_connection(ws_url, timeout=60)
+
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Page.printToPDF",
+                    "params": {
+                        "displayHeaderFooter": True,
+                        "headerTemplate": "<span></span>",
+                        "footerTemplate": FOOTER_TEMPLATE,
+                        "paperWidth": 8.5,
+                        "paperHeight": 11.0,
+                        "marginTop": 0.709,
+                        "marginBottom": 1.102,
+                        "marginLeft": 0.866,
+                        "marginRight": 0.866,
+                        "printBackground": True,
+                    },
+                }
+            )
+        )
+
+        while True:
+            msg = json.loads(ws.recv())
+            if msg.get("id") == 1:
+                break
+
+        ws.close()
+
+        if "error" in msg:
+            print(f"CDP error: {msg['error']}")
+            sys.exit(1)
+
+        pdf_data = base64.b64decode(msg["result"]["data"])
+        pdf_path.write_bytes(pdf_data)
+
+        size_kb = len(pdf_data) / 1024
         print(f"Wrote PDF  -> {pdf_path}  ({size_kb:.0f} KB)")
-    else:
-        print("ERROR: PDF was not created.")
-        sys.exit(1)
+
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        shutil.rmtree(tmp_profile, ignore_errors=True)
 
 
 if __name__ == "__main__":
