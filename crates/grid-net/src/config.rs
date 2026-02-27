@@ -5,7 +5,7 @@ use libp2p::Multiaddr;
 /// Configuration for the Grid network layer.
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
-    /// Address to listen on (e.g. `/ip4/0.0.0.0/udp/0/quic-v1`).
+    /// Address to listen on (e.g. `/ip4/0.0.0.0/udp/3690/quic-v1`).
     pub listen_addr: Multiaddr,
 
     /// Bootstrap peers to connect to on startup.
@@ -88,7 +88,7 @@ impl NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            listen_addr: "/ip4/0.0.0.0/udp/0/quic-v1"
+            listen_addr: "/ip4/0.0.0.0/udp/3690/quic-v1"
                 .parse()
                 .expect("well-known constant multiaddr"),
             bootstrap_peers: Vec::new(),

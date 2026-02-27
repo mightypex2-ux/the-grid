@@ -470,7 +470,7 @@ The Grid uses **libp2p** as its network substrate with the following transports:
 - **QUIC** (`/quic-v1`): Primary transport.
 - **TCP + Noise + Yamux**: Fallback transport.
 
-The default listen address is `/ip4/0.0.0.0/udp/0/quic-v1`.
+The default listen address is `/ip4/0.0.0.0/udp/3690/quic-v1` (UDP port 3690).
 
 ### 10.2 Protocols
 

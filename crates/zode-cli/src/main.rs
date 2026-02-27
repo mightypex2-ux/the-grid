@@ -34,7 +34,7 @@ struct Cli {
     data_dir: PathBuf,
 
     /// libp2p listen address (multiaddr).
-    #[arg(long, default_value = "/ip4/0.0.0.0/udp/0/quic-v1")]
+    #[arg(long, default_value = "/ip4/0.0.0.0/udp/3690/quic-v1")]
     listen: String,
 
     /// Bootstrap peer multiaddrs (repeatable).
