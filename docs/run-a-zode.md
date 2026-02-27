@@ -1,5 +1,11 @@
 # Run a ZODE
 
+- [Prerequisites](#prerequisites)
+- [Running Locally](#running-locally)
+- [Building Release Binaries](#building-release-binaries)
+- [Configuration](#configuration)
+- [Running Tests](#running-tests)
+
 ## Prerequisites
 
 ### All platforms
