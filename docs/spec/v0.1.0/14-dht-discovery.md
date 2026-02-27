@@ -16,7 +16,7 @@ This document specifies **Kademlia DHT-based peer discovery** for `grid-net`, en
 | D-2 | Kademlia must use a Grid-specific protocol name (e.g. `/grid/kad/1.0.0`) so Grid nodes only discover other Grid nodes, not unrelated libp2p peers. |
 | D-3 | On startup, if bootstrap peers are configured, add them to the Kademlia routing table and trigger an initial bootstrap (`kad::Behaviour::bootstrap()`). |
 | D-4 | Perform periodic random walks (`kad::Behaviour::get_closest_peers(random_key)`) to keep the routing table populated and discover new peers joining the network. |
-| D-5 | DHT discovery must be **opt-in** via `NetworkConfig`. Existing bootstrap-only behaviour must remain the default for backward compatibility. |
+| D-5 | DHT discovery must be enabled by default via `NetworkConfig` and can be disabled with `enable_kademlia: false` for bootstrap-only mode. |
 | D-6 | Expose a `NetworkEvent::PeerDiscovered { zode_id, addresses }` event so `zode` and `grid-sdk` can observe newly discovered Zodes. |
 | D-7 | Newly discovered peers must be automatically dialed so that GossipSub and request-response can operate over the expanded peer set. |
 
@@ -50,7 +50,7 @@ pub struct NetworkConfig {
 
 pub struct DiscoveryConfig {
     /// Enable Kademlia DHT for automatic peer discovery.
-    /// Default: false (bootstrap-only mode for backward compatibility).
+    /// Default: true.
     pub enable_kademlia: bool,
 
     /// Kademlia mode. Zodes should use Server; SDK clients should use Client.
@@ -79,7 +79,7 @@ pub enum KademliaMode {
 }
 ```
 
-`DiscoveryConfig` defaults to `enable_kademlia: false` so the existing bootstrap-only behaviour is unchanged unless explicitly opted in.
+`DiscoveryConfig` defaults to `enable_kademlia: true` so Kademlia DHT discovery is active out of the box. Pass `enable_kademlia: false` to fall back to bootstrap-only mode.
 
 ## Behaviour changes
 
@@ -235,5 +235,5 @@ flowchart LR
 
 - **Crate:** `grid-net`. This is the only crate that touches libp2p (per [01-architecture](01-architecture.md)).
 - **Dependencies:** `libp2p` already includes `kad` and `mdns` modules; no new crate dependencies needed, just feature flags.
-- **Backward compatible:** `DiscoveryConfig::default()` disables Kademlia, preserving current behaviour. Existing tests and configurations continue to work unchanged.
-- **Config surface:** `zode-cli` flags: `--enable-kademlia`, `--kademlia-mode server|client`, `--random-walk-interval <seconds>`. `zode-app` Settings tab: checkbox for Kademlia, mode selector, interval slider.
+- **Default on:** `DiscoveryConfig::default()` enables Kademlia. Pass `--no-kademlia` (CLI) or set `enable_kademlia: false` (config) to revert to bootstrap-only mode.
+- **Config surface:** `zode-cli` flags: `--no-kademlia`, `--kademlia-mode server|client`, `--random-walk-interval <seconds>`. `zode-app` Settings tab: checkbox for Kademlia, mode selector, interval slider.

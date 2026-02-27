@@ -53,9 +53,9 @@ struct Cli {
     #[arg(long)]
     topic: Vec<String>,
 
-    /// Enable Kademlia DHT for automatic peer discovery.
+    /// Disable Kademlia DHT automatic peer discovery.
     #[arg(long)]
-    enable_kademlia: bool,
+    no_kademlia: bool,
 
     /// Kademlia mode: "server" (default, for Zodes) or "client" (for SDK clients).
     #[arg(long, default_value = "server")]
@@ -113,7 +113,7 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
     };
 
     let discovery = grid_net::DiscoveryConfig {
-        enable_kademlia: cli.enable_kademlia,
+        enable_kademlia: !cli.no_kademlia,
         kademlia_mode: kad_mode,
         random_walk_interval: Duration::from_secs(cli.random_walk_interval),
         ..Default::default()
