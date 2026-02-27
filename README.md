@@ -2,11 +2,18 @@
   <img src="assets/banner.png" alt="THE GRID" />
 </p>
 
-# THE GRID
+<p align="center">
+  <strong>The Global Resilient Internet Datalink</strong><br/>
+  A decentralized compute network powered by zero-knowledge proofs and post-quantum cryptography.
+</p>
 
-**The Global Resilient Internet Datalink**
+## Overview
 
-A decentralized compute network powered by zero-knowledge proofs and post-quantum cryptography.
+The GRID is a general-purpose distributed computing network secured by zero-knowledge proofs and post-quantum cryptography.
+
+It allows anyone to contribute unused compute capacity to a verifiable, decentralized execution layer for internet services. The network supports encrypted storage, decentralized identity, and AI workloads (including inference, agent sandboxing, and training), without requiring trust in operators.
+
+The objective is to build a global, decentralized alternative to traditional hyperscale cloud infrastructure that is faster, lower cost, cryptographically verifiable, and aligned with sovereignty, privacy, and long-term security.
 
 ## ZODE
 
