@@ -17,6 +17,10 @@ pub(crate) fn build_swarm(
 ) -> Result<(libp2p::Swarm<GridBehaviour>, libp2p::identity::Keypair), NetworkError> {
     let message_id_fn = |message: &gossipsub::Message| {
         let mut s = DefaultHasher::new();
+        if let Some(ref peer) = message.source {
+            peer.hash(&mut s);
+        }
+        message.sequence_number.hash(&mut s);
         message.data.hash(&mut s);
         gossipsub::MessageId::from(s.finish().to_string())
     };
