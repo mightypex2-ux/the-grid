@@ -42,6 +42,9 @@ pub struct NetworkService {
     relay_circuit_bases: Vec<Multiaddr>,
     /// Original relay peer multiaddrs from config, kept for reconnection.
     relay_addrs: Vec<Multiaddr>,
+    /// Exponential backoff state for relay reconnection attempts.
+    /// Maps relay peer ID to (next_retry_time, current_backoff_duration).
+    relay_reconnect_backoff: HashMap<PeerId, (Instant, Duration)>,
     /// Events queued by helper methods (relay listeners, kademlia bootstrap)
     /// that must be returned from the next `next_event` call.
     pending_relay_events: Vec<NetworkEvent>,
@@ -159,6 +162,7 @@ impl NetworkService {
             active_relay_listeners: HashSet::new(),
             relay_circuit_bases,
             relay_addrs,
+            relay_reconnect_backoff: HashMap::new(),
             pending_relay_events: Vec::new(),
             dial_backoff: HashMap::new(),
             dial_backoff_duration,
@@ -316,8 +320,11 @@ impl NetworkService {
                         return Some(ev);
                     }
                 }
-                () = &mut sleep, if self.kademlia_enabled => {
-                    self.trigger_random_walk();
+                () = &mut sleep => {
+                    if self.kademlia_enabled {
+                        self.trigger_random_walk();
+                    }
+                    self.tick_relay_reconnect();
                     sleep.as_mut().reset(tokio::time::Instant::now() + self.random_walk_interval);
                 }
             }
@@ -340,6 +347,7 @@ impl NetworkService {
                     self.pending_discovery_dials -= 1;
                 }
                 self.dial_backoff.remove(&peer_id);
+                self.relay_reconnect_backoff.remove(&peer_id);
                 debug!(%peer_id, num = %num_established, "connection established");
                 let raw_addr = endpoint.get_remote_address().clone();
                 let normalized = crate::addr::normalize_multiaddr(&raw_addr);
@@ -472,16 +480,50 @@ impl NetworkService {
         if !self.relay_peer_ids.contains(disconnected_peer) {
             return;
         }
-        for addr in &self.relay_addrs {
-            if extract_peer_id(addr).as_ref() == Some(disconnected_peer) {
-                info!(%disconnected_peer, %addr, "relay disconnected, attempting reconnect");
-                match self.swarm.dial(addr.clone()) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        warn!(%disconnected_peer, error = %e, "failed to reconnect to relay");
+        const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
+        let entry = self
+            .relay_reconnect_backoff
+            .entry(*disconnected_peer)
+            .or_insert_with(|| (Instant::now() + INITIAL_BACKOFF, INITIAL_BACKOFF));
+        info!(
+            %disconnected_peer,
+            retry_in = ?entry.1,
+            "relay disconnected, scheduled reconnect with backoff"
+        );
+    }
+
+    fn tick_relay_reconnect(&mut self) {
+        const MAX_BACKOFF: Duration = Duration::from_secs(300);
+        let now = Instant::now();
+        let due: Vec<PeerId> = self
+            .relay_reconnect_backoff
+            .iter()
+            .filter(|(_, (deadline, _))| now >= *deadline)
+            .map(|(peer, _)| *peer)
+            .collect();
+
+        for peer_id in due {
+            if self.swarm.is_connected(&peer_id) {
+                self.relay_reconnect_backoff.remove(&peer_id);
+                continue;
+            }
+            let mut dialed = false;
+            for addr in &self.relay_addrs {
+                if extract_peer_id(addr).as_ref() == Some(&peer_id) {
+                    info!(%peer_id, %addr, "attempting relay reconnect");
+                    match self.swarm.dial(addr.clone()) {
+                        Ok(()) => dialed = true,
+                        Err(e) => warn!(%peer_id, error = %e, "relay reconnect dial failed"),
                     }
+                    break;
                 }
-                return;
+            }
+            if let Some(entry) = self.relay_reconnect_backoff.get_mut(&peer_id) {
+                let next_backoff = (entry.1 * 2).min(MAX_BACKOFF);
+                *entry = (now + next_backoff, next_backoff);
+            }
+            if !dialed {
+                self.relay_reconnect_backoff.remove(&peer_id);
             }
         }
     }
