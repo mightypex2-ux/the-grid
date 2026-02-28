@@ -512,22 +512,36 @@ impl NetworkService {
             return;
         }
 
+        let mut has_dialable = false;
         for addr in addrs {
             let normalized = crate::addr::normalize_multiaddr(addr);
-            self.swarm
-                .behaviour_mut()
-                .kademlia
-                .add_address(peer_id, normalized);
+            if crate::addr::is_globally_routable(&normalized)
+                && crate::addr::has_transport(&normalized)
+            {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(peer_id, normalized);
+                has_dialable = true;
+            }
         }
 
-        for base in &self.relay_circuit_bases {
-            let via_relay = base
-                .clone()
-                .with(libp2p::multiaddr::Protocol::P2p(*peer_id));
-            self.swarm
-                .behaviour_mut()
-                .kademlia
-                .add_address(peer_id, via_relay);
+        if !self.active_relay_listeners.is_empty() {
+            for base in &self.relay_circuit_bases {
+                let via_relay = base
+                    .clone()
+                    .with(libp2p::multiaddr::Protocol::P2p(*peer_id));
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(peer_id, via_relay);
+                has_dialable = true;
+            }
+        }
+
+        if !has_dialable {
+            debug!(%peer_id, "skipping discovery dial (no dialable addresses)");
+            return;
         }
 
         debug!(%peer_id, num_addrs = addrs.len(), "auto-dialing discovered peer");

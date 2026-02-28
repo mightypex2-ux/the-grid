@@ -87,6 +87,17 @@ pub fn sanitize_dial_addr(addr: &Multiaddr) -> Multiaddr {
     }
 }
 
+/// Returns `true` when the multiaddr contains at least one transport component
+/// (IP + port), as opposed to a bare `/p2p/<peer_id>` with no dialable address.
+pub fn has_transport(addr: &Multiaddr) -> bool {
+    addr.iter().any(|p| {
+        matches!(
+            p,
+            Protocol::Ip4(_) | Protocol::Ip6(_) | Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_)
+        )
+    })
+}
+
 /// Returns `true` when every IP address in the multiaddr is globally routable
 /// (not loopback, private, link-local, or unspecified).
 ///

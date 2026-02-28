@@ -47,7 +47,7 @@ fn default_data_dir() -> String {
     ".zode/data".into()
 }
 fn default_listen_addr() -> String {
-    "/ip4/127.0.0.1/udp/3690/quic-v1".into()
+    "/ip4/0.0.0.0/udp/3690/quic-v1".into()
 }
 fn default_true() -> bool {
     true
@@ -91,7 +91,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             data_dir: ".zode/data".into(),
-            listen_addr: "/ip4/127.0.0.1/udp/3690/quic-v1".into(),
+            listen_addr: "/ip4/0.0.0.0/udp/3690/quic-v1".into(),
             bootstrap_input: String::new(),
             bootstrap_peers: vec![grid_net::DEFAULT_RELAY_PEER.into()],
             enable_relay: true,

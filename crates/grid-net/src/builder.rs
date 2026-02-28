@@ -90,14 +90,20 @@ pub(crate) fn dial_bootstrap_peers(
     kademlia_enabled: bool,
 ) -> Result<(), NetworkError> {
     for peer_addr in peers {
+        let normalized = crate::addr::normalize_multiaddr(peer_addr);
+        if !crate::addr::has_transport(&normalized) {
+            debug!(%peer_addr, "skipping bootstrap peer with no transport address");
+            continue;
+        }
         if kademlia_enabled {
             if let Some(peer_id) = extract_peer_id(peer_addr) {
-                let normalized = crate::addr::normalize_multiaddr(peer_addr);
-                swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, normalized);
-                debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
+                if crate::addr::is_globally_routable(&normalized) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, normalized);
+                    debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
+                }
             }
         }
         swarm
