@@ -19,6 +19,7 @@ pub struct NetworkService {
     swarm: libp2p::Swarm<GridBehaviour>,
     keypair: libp2p::identity::Keypair,
     kademlia_enabled: bool,
+    kademlia_bootstrapped: bool,
     random_walk_interval: Duration,
     max_discovery_dials: usize,
     pending_discovery_dials: usize,
@@ -74,9 +75,15 @@ impl NetworkService {
             );
         }
 
+        let mut kademlia_bootstrapped = false;
         if kademlia_enabled {
-            if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
-                debug!("kademlia bootstrap not started (need at least one peer): {e:?}");
+            match swarm.behaviour_mut().kademlia.bootstrap() {
+                Ok(_) => {
+                    kademlia_bootstrapped = true;
+                }
+                Err(e) => {
+                    debug!("kademlia bootstrap deferred until first connection: {e:?}");
+                }
             }
         }
 
@@ -84,6 +91,7 @@ impl NetworkService {
             swarm,
             keypair,
             kademlia_enabled,
+            kademlia_bootstrapped,
             random_walk_interval,
             max_discovery_dials,
             pending_discovery_dials: 0,
@@ -253,6 +261,7 @@ impl NetworkService {
                 }
 
                 self.try_start_relay_listeners(&peer_id, &addr);
+                self.try_kademlia_bootstrap();
 
                 (num_established.get() == 1).then(|| NetworkEvent::PeerConnected(peer_id))
             }
@@ -303,6 +312,22 @@ impl NetworkService {
             }
             Err(e) => {
                 warn!(%circuit_addr, error = %e, "failed to listen on relay circuit");
+            }
+        }
+    }
+
+    /// Retry Kademlia bootstrap if it hasn't succeeded yet.
+    fn try_kademlia_bootstrap(&mut self) {
+        if !self.kademlia_enabled || self.kademlia_bootstrapped {
+            return;
+        }
+        match self.swarm.behaviour_mut().kademlia.bootstrap() {
+            Ok(_) => {
+                self.kademlia_bootstrapped = true;
+                info!("kademlia bootstrap started");
+            }
+            Err(e) => {
+                debug!("kademlia bootstrap still waiting for peers: {e:?}");
             }
         }
     }

@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use futures::StreamExt;
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identify, ping, relay, Multiaddr};
+use libp2p::{identify, kad, ping, relay, Multiaddr, StreamProtocol};
 use tracing::{debug, info, warn};
 
 const ENV_LISTEN: &str = "GRID_RELAY_LISTEN";
@@ -51,10 +52,14 @@ struct RelaydConfig {
     max_circuits: Option<usize>,
 }
 
+const GRID_KAD_PROTOCOL: &str = "/grid/kad/1.0.0";
+const GRID_IDENTIFY_PROTOCOL: &str = "/grid/id/1.0.0";
+
 #[derive(NetworkBehaviour)]
 struct RelayBehaviour {
     relay: relay::Behaviour,
     identify: identify::Behaviour,
+    kademlia: kad::Behaviour<kad::store::MemoryStore>,
     ping: ping::Behaviour,
 }
 
@@ -99,13 +104,26 @@ async fn main() -> Result<()> {
         )
         .context("failed to build TCP transport")?
         .with_quic()
-        .with_behaviour(|key| RelayBehaviour {
-            relay: relay::Behaviour::new(key.public().to_peer_id(), Default::default()),
-            identify: identify::Behaviour::new(identify::Config::new(
-                "/grid/relayd/1.0.0".to_string(),
-                key.public(),
-            )),
-            ping: ping::Behaviour::new(ping::Config::new()),
+        .with_behaviour(|key| {
+            let peer_id = key.public().to_peer_id();
+            let mut kad_config = kad::Config::new(
+                StreamProtocol::try_from_owned(GRID_KAD_PROTOCOL.to_string())
+                    .expect("valid protocol name"),
+            );
+            kad_config.set_query_timeout(Duration::from_secs(60));
+            let store = kad::store::MemoryStore::new(peer_id);
+            let mut kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
+            kademlia.set_mode(Some(kad::Mode::Server));
+
+            RelayBehaviour {
+                relay: relay::Behaviour::new(peer_id, Default::default()),
+                identify: identify::Behaviour::new(identify::Config::new(
+                    GRID_IDENTIFY_PROTOCOL.to_string(),
+                    key.public(),
+                )),
+                kademlia,
+                ping: ping::Behaviour::new(ping::Config::new()),
+            }
         })
         .context("failed to build relay behaviour")?
         .build();
@@ -125,17 +143,35 @@ async fn main() -> Result<()> {
                     .with(libp2p::multiaddr::Protocol::P2p(local_peer_id));
                 info!(%address, %full, "relay listening");
             }
-            Some(SwarmEvent::ConnectionEstablished { peer_id, .. }) => {
+            Some(SwarmEvent::ConnectionEstablished {
+                peer_id, endpoint, ..
+            }) => {
+                let addr = endpoint.get_remote_address().clone();
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, addr);
                 info!(%peer_id, "peer connected");
             }
             Some(SwarmEvent::ConnectionClosed { peer_id, .. }) => {
                 info!(%peer_id, "peer disconnected");
             }
             Some(SwarmEvent::Behaviour(event)) => {
-                if let RelayBehaviourEvent::Identify(identify::Event::Received { info, .. }) =
-                    &event
-                {
-                    swarm.add_external_address(info.observed_addr.clone());
+                match &event {
+                    RelayBehaviourEvent::Identify(identify::Event::Received {
+                        peer_id,
+                        info,
+                        ..
+                    }) => {
+                        swarm.add_external_address(info.observed_addr.clone());
+                        for addr in &info.listen_addrs {
+                            swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .add_address(peer_id, addr.clone());
+                        }
+                    }
+                    _ => {}
                 }
                 debug!(?event, "relay behaviour event");
             }

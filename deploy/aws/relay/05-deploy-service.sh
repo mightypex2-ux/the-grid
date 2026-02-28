@@ -52,7 +52,9 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 UNIT
 sudo systemctl daemon-reload
-sudo systemctl enable --now grid-relayd
+sudo systemctl enable grid-relayd
+sudo systemctl restart grid-relayd
+sleep 1
 sudo systemctl --no-pager --full status grid-relayd
 EOF
 

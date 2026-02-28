@@ -22,6 +22,7 @@ libp2p = { version = "0.56", features = [
     "noise",
     "yamux",
     "identify",
+    "kad",
     "ping",
 ] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
