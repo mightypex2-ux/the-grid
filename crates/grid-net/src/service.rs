@@ -2,7 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use futures::StreamExt;
-use libp2p::{gossipsub, identify, kad, request_response, swarm::SwarmEvent, Multiaddr, PeerId};
+use libp2p::{
+    gossipsub, identify, kad, request_response,
+    swarm::{dial_opts::DialOpts, SwarmEvent},
+    Multiaddr, PeerId,
+};
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -403,7 +407,6 @@ impl NetworkService {
                         );
                     }
                     self.peer_addresses.remove(&failed_peer);
-                    self.discovered_peers.remove(&failed_peer);
                     if self.kademlia_enabled && !is_relay {
                         self.swarm
                             .behaviour_mut()
@@ -472,6 +475,10 @@ impl NetworkService {
     }
 
     /// Issue a random walk query to discover new peers.
+    ///
+    /// Also expires stale backoff entries and removes those peers from
+    /// `discovered_peers` so they become eligible for rediscovery and
+    /// retry on the next walk result.
     fn trigger_random_walk(&mut self) {
         let random_peer = PeerId::random();
         self.swarm
@@ -479,17 +486,30 @@ impl NetworkService {
             .kademlia
             .get_closest_peers(random_peer);
         let now = Instant::now();
-        self.dial_backoff.retain(|_, retry_after| *retry_after > now);
+        let mut expired = Vec::new();
+        self.dial_backoff.retain(|peer, retry_after| {
+            if *retry_after > now {
+                true
+            } else {
+                expired.push(*peer);
+                false
+            }
+        });
+        for peer in &expired {
+            self.discovered_peers.remove(peer);
+        }
         debug!(
             backoff_peers = self.dial_backoff.len(),
+            expired = expired.len(),
             "kademlia random walk triggered"
         );
     }
 
     /// Try to auto-dial a newly discovered peer (respects concurrency limit).
     ///
-    /// Always dials by `PeerId` so libp2p tries all known addresses
-    /// (direct, relay circuit, etc.) rather than just the first one.
+    /// Dials with explicit, vetted addresses rather than bare `PeerId` to
+    /// prevent libp2p from trying loopback/private addresses that leak into
+    /// Kademlia's internal routing table via DHT replication.
     fn try_discovery_dial(&mut self, peer_id: &PeerId, addrs: &[Multiaddr]) {
         if self.swarm.is_connected(peer_id) {
             return;
@@ -509,17 +529,22 @@ impl NetworkService {
             return;
         }
 
-        let mut has_dialable = false;
+        let mut dial_addrs: Vec<Multiaddr> = Vec::new();
+
         for addr in addrs {
             let normalized = crate::addr::normalize_multiaddr(addr);
             if crate::addr::is_globally_routable(&normalized)
                 && crate::addr::has_transport(&normalized)
             {
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(peer_id, normalized);
-                has_dialable = true;
+                if self.kademlia_enabled {
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(peer_id, normalized.clone());
+                }
+                if !dial_addrs.contains(&normalized) {
+                    dial_addrs.push(normalized);
+                }
             }
         }
 
@@ -528,21 +553,28 @@ impl NetworkService {
                 let via_relay = base
                     .clone()
                     .with(libp2p::multiaddr::Protocol::P2p(*peer_id));
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(peer_id, via_relay);
-                has_dialable = true;
+                if self.kademlia_enabled {
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(peer_id, via_relay.clone());
+                }
+                if !dial_addrs.contains(&via_relay) {
+                    dial_addrs.push(via_relay);
+                }
             }
         }
 
-        if !has_dialable {
+        if dial_addrs.is_empty() {
             debug!(%peer_id, "skipping discovery dial (no dialable addresses)");
             return;
         }
 
-        debug!(%peer_id, num_addrs = addrs.len(), "auto-dialing discovered peer");
-        match self.swarm.dial(*peer_id) {
+        debug!(%peer_id, num_addrs = dial_addrs.len(), "auto-dialing discovered peer");
+        let opts = DialOpts::peer_id(*peer_id)
+            .addresses(dial_addrs)
+            .build();
+        match self.swarm.dial(opts) {
             Ok(()) => {
                 self.pending_discovery_dials += 1;
             }
