@@ -4,6 +4,7 @@
 - [Running Locally](#running-locally)
 - [Building Release Binaries](#building-release-binaries)
 - [Configuration](#configuration)
+- [Run a Relay](#run-a-relay)
 - [Running Tests](#running-tests)
 
 ## Prerequisites
@@ -195,6 +196,12 @@ Networking notes:
 
 - Expose the relay TCP port publicly (security groups/firewall).
 - Keep regular Zode bootstrap peers configured; relay is a connectivity fallback path.
+
+## Run a Relay
+
+For standalone relay hosting (local or cloud), firewall setup, and validation:
+
+- See [Run a Relay](run-a-relay.md).
 
 ## Running Tests
 
