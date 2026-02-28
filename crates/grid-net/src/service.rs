@@ -6,7 +6,7 @@ use libp2p::{gossipsub, kad, request_response, swarm::SwarmEvent, Multiaddr, Pee
 use tracing::{debug, info};
 
 use crate::behaviour::{GridBehaviour, GridBehaviourEvent};
-use crate::builder::{build_swarm, dial_bootstrap_peers};
+use crate::builder::{build_swarm, dial_bootstrap_peers, dial_relay_peers};
 use crate::config::{KademliaMode, NetworkConfig};
 use crate::error::NetworkError;
 use crate::event::NetworkEvent;
@@ -36,6 +36,7 @@ impl NetworkService {
         let random_walk_interval = config.discovery.random_walk_interval;
         let max_discovery_dials = config.discovery.max_concurrent_discovery_dials;
         let kademlia_mode = config.discovery.kademlia_mode;
+        let relay_enabled = config.relay.enabled;
 
         let (mut swarm, keypair) = build_swarm(config.keypair)?;
 
@@ -52,6 +53,13 @@ impl NetworkService {
             .map_err(|e| NetworkError::Transport(e.to_string()))?;
 
         dial_bootstrap_peers(&mut swarm, &config.bootstrap_peers, kademlia_enabled)?;
+        if relay_enabled {
+            dial_relay_peers(&mut swarm, &config.relay.relay_peers);
+            debug!(
+                count = config.relay.relay_peers.len(),
+                "relay dialing configured"
+            );
+        }
 
         if kademlia_enabled {
             if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
@@ -173,7 +181,10 @@ impl NetworkService {
         }
     }
 
-    fn handle_swarm_event(&mut self, event: SwarmEvent<GridBehaviourEvent>) -> Option<NetworkEvent> {
+    fn handle_swarm_event(
+        &mut self,
+        event: SwarmEvent<GridBehaviourEvent>,
+    ) -> Option<NetworkEvent> {
         match event {
             SwarmEvent::Behaviour(event) => self.map_behaviour_event(event),
             SwarmEvent::ConnectionEstablished {
@@ -260,6 +271,10 @@ impl NetworkService {
             GridBehaviourEvent::Gossipsub(ev) => Self::map_gossip_event(ev),
             GridBehaviourEvent::SectorRr(ev) => Self::map_sector_rr_event(ev),
             GridBehaviourEvent::Kademlia(ev) => self.map_kademlia_event(ev),
+            GridBehaviourEvent::Relay(ev) => {
+                debug!(?ev, "relay event");
+                None
+            }
         }
     }
 

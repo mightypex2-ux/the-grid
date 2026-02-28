@@ -38,7 +38,9 @@ pub(crate) fn build_swarm(
         )
         .map_err(|e| NetworkError::Transport(format!("{e}")))?
         .with_quic()
-        .with_behaviour(|key| build_behaviour(key, gossipsub_config))
+        .with_relay_client(libp2p::noise::Config::new, libp2p::yamux::Config::default)
+        .map_err(|e| NetworkError::Transport(format!("{e}")))?
+        .with_behaviour(|key, relay| build_behaviour(key, gossipsub_config, relay))
         .map_err(|e| NetworkError::Transport(format!("{e}")))?
         .build();
     Ok((swarm, kp))
@@ -47,6 +49,7 @@ pub(crate) fn build_swarm(
 fn build_behaviour(
     key: &libp2p::identity::Keypair,
     gossipsub_config: gossipsub::Config,
+    relay: libp2p::relay::client::Behaviour,
 ) -> Result<GridBehaviour, Box<dyn std::error::Error + Send + Sync>> {
     let gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -70,6 +73,7 @@ fn build_behaviour(
         gossipsub,
         sector_rr,
         kademlia,
+        relay,
     })
 }
 
@@ -93,6 +97,15 @@ pub(crate) fn dial_bootstrap_peers(
             .map_err(|e| NetworkError::Dial(e.to_string()))?;
     }
     Ok(())
+}
+
+pub(crate) fn dial_relay_peers(swarm: &mut libp2p::Swarm<GridBehaviour>, peers: &[Multiaddr]) {
+    for relay_addr in peers {
+        match swarm.dial(relay_addr.clone()) {
+            Ok(()) => debug!(%relay_addr, "dialed relay peer"),
+            Err(e) => debug!(%relay_addr, error = %e, "failed to dial relay peer"),
+        }
+    }
 }
 
 pub(crate) fn extract_peer_id(addr: &Multiaddr) -> Option<PeerId> {
