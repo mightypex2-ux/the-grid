@@ -3,6 +3,7 @@ use libp2p::swarm::NetworkBehaviour;
 
 #[derive(NetworkBehaviour)]
 pub(crate) struct GridBehaviour {
+    pub(crate) connection_limits: libp2p::connection_limits::Behaviour,
     pub(crate) gossipsub: libp2p::gossipsub::Behaviour,
     pub(crate) sector_rr: libp2p::request_response::cbor::Behaviour<SectorRequest, SectorResponse>,
     pub(crate) kademlia: libp2p::kad::Behaviour<libp2p::kad::store::MemoryStore>,

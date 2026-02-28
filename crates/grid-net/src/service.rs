@@ -616,6 +616,7 @@ impl NetworkService {
 
     fn map_behaviour_event(&mut self, event: GridBehaviourEvent) -> Option<NetworkEvent> {
         match event {
+            GridBehaviourEvent::ConnectionLimits(_) => None,
             GridBehaviourEvent::Gossipsub(ev) => Self::map_gossip_event(ev),
             GridBehaviourEvent::SectorRr(ev) => Self::map_sector_rr_event(ev),
             GridBehaviourEvent::Kademlia(ev) => self.map_kademlia_event(ev),

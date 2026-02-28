@@ -2,7 +2,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use libp2p::{gossipsub, identify, kad, ping, request_response, Multiaddr, PeerId, StreamProtocol};
+use libp2p::{
+    connection_limits, gossipsub, identify, kad, ping, request_response, Multiaddr, PeerId,
+    StreamProtocol,
+};
 use tracing::debug;
 
 use crate::behaviour::GridBehaviour;
@@ -82,7 +85,16 @@ fn build_behaviour(
     let ping = ping::Behaviour::new(
         ping::Config::new().with_interval(Duration::from_secs(15)),
     );
+    let connection_limits = connection_limits::Behaviour::new(
+        connection_limits::ConnectionLimits::default()
+            .with_max_established_incoming(Some(128))
+            .with_max_established_outgoing(Some(128))
+            .with_max_established_per_peer(Some(4))
+            .with_max_pending_incoming(Some(64))
+            .with_max_pending_outgoing(Some(64)),
+    );
     Ok(GridBehaviour {
+        connection_limits,
         gossipsub,
         sector_rr,
         kademlia,
