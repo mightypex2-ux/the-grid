@@ -166,13 +166,14 @@ async fn main() -> Result<()> {
                         info,
                         ..
                     }) => {
-                        swarm.add_external_address(info.observed_addr.clone());
-                        for addr in &info.listen_addrs {
-                            swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(peer_id, addr.clone());
-                        }
+                        ingest_identify_update(&mut swarm, peer_id, info);
+                    }
+                    RelayBehaviourEvent::Identify(identify::Event::Pushed {
+                        peer_id,
+                        info,
+                        ..
+                    }) => {
+                        ingest_identify_update(&mut swarm, peer_id, info);
                     }
                     _ => {}
                 }
@@ -264,6 +265,20 @@ fn load_or_generate_keypair(path: &std::path::Path) -> Result<libp2p::identity::
         .with_context(|| format!("failed to write keypair to {}", path.display()))?;
     info!(path = %path.display(), peer_id = %kp.public().to_peer_id(), "generated and saved new keypair");
     Ok(kp)
+}
+
+fn ingest_identify_update(
+    swarm: &mut libp2p::Swarm<RelayBehaviour>,
+    peer_id: &libp2p::PeerId,
+    info: &identify::Info,
+) {
+    swarm.add_external_address(info.observed_addr.clone());
+    for addr in &info.listen_addrs {
+        swarm
+            .behaviour_mut()
+            .kademlia
+            .add_address(peer_id, addr.clone());
+    }
 }
 
 #[cfg(test)]

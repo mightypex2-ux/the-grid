@@ -392,38 +392,16 @@ impl NetworkService {
     fn map_identify_event(&mut self, event: identify::Event) -> Option<NetworkEvent> {
         match event {
             identify::Event::Received { peer_id, info, .. } => {
-                debug!(
-                    %peer_id,
-                    protocols = ?info.protocols,
-                    listen_addrs = ?info.listen_addrs,
-                    observed = %info.observed_addr,
-                    "identify received"
+                let listen_addrs = self.ingest_identify_info(
+                    peer_id,
+                    info,
+                    "identify received",
                 );
-
-                self.swarm
-                    .add_external_address(info.observed_addr.clone());
-
-                if self.kademlia_enabled {
-                    for addr in &info.listen_addrs {
-                        self.swarm
-                            .behaviour_mut()
-                            .kademlia
-                            .add_address(&peer_id, addr.clone());
-                    }
-                }
-
-                let stored = self.peer_addresses.entry(peer_id).or_default();
-                for a in &info.listen_addrs {
-                    if !stored.contains(a) {
-                        stored.push(a.clone());
-                    }
-                }
-
                 if self.discovered_peers.insert(peer_id) {
-                    self.try_discovery_dial(&peer_id, &info.listen_addrs);
+                    self.try_discovery_dial(&peer_id, &listen_addrs);
                     Some(NetworkEvent::PeerDiscovered {
                         zode_id: peer_id,
-                        addresses: info.listen_addrs,
+                        addresses: listen_addrs,
                     })
                 } else {
                     None
@@ -437,11 +415,47 @@ impl NetworkService {
                 debug!(%peer_id, %error, "identify error");
                 None
             }
-            identify::Event::Pushed { peer_id, .. } => {
-                debug!(%peer_id, "identify pushed");
+            identify::Event::Pushed { peer_id, info, .. } => {
+                let _ = self.ingest_identify_info(peer_id, info, "identify pushed");
                 None
             }
         }
+    }
+
+    fn ingest_identify_info(
+        &mut self,
+        peer_id: PeerId,
+        info: identify::Info,
+        log_message: &str,
+    ) -> Vec<Multiaddr> {
+        let listen_addrs = info.listen_addrs.clone();
+        debug!(
+            %peer_id,
+            protocols = ?info.protocols,
+            listen_addrs = ?listen_addrs,
+            observed = %info.observed_addr,
+            "{log_message}"
+        );
+
+        self.swarm.add_external_address(info.observed_addr);
+
+        if self.kademlia_enabled {
+            for addr in &listen_addrs {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, addr.clone());
+            }
+        }
+
+        let stored = self.peer_addresses.entry(peer_id).or_default();
+        for a in &listen_addrs {
+            if !stored.contains(a) {
+                stored.push(a.clone());
+            }
+        }
+
+        listen_addrs
     }
 
     fn map_gossip_event(event: gossipsub::Event) -> Option<NetworkEvent> {
