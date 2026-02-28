@@ -32,7 +32,7 @@ body {
     font-family: 'Times New Roman', Times, serif;
     font-size: 9pt;
     line-height: 1.4;
-    color: #111;
+    color: #000;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
 }
@@ -60,8 +60,8 @@ body {
 
 .affiliation {
     font-size: 8.5pt;
-    font-style: italic;
-    color: #555;
+    font-style: normal;
+    color: #000;
     margin-bottom: 0.6em;
 }
 
@@ -914,17 +914,19 @@ sector_id = HKDF-SHA256(
 CDP_PORT = 9333
 
 FOOTER_TEMPLATE = (
-    '<div style="width:100%;font-size:8px;color:#888;font-family:Georgia,serif;'
-    'padding:0 12px;box-sizing:border-box;">'
-    '<span style="display:inline-block;width:33%;text-align:left;">'
-    "Version 0.2.0 &mdash; February 2025"
+    '<div style="width:100%;font-size:10px;color:#000;font-family:\'Times New Roman\',Times,serif;'
+    'box-sizing:border-box;">'
+    '<div style="width:calc(100% - 124px);margin:0 auto;display:flex;align-items:center;">'
+    '<span style="flex:1;text-align:left;">'
+    "Version 0.2.0 :: February 2025"
     "</span>"
-    '<span style="display:inline-block;width:34%;text-align:center;">'
+    '<span style="flex:0 0 auto;text-align:center;">'
     "THE GRID"
     "</span>"
-    '<span style="display:inline-block;width:33%;text-align:right;">'
+    '<span style="flex:1;text-align:right;">'
     '<span class="pageNumber"></span>'
     "</span>"
+    "</div>"
     "</div>"
 )
 
