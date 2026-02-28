@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use futures::StreamExt;
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identify, kad, ping, relay, Multiaddr, StreamProtocol};
+use libp2p::{identify, kad, ping, relay, Multiaddr, PeerId, StreamProtocol};
 use tracing::{debug, info, warn};
 
 const ENV_LISTEN: &str = "GRID_RELAY_LISTEN";
@@ -138,6 +138,9 @@ async fn main() -> Result<()> {
         .listen_on(config.listen.clone())
         .context("failed to start listener")?;
 
+    let mut relay_external_addrs: Vec<Multiaddr> = Vec::new();
+    let mut connected_peer_ids: HashSet<PeerId> = HashSet::new();
+
     loop {
         match swarm.next().await {
             Some(SwarmEvent::NewListenAddr { address, .. }) => {
@@ -154,9 +157,21 @@ async fn main() -> Result<()> {
                     .behaviour_mut()
                     .kademlia
                     .add_address(&peer_id, addr);
+                connected_peer_ids.insert(peer_id);
+                for ext_addr in &relay_external_addrs {
+                    let circuit = strip_p2p_suffix(ext_addr)
+                        .with(libp2p::multiaddr::Protocol::P2p(local_peer_id))
+                        .with(libp2p::multiaddr::Protocol::P2pCircuit)
+                        .with(libp2p::multiaddr::Protocol::P2p(peer_id));
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, circuit);
+                }
                 info!(%peer_id, "peer connected");
             }
             Some(SwarmEvent::ConnectionClosed { peer_id, .. }) => {
+                connected_peer_ids.remove(&peer_id);
                 info!(%peer_id, "peer disconnected");
             }
             Some(SwarmEvent::Behaviour(event)) => {
@@ -167,6 +182,14 @@ async fn main() -> Result<()> {
                         ..
                     }) => {
                         ingest_identify_update(&mut swarm, peer_id, info);
+                        ingest_circuit_addrs(
+                            &mut swarm,
+                            peer_id,
+                            &info.observed_addr,
+                            local_peer_id,
+                            &mut relay_external_addrs,
+                            &connected_peer_ids,
+                        );
                     }
                     RelayBehaviourEvent::Identify(identify::Event::Pushed {
                         peer_id,
@@ -174,6 +197,14 @@ async fn main() -> Result<()> {
                         ..
                     }) => {
                         ingest_identify_update(&mut swarm, peer_id, info);
+                        ingest_circuit_addrs(
+                            &mut swarm,
+                            peer_id,
+                            &info.observed_addr,
+                            local_peer_id,
+                            &mut relay_external_addrs,
+                            &connected_peer_ids,
+                        );
                     }
                     _ => {}
                 }
@@ -243,6 +274,12 @@ fn current_env() -> HashMap<String, String> {
     std::env::vars().collect()
 }
 
+fn strip_p2p_suffix(addr: &Multiaddr) -> Multiaddr {
+    addr.iter()
+        .filter(|p| !matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
+        .collect()
+}
+
 fn load_or_generate_keypair(path: &std::path::Path) -> Result<libp2p::identity::Keypair> {
     if path.exists() {
         let bytes = std::fs::read(path)
@@ -278,6 +315,49 @@ fn ingest_identify_update(
             .behaviour_mut()
             .kademlia
             .add_address(peer_id, addr.clone());
+    }
+}
+
+/// Register relay circuit addresses for the identified peer in the Kademlia
+/// routing table so other nodes can discover a relay-routed path to it.
+///
+/// When a new external address is learned, retroactively registers circuit
+/// addresses for all currently connected peers under that address.
+fn ingest_circuit_addrs(
+    swarm: &mut libp2p::Swarm<RelayBehaviour>,
+    peer_id: &PeerId,
+    observed_addr: &Multiaddr,
+    local_peer_id: PeerId,
+    relay_external_addrs: &mut Vec<Multiaddr>,
+    connected_peer_ids: &HashSet<PeerId>,
+) {
+    let is_new_ext = !relay_external_addrs.contains(observed_addr);
+    if is_new_ext {
+        relay_external_addrs.push(observed_addr.clone());
+    }
+
+    for ext_addr in relay_external_addrs.iter() {
+        let circuit = strip_p2p_suffix(ext_addr)
+            .with(libp2p::multiaddr::Protocol::P2p(local_peer_id))
+            .with(libp2p::multiaddr::Protocol::P2pCircuit)
+            .with(libp2p::multiaddr::Protocol::P2p(*peer_id));
+        swarm
+            .behaviour_mut()
+            .kademlia
+            .add_address(peer_id, circuit);
+    }
+
+    if is_new_ext {
+        for &existing_peer in connected_peer_ids {
+            let circuit = strip_p2p_suffix(observed_addr)
+                .with(libp2p::multiaddr::Protocol::P2p(local_peer_id))
+                .with(libp2p::multiaddr::Protocol::P2pCircuit)
+                .with(libp2p::multiaddr::Protocol::P2p(existing_peer));
+            swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&existing_peer, circuit);
+        }
     }
 }
 

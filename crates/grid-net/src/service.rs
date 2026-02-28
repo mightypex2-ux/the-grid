@@ -6,7 +6,7 @@ use libp2p::{gossipsub, identify, kad, request_response, swarm::SwarmEvent, Mult
 use tracing::{debug, info, warn};
 
 use crate::behaviour::{GridBehaviour, GridBehaviourEvent};
-use crate::builder::{build_swarm, dial_bootstrap_peers, dial_relay_peers};
+use crate::builder::{build_swarm, dial_bootstrap_peers, dial_relay_peers, extract_peer_id};
 use crate::config::{KademliaMode, NetworkConfig};
 use crate::error::NetworkError;
 use crate::event::NetworkEvent;
@@ -32,6 +32,9 @@ pub struct NetworkService {
     relay_transport_addrs: Vec<Multiaddr>,
     /// Relay circuit addresses we have already started listening on.
     active_relay_listeners: HashSet<PeerId>,
+    /// Pre-computed relay circuit base addresses derived from relay config,
+    /// used to speculatively construct circuit-routed paths for discovered peers.
+    relay_circuit_bases: Vec<Multiaddr>,
 }
 
 impl NetworkService {
@@ -75,6 +78,25 @@ impl NetworkService {
             );
         }
 
+        let relay_circuit_bases: Vec<Multiaddr> = if relay_enabled {
+            config
+                .relay
+                .relay_peers
+                .iter()
+                .filter_map(|addr| {
+                    let peer_id = extract_peer_id(addr)?;
+                    let transport = strip_p2p(addr);
+                    Some(
+                        transport
+                            .with(libp2p::multiaddr::Protocol::P2p(peer_id))
+                            .with(libp2p::multiaddr::Protocol::P2pCircuit),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let mut kademlia_bootstrapped = false;
         if kademlia_enabled {
             match swarm.behaviour_mut().kademlia.bootstrap() {
@@ -99,6 +121,7 @@ impl NetworkService {
             peer_addresses: HashMap::new(),
             relay_transport_addrs,
             active_relay_listeners: HashSet::new(),
+            relay_circuit_bases,
         })
     }
 
@@ -363,6 +386,16 @@ impl NetworkService {
                 .behaviour_mut()
                 .kademlia
                 .add_address(peer_id, addr.clone());
+        }
+
+        for base in &self.relay_circuit_bases {
+            let via_relay = base
+                .clone()
+                .with(libp2p::multiaddr::Protocol::P2p(*peer_id));
+            self.swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(peer_id, via_relay);
         }
 
         debug!(%peer_id, num_addrs = addrs.len(), "auto-dialing discovered peer");
