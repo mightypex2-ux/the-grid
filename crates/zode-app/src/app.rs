@@ -33,6 +33,7 @@ pub(crate) struct ZodeApp {
     pub confirm_delete_profile: Option<String>,
     pub reveal_start: Option<f64>,
     pub status_first_seen: Option<f64>,
+    pub log_scroll_to_bottom: bool,
     pub active_profile_id: Option<String>,
     pub session_password: Option<String>,
 }
@@ -81,6 +82,7 @@ impl ZodeApp {
             confirm_delete_profile: None,
             reveal_start: None,
             status_first_seen: None,
+            log_scroll_to_bottom: false,
             active_profile_id: None,
             session_password: None,
         };
@@ -821,6 +823,9 @@ impl ZodeApp {
                     });
                     return;
                 }
+                if self.tab == Tab::Log && self.prev_tab != Tab::Log {
+                    self.log_scroll_to_bottom = true;
+                }
                 if self.tab == Tab::Interlink && self.prev_tab != Tab::Interlink {
                     if let Some(ref mut il) = self.interlink_state {
                         il.focus_compose = true;
@@ -832,7 +837,7 @@ impl ZodeApp {
                     Tab::Status => crate::render::render_status(self, ui, state),
                     Tab::Storage => crate::render_storage::render_storage(self, ui, state),
                     Tab::Peers => crate::render::render_peers(self, ui, state),
-                    Tab::Log => crate::render::render_log(ui, state),
+                    Tab::Log => crate::render::render_log(self, ui, state),
                     Tab::Interlink => crate::interlink::render_interlink(self, ui),
                     Tab::Info => crate::render::render_info(self, ui, state),
                     Tab::Settings => crate::render::render_settings(self, ui),

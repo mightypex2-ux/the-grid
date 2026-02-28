@@ -451,7 +451,10 @@ pub(crate) fn render_peers(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnaps
 // Log
 // ---------------------------------------------------------------------------
 
-pub(crate) fn render_log(ui: &mut egui::Ui, state: &StateSnapshot) {
+pub(crate) fn render_log(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
+    let should_scroll = app.log_scroll_to_bottom;
+    app.log_scroll_to_bottom = false;
+
     section(
         ui,
         &format!("Live Log ({})", state.log_entries.len()),
@@ -464,6 +467,9 @@ pub(crate) fn render_log(ui: &mut egui::Ui, state: &StateSnapshot) {
                     for entry in &state.log_entries {
                         let color = log_entry_color(entry);
                         ui.label(egui::RichText::new(entry).monospace().color(color));
+                    }
+                    if should_scroll {
+                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                     }
                 });
         },
