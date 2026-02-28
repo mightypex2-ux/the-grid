@@ -117,10 +117,13 @@ async fn main() -> Result<()> {
 
             RelayBehaviour {
                 relay: relay::Behaviour::new(peer_id, Default::default()),
-                identify: identify::Behaviour::new(identify::Config::new(
-                    GRID_IDENTIFY_PROTOCOL.to_string(),
-                    key.public(),
-                )),
+                identify: identify::Behaviour::new(
+                    identify::Config::new(
+                        GRID_IDENTIFY_PROTOCOL.to_string(),
+                        key.public(),
+                    )
+                    .with_push_listen_addr_updates(true),
+                ),
                 kademlia,
                 ping: ping::Behaviour::new(ping::Config::new()),
             }

@@ -70,10 +70,10 @@ fn build_behaviour(
     kad_config.set_query_timeout(Duration::from_secs(60));
     let store = kad::store::MemoryStore::new(peer_id);
     let kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
-    let identify = identify::Behaviour::new(identify::Config::new(
-        GRID_IDENTIFY_PROTOCOL.to_string(),
-        key.public(),
-    ));
+    let identify = identify::Behaviour::new(
+        identify::Config::new(GRID_IDENTIFY_PROTOCOL.to_string(), key.public())
+            .with_push_listen_addr_updates(true),
+    );
     Ok(GridBehaviour {
         gossipsub,
         sector_rr,
