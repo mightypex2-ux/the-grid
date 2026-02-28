@@ -1,5 +1,5 @@
+use grid_core::{CborType, FieldDef, FieldSchema, GridError, ProgramId, ProofSystem};
 use serde::{Deserialize, Serialize};
-use grid_core::{CborType, FieldDef, FieldSchema, ProgramId, ProofSystem, GridError};
 
 /// ZID (Zero Identity) program descriptor.
 ///
@@ -41,10 +41,26 @@ impl ZidDescriptor {
             program_name: "zid".into(),
             version: 1,
             fields: vec![
-                FieldDef { key: "display_name".into(), value_type: CborType::TextString, optional: true },
-                FieldDef { key: "owner_did".into(), value_type: CborType::TextString, optional: false },
-                FieldDef { key: "signature".into(), value_type: CborType::ByteString, optional: false },
-                FieldDef { key: "timestamp_ms".into(), value_type: CborType::UnsignedInt, optional: false },
+                FieldDef {
+                    key: "display_name".into(),
+                    value_type: CborType::TextString,
+                    optional: true,
+                },
+                FieldDef {
+                    key: "owner_did".into(),
+                    value_type: CborType::TextString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "signature".into(),
+                    value_type: CborType::ByteString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "timestamp_ms".into(),
+                    value_type: CborType::UnsignedInt,
+                    optional: false,
+                },
             ],
         }
     }

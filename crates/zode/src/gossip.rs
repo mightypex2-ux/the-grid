@@ -1,7 +1,7 @@
-use tokio::sync::broadcast;
-use tracing::{info, warn};
 use grid_core::GossipSectorAppend;
 use grid_storage::SectorStore;
+use tokio::sync::broadcast;
+use tracing::{info, warn};
 
 use crate::sector_handler::SectorRequestHandler;
 use crate::types::LogEvent;

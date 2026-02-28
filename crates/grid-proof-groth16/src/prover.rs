@@ -56,12 +56,7 @@ impl Groth16ShapeProver {
         }
         Err(Groth16Error::PlaintextTooLarge {
             len: plaintext_len,
-            max: self
-                .proving_keys
-                .keys()
-                .max()
-                .copied()
-                .unwrap_or(0) as usize,
+            max: self.proving_keys.keys().max().copied().unwrap_or(0) as usize,
         })
     }
 
@@ -87,9 +82,7 @@ impl Groth16ShapeProver {
         let mut nonce = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
 
-        let mut aad = Vec::with_capacity(
-            program_id.as_bytes().len() + sector_id.as_bytes().len(),
-        );
+        let mut aad = Vec::with_capacity(program_id.as_bytes().len() + sector_id.as_bytes().len());
         aad.extend_from_slice(program_id.as_bytes());
         aad.extend_from_slice(sector_id.as_bytes());
 

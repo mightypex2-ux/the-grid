@@ -51,15 +51,15 @@ pub(crate) fn dispatch(handler: &dyn SectorDispatch, req: &JsonRpcRequest) -> Js
     }
 
     match req.method.as_str() {
-        "sector.append" => dispatch_typed::<SectorAppendRequest>(handler, req, |r| {
-            SectorRequest::Append(r)
-        }),
-        "sector.readLog" => dispatch_typed::<SectorReadLogRequest>(handler, req, |r| {
-            SectorRequest::ReadLog(r)
-        }),
-        "sector.logLength" => dispatch_typed::<SectorLogLengthRequest>(handler, req, |r| {
-            SectorRequest::LogLength(r)
-        }),
+        "sector.append" => {
+            dispatch_typed::<SectorAppendRequest>(handler, req, |r| SectorRequest::Append(r))
+        }
+        "sector.readLog" => {
+            dispatch_typed::<SectorReadLogRequest>(handler, req, |r| SectorRequest::ReadLog(r))
+        }
+        "sector.logLength" => {
+            dispatch_typed::<SectorLogLengthRequest>(handler, req, |r| SectorRequest::LogLength(r))
+        }
         "sector.batchAppend" => dispatch_typed::<SectorBatchAppendRequest>(handler, req, |r| {
             SectorRequest::BatchAppend(r)
         }),

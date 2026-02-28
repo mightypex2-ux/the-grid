@@ -1,7 +1,7 @@
 use grid_core::{
     FieldSchema, ProgramId, SectorAppendRequest, SectorAppendResponse, SectorId,
-    SectorLogLengthRequest, SectorLogLengthResponse, SectorReadLogRequest,
-    SectorReadLogResponse, SectorRequest, SectorResponse, ShapeProof,
+    SectorLogLengthRequest, SectorLogLengthResponse, SectorReadLogRequest, SectorReadLogResponse,
+    SectorRequest, SectorResponse, ShapeProof,
 };
 use grid_crypto::{pad_to_bucket, unpad_from_bucket, SectorKey};
 use grid_proof_groth16::Groth16ShapeProver;
@@ -76,8 +76,8 @@ pub fn sector_decrypt_poseidon(
     sector_id: &SectorId,
 ) -> Result<Vec<u8>, SdkError> {
     let aad = build_sector_aad(program_id, sector_id);
-    let padded =
-        grid_crypto::poseidon_decrypt_sector(ciphertext, sector_key, &aad).map_err(SdkError::Crypto)?;
+    let padded = grid_crypto::poseidon_decrypt_sector(ciphertext, sector_key, &aad)
+        .map_err(SdkError::Crypto)?;
     let plaintext = unpad_from_bucket(&padded).map_err(SdkError::Crypto)?;
     Ok(plaintext)
 }

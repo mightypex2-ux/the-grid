@@ -1,6 +1,6 @@
+use grid_core::{CborType, FieldDef, FieldSchema, GridError, ProgramId, ProofSystem, SectorId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use grid_core::{CborType, FieldDef, FieldSchema, ProgramId, ProofSystem, SectorId, GridError};
 
 /// Maximum Interlink message size (64 KiB).
 pub const MAX_MESSAGE_SIZE: usize = 64 * 1024;
@@ -48,11 +48,31 @@ impl InterlinkDescriptor {
             program_name: "interlink".into(),
             version: 1,
             fields: vec![
-                FieldDef { key: "channel_id".into(), value_type: CborType::ByteString, optional: false },
-                FieldDef { key: "content".into(), value_type: CborType::TextString, optional: false },
-                FieldDef { key: "sender_did".into(), value_type: CborType::TextString, optional: false },
-                FieldDef { key: "signature".into(), value_type: CborType::ByteString, optional: false },
-                FieldDef { key: "timestamp_ms".into(), value_type: CborType::UnsignedInt, optional: false },
+                FieldDef {
+                    key: "channel_id".into(),
+                    value_type: CborType::ByteString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "content".into(),
+                    value_type: CborType::TextString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "sender_did".into(),
+                    value_type: CborType::TextString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "signature".into(),
+                    value_type: CborType::ByteString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "timestamp_ms".into(),
+                    value_type: CborType::UnsignedInt,
+                    optional: false,
+                },
             ],
         }
     }

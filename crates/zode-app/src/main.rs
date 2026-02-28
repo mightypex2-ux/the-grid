@@ -2,10 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod interlink;
 mod components;
 mod helpers;
 mod identity;
+mod interlink;
 mod profile;
 mod render;
 mod render_storage;
@@ -88,18 +88,23 @@ fn load_icon() -> egui::IconData {
     for y in 0..out_h {
         for x in 0..out_w {
             let i = ((y * out_w + x) * 4) as usize;
-            let a = corner_alpha(x as f64 + 0.5, y as f64 + 0.5, out_w as f64, out_h as f64, r);
+            let a = corner_alpha(
+                x as f64 + 0.5,
+                y as f64 + 0.5,
+                out_w as f64,
+                out_h as f64,
+                r,
+            );
             if a <= 0.0 {
                 continue;
             }
 
-            let (r_val, g_val, b_val) =
-                if x >= pad && x < pad + sw && y >= pad && y < pad + sh {
-                    let px = src.get_pixel(x - pad, y - pad);
-                    (px[0], px[1], px[2])
-                } else {
-                    (0, 0, 0)
-                };
+            let (r_val, g_val, b_val) = if x >= pad && x < pad + sw && y >= pad && y < pad + sh {
+                let px = src.get_pixel(x - pad, y - pad);
+                (px[0], px[1], px[2])
+            } else {
+                (0, 0, 0)
+            };
 
             rgba[i] = r_val;
             rgba[i + 1] = g_val;

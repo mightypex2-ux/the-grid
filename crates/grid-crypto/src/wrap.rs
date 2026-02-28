@@ -1,10 +1,10 @@
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::{AeadCore, XChaCha20Poly1305};
+use grid_core::{ProgramId, SectorId};
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use zid::{ed25519_to_did_key, MachineKeyPair, MachinePublicKey};
-use grid_core::{ProgramId, SectorId};
 
 use crate::{CryptoError, SectorKey};
 

@@ -204,7 +204,7 @@ pub struct GossipSectorAppend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{encode_canonical, decode_canonical};
+    use crate::{decode_canonical, encode_canonical};
 
     fn sample_shape_proof() -> ShapeProof {
         ShapeProof {

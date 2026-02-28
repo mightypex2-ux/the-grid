@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use tokio::sync::{broadcast, mpsc, Mutex};
-use tracing::{debug, error, info, warn};
 use grid_core::ProofSystem;
 use grid_net::{format_zode_id, NetworkEvent, NetworkService, ZodeId};
+use grid_programs_interlink::InterlinkDescriptor;
 use grid_proof::{NoopVerifier, ProofVerifierRegistry};
 use grid_proof_groth16::Groth16ShapeVerifier;
-use grid_programs_interlink::InterlinkDescriptor;
 use grid_storage::{RocksStorage, SectorStore};
+use tokio::sync::{broadcast, mpsc, Mutex};
+use tracing::{debug, error, info, warn};
 
 use grid_rpc::{RpcConfig, RpcServer};
 
@@ -90,8 +90,7 @@ impl Zode {
             match Groth16ShapeVerifier::load(&vk_dir) {
                 Ok(verifier) => {
                     info!(?vk_dir, "loaded Groth16 verifying keys");
-                    proof_registry
-                        .register(ProofSystem::Groth16, Arc::new(verifier));
+                    proof_registry.register(ProofSystem::Groth16, Arc::new(verifier));
                 }
                 Err(e) => {
                     warn!(error = %e, "failed to load Groth16 verifying keys");
@@ -100,8 +99,7 @@ impl Zode {
         }
         let proof_registry = Arc::new(proof_registry);
 
-        let mut program_proof_config: HashMap<grid_core::ProgramId, ProofSystem> =
-            HashMap::new();
+        let mut program_proof_config: HashMap<grid_core::ProgramId, ProofSystem> = HashMap::new();
         if let Ok(pid) = InterlinkDescriptor::v2().program_id() {
             program_proof_config.insert(pid, ProofSystem::Groth16);
         }
@@ -231,19 +229,19 @@ impl Zode {
             .unwrap_or_default();
         let peer_count = connected_peers.len() as u64;
 
-        let (rpc_enabled, rpc_addr, rpc_auth_required) =
-            if let Ok(rpc) = self.rpc_server.try_lock() {
-                match *rpc {
-                    Some(ref rpc) => (
-                        true,
-                        Some(rpc.bind_addr().to_string()),
-                        rpc.auth_required(),
-                    ),
-                    None => (false, None, false),
-                }
-            } else {
-                (self.rpc_config.enabled, None, self.rpc_config.api_key.is_some())
-            };
+        let (rpc_enabled, rpc_addr, rpc_auth_required) = if let Ok(rpc) = self.rpc_server.try_lock()
+        {
+            match *rpc {
+                Some(ref rpc) => (true, Some(rpc.bind_addr().to_string()), rpc.auth_required()),
+                None => (false, None, false),
+            }
+        } else {
+            (
+                self.rpc_config.enabled,
+                None,
+                self.rpc_config.api_key.is_some(),
+            )
+        };
 
         ZodeStatus {
             zode_id: format_zode_id(&self.zode_id),

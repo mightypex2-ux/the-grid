@@ -75,7 +75,8 @@ pub(crate) fn decrypt_vault(
         .decrypt(nonce, vault.ciphertext.as_slice())
         .map_err(|_| VaultError::DecryptionFailed)?;
 
-    ciborium::de::from_reader(cbor_buf.as_slice()).map_err(|e| VaultError::DeserializeFailed(e.to_string()))
+    ciborium::de::from_reader(cbor_buf.as_slice())
+        .map_err(|e| VaultError::DeserializeFailed(e.to_string()))
 }
 
 pub(crate) fn save_vault(path: &Path, vault: &VaultFile) -> Result<(), VaultError> {

@@ -62,16 +62,32 @@ mod tests {
             program_name: "test".into(),
             version: 1,
             fields: vec![
-                FieldDef { key: "a".into(), value_type: CborType::TextString, optional: false },
-                FieldDef { key: "b".into(), value_type: CborType::UnsignedInt, optional: true },
+                FieldDef {
+                    key: "a".into(),
+                    value_type: CborType::TextString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "b".into(),
+                    value_type: CborType::UnsignedInt,
+                    optional: true,
+                },
             ],
         };
         let schema2 = FieldSchema {
             program_name: "test".into(),
             version: 1,
             fields: vec![
-                FieldDef { key: "a".into(), value_type: CborType::TextString, optional: false },
-                FieldDef { key: "b".into(), value_type: CborType::UnsignedInt, optional: true },
+                FieldDef {
+                    key: "a".into(),
+                    value_type: CborType::TextString,
+                    optional: false,
+                },
+                FieldDef {
+                    key: "b".into(),
+                    value_type: CborType::UnsignedInt,
+                    optional: true,
+                },
             ],
         };
         assert_eq!(schema1.schema_hash(), schema2.schema_hash());
@@ -82,16 +98,20 @@ mod tests {
         let schema1 = FieldSchema {
             program_name: "test".into(),
             version: 1,
-            fields: vec![
-                FieldDef { key: "a".into(), value_type: CborType::TextString, optional: false },
-            ],
+            fields: vec![FieldDef {
+                key: "a".into(),
+                value_type: CborType::TextString,
+                optional: false,
+            }],
         };
         let schema2 = FieldSchema {
             program_name: "test".into(),
             version: 1,
-            fields: vec![
-                FieldDef { key: "b".into(), value_type: CborType::ByteString, optional: true },
-            ],
+            fields: vec![FieldDef {
+                key: "b".into(),
+                value_type: CborType::ByteString,
+                optional: true,
+            }],
         };
         assert_ne!(schema1.schema_hash(), schema2.schema_hash());
     }

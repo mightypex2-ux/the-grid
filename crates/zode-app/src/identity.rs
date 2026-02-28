@@ -339,10 +339,7 @@ fn render_save_profile(app: &mut ZodeApp, ui: &mut egui::Ui) {
 
     section(ui, "SAVE PROFILE", |ui| {
         if has_session_password {
-            hint_label(
-                ui,
-                "Vault will be updated using your session password.",
-            );
+            hint_label(ui, "Vault will be updated using your session password.");
             ui.add_space(8.0);
             if action_button(ui, "Update Vault") {
                 do_save = true;
@@ -408,7 +405,12 @@ fn save_profile_to_disk(app: &mut ZodeApp) {
         .unwrap_or_default();
 
     let plaintext = VaultPlaintext {
-        shares: app.identity_state.shares.iter().map(|s| s.to_hex()).collect(),
+        shares: app
+            .identity_state
+            .shares
+            .iter()
+            .map(|s| s.to_hex())
+            .collect(),
         identity_id: app.identity_state.identity_id,
         machine_id: mk.machine_id,
         epoch: mk.epoch,
@@ -419,10 +421,7 @@ fn save_profile_to_disk(app: &mut ZodeApp) {
     let base = profile::base_dir();
 
     if let Some(ref profile_id) = app.active_profile_id.clone() {
-        let password = app
-            .session_password
-            .clone()
-            .unwrap_or_default();
+        let password = app.session_password.clone().unwrap_or_default();
         match profile::update_vault(&base, profile_id, &plaintext, &password) {
             Ok(()) => {
                 app.identity_state.pending_save = false;
@@ -449,11 +448,7 @@ fn save_profile_to_disk(app: &mut ZodeApp) {
             .as_ref()
             .map(|z| z.status().zode_id)
             .unwrap_or_default();
-        let did = app
-            .identity_state
-            .did
-            .clone()
-            .unwrap_or_default();
+        let did = app.identity_state.did.clone().unwrap_or_default();
 
         match profile::create_profile(
             &base,

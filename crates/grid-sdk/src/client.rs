@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
 use grid_net::{
     format_zode_id, Multiaddr, NetworkConfig, NetworkEvent, NetworkService, OutboundRequestId,
     ZodeId,
 };
+use tokio::sync::Mutex;
 
 use crate::error::SdkError;
 

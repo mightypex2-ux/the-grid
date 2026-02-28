@@ -191,24 +191,15 @@ fn render_proof_section(
                 };
 
                 egui::CollapsingHeader::new(
-                    egui::RichText::new("Shape Proof")
-                        .color(colors::CONNECTED),
+                    egui::RichText::new("Shape Proof").color(colors::CONNECTED),
                 )
                 .id_salt(format!("proof_{short_id}_{index}"))
                 .show(ui, |ui| {
                     info_grid(ui, &format!("proof_grid_{short_id}_{index}"), |ui| {
                         kv_row(ui, "Proof System", system_label);
                         kv_row(ui, "Size Bucket", &format!("{}", proof.size_bucket));
-                        kv_row(
-                            ui,
-                            "CT Hash",
-                            &ct_hex[..16.min(ct_hex.len())],
-                        );
-                        kv_row(
-                            ui,
-                            "Schema Hash",
-                            &schema_hex[..16.min(schema_hex.len())],
-                        );
+                        kv_row(ui, "CT Hash", &ct_hex[..16.min(ct_hex.len())]);
+                        kv_row(ui, "Schema Hash", &schema_hex[..16.min(schema_hex.len())]);
                         kv_row(
                             ui,
                             "Proof Bytes",

@@ -20,6 +20,9 @@ fi
 : "${GRID_REPO_URL:=https://github.com/cypher-asi/the-grid}"
 : "${GRID_REPO_REF:=master}"
 : "${RELAY_BUILD_DIR:=/opt/the-grid}"
+: "${ZID_REPO_URL:=https://github.com/cypher-asi/zid}"
+: "${ZID_REPO_REF:=master}"
+: "${ZID_BUILD_DIR:=/opt/zid}"
 
 AWS_ARGS=()
 if [[ -n "${AWS_REGION:-}" ]]; then

@@ -144,20 +144,19 @@ impl ZodeApp {
                     let pk = kp.public_key();
                     let did = zid::ed25519_to_did_key(&pk.ed25519_bytes());
                     self.identity_state.did = Some(did.clone());
-                    self.identity_state.machine_keys.push(
-                        crate::state::DerivedMachineKey {
+                    self.identity_state
+                        .machine_keys
+                        .push(crate::state::DerivedMachineKey {
                             machine_id: plaintext.machine_id,
                             epoch: plaintext.epoch,
                             capabilities: caps,
                             did,
                             public_key: pk,
                             keypair: std::sync::Arc::new(kp),
-                        },
-                    );
+                        });
                 }
 
-                let data_dir =
-                    profile::data_dir_for_profile(&base, profile_id);
+                let data_dir = profile::data_dir_for_profile(&base, profile_id);
                 self.settings.data_dir = data_dir.to_string_lossy().to_string();
 
                 if let Some(kp) = libp2p_keypair {
@@ -359,9 +358,8 @@ impl ZodeApp {
         self.session_password = None;
         self.status_first_seen = None;
         self.identity_state = Default::default();
-        self.shared = std::sync::Arc::new(tokio::sync::Mutex::new(
-            crate::state::AppState::default(),
-        ));
+        self.shared =
+            std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::AppState::default()));
         self.tab = Tab::Status;
 
         self.phase = if self.profiles.len() > 1 {
@@ -599,11 +597,8 @@ impl ZodeApp {
                     egui::Id::new("pre_auth_title_bar"),
                     egui::Sense::click_and_drag(),
                 );
-                if !on_resize_edge
-                    && title_resp.drag_started_by(egui::PointerButton::Primary)
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                if !on_resize_edge && title_resp.drag_started_by(egui::PointerButton::Primary) {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 if title_resp.double_clicked() {
                     ui.ctx()
@@ -612,8 +607,7 @@ impl ZodeApp {
 
                 ui.visuals_mut().widgets.active = ui.visuals().widgets.hovered;
                 ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
-                ui.visuals_mut().selection.stroke =
-                    egui::Stroke::new(1.0, egui::Color32::WHITE);
+                ui.visuals_mut().selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
                 ui.visuals_mut().widgets.active.fg_stroke =
                     egui::Stroke::new(1.0, egui::Color32::WHITE);
 
@@ -632,46 +626,27 @@ impl ZodeApp {
                             .color(egui::Color32::from_rgb(140, 140, 145)),
                     );
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if title_bar_icon(ui, egui_phosphor::regular::X, false)
-                                .clicked()
-                            {
-                                ui.ctx()
-                                    .send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                            let max_icon = if maximized {
-                                egui_phosphor::regular::CORNERS_IN
-                            } else {
-                                egui_phosphor::regular::CORNERS_OUT
-                            };
-                            if title_bar_icon(ui, max_icon, false).clicked() {
-                                ui.ctx().send_viewport_cmd(
-                                    egui::ViewportCommand::Maximized(!maximized),
-                                );
-                            }
-                            if title_bar_icon(
-                                ui,
-                                egui_phosphor::regular::MINUS,
-                                false,
-                            )
-                            .clicked()
-                            {
-                                ui.ctx().send_viewport_cmd(
-                                    egui::ViewportCommand::Minimized(true),
-                                );
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if title_bar_icon(ui, egui_phosphor::regular::X, false).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        let max_icon = if maximized {
+                            egui_phosphor::regular::CORNERS_IN
+                        } else {
+                            egui_phosphor::regular::CORNERS_OUT
+                        };
+                        if title_bar_icon(ui, max_icon, false).clicked() {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        }
+                        if title_bar_icon(ui, egui_phosphor::regular::MINUS, false).clicked() {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    });
                 });
 
-                Self::handle_title_bar_drag(
-                    ui,
-                    &title_resp,
-                    title_bar_rect,
-                    on_resize_edge,
-                );
+                Self::handle_title_bar_drag(ui, &title_resp, title_bar_rect, on_resize_edge);
             });
     }
 
@@ -828,8 +803,7 @@ impl ZodeApp {
             let right_edge = center_x + offset;
             let edge_alpha = (glow_strength * 200.0) as u8;
 
-            let edge_color =
-                egui::Color32::from_rgba_unmultiplied(46, 230, 176, edge_alpha);
+            let edge_color = egui::Color32::from_rgba_unmultiplied(46, 230, 176, edge_alpha);
             painter.line_segment(
                 [
                     egui::pos2(left_edge, screen.top()),
@@ -897,10 +871,9 @@ impl ZodeApp {
 
                 let profiles = self.profiles.clone();
                 for p in &profiles {
-                    let btn = egui::Button::new(
-                        egui::RichText::new(&p.name).monospace().size(12.0),
-                    )
-                    .min_size(egui::vec2(230.0, 36.0));
+                    let btn =
+                        egui::Button::new(egui::RichText::new(&p.name).monospace().size(12.0))
+                            .min_size(egui::vec2(230.0, 36.0));
 
                     if ui.add(btn).clicked() {
                         self.phase = AppPhase::Unlock {
@@ -978,9 +951,7 @@ impl ZodeApp {
                 if self.unlock_password.is_empty() && !resp.has_focus() {
                     resp.request_focus();
                 }
-                if resp.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                {
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     do_unlock = true;
                 }
 

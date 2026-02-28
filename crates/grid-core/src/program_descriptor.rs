@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ProgramId, GridError};
+use crate::{GridError, ProgramId};
 
 /// Base program descriptor used to derive a [`ProgramId`].
 ///

@@ -110,9 +110,7 @@ async fn rpc_handler(
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     if let Some(ref expected_key) = state.api_key {
-        let auth_header = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok());
+        let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
 
         let authorized = match auth_header {
             Some(value) if value.starts_with("Bearer ") => {

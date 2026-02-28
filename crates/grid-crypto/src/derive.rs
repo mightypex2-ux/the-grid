@@ -1,7 +1,7 @@
+use grid_core::SectorId;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::Zeroize;
-use grid_core::SectorId;
 
 const HKDF_SALT: &[u8] = b"grid:sector:v1";
 const DERIVE_KEY_INFO: &[u8] = b"grid:sector:derive-key:v1";

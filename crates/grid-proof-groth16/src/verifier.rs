@@ -77,19 +77,19 @@ impl ProofVerifier for Groth16ShapeVerifier {
 
         let ct_hash_bytes = &ctx[..32];
         let schema_hash_bytes = &ctx[32..64];
-        let bucket_bytes: [u8; 4] = ctx[64..68].try_into().map_err(|_| {
-            ProofError::InvalidProofFormat {
-                reason: "invalid bucket bytes".into(),
-            }
-        })?;
+        let bucket_bytes: [u8; 4] =
+            ctx[64..68]
+                .try_into()
+                .map_err(|_| ProofError::InvalidProofFormat {
+                    reason: "invalid bucket bytes".into(),
+                })?;
         let size_bucket = u32::from_le_bytes(bucket_bytes);
 
-        let pvk = self
-            .verifying_keys
-            .get(&size_bucket)
-            .ok_or_else(|| ProofError::VerifierKeyNotFound {
+        let pvk = self.verifying_keys.get(&size_bucket).ok_or_else(|| {
+            ProofError::VerifierKeyNotFound {
                 program_id: format!("bucket_{size_bucket}"),
-            })?;
+            }
+        })?;
 
         let groth16_proof =
             ark_groth16::Proof::<Bn254>::deserialize_compressed(proof).map_err(|e| {
@@ -102,11 +102,10 @@ impl ProofVerifier for Groth16ShapeVerifier {
         let schema_hash_fr = Fr::from_le_bytes_mod_order(schema_hash_bytes);
         let public_inputs = vec![ct_hash_fr, schema_hash_fr];
 
-        let valid =
-            Groth16::<Bn254>::verify_with_processed_vk(pvk, &public_inputs, &groth16_proof)
-                .map_err(|e| ProofError::VerificationFailed {
-                    reason: format!("Groth16 verify error: {e}"),
-                })?;
+        let valid = Groth16::<Bn254>::verify_with_processed_vk(pvk, &public_inputs, &groth16_proof)
+            .map_err(|e| ProofError::VerificationFailed {
+                reason: format!("Groth16 verify error: {e}"),
+            })?;
 
         if !valid {
             return Err(ProofError::VerificationFailed {

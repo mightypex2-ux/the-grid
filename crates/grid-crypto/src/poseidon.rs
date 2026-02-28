@@ -311,10 +311,7 @@ fn default_poseidon_config() -> PoseidonConfig<Fr> {
         full_rounds: full_rounds as usize,
         partial_rounds: partial_rounds as usize,
         alpha: alpha as u64,
-        ark: round_constants
-            .chunks(width)
-            .map(|c| c.to_vec())
-            .collect(),
+        ark: round_constants.chunks(width).map(|c| c.to_vec()).collect(),
         mds,
         rate,
         capacity,

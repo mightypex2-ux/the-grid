@@ -1,7 +1,7 @@
 use crate::{decrypt_sector, encrypt_sector, unwrap_sector_key, wrap_sector_key, SectorKey};
+use grid_core::{ProgramDescriptor, ProgramId, SectorId};
 use zid::testkit::derive_machine_keypair_from_seed;
 use zid::MachineKeyCapabilities;
-use grid_core::{ProgramDescriptor, ProgramId, SectorId};
 
 fn test_aad(program_id: &ProgramId, sector_id: &SectorId) -> Vec<u8> {
     let mut aad = Vec::new();

@@ -20,7 +20,9 @@ fn interlink_descriptor_round_trip() {
 
 #[test]
 fn zid_and_interlink_have_different_program_ids() {
-    let zid_id = grid_programs_zid::ZidDescriptor::v1().program_id().expect("zid");
+    let zid_id = grid_programs_zid::ZidDescriptor::v1()
+        .program_id()
+        .expect("zid");
     let interlink_id = InterlinkDescriptor::v1().program_id().expect("interlink");
     assert_ne!(zid_id, interlink_id);
 }
@@ -183,7 +185,10 @@ fn zmessage_signable_bytes_excludes_signature() {
 fn interlink_field_schema_has_signature_field() {
     let schema = InterlinkDescriptor::field_schema();
     let has_sig = schema.fields.iter().any(|f| f.key == "signature");
-    assert!(has_sig, "Interlink field schema must contain a 'signature' field");
+    assert!(
+        has_sig,
+        "Interlink field schema must contain a 'signature' field"
+    );
 }
 
 #[test]

@@ -128,8 +128,8 @@ mod tests {
 
     #[test]
     fn proof_verifier_registry_dispatch() {
-        use std::sync::Arc;
         use grid_core::ProofSystem;
+        use std::sync::Arc;
 
         let mut registry = ProofVerifierRegistry::new();
         registry.register(ProofSystem::None, Arc::new(NoopVerifier));

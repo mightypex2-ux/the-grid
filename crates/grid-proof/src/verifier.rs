@@ -71,11 +71,12 @@ impl ProofVerifierRegistry {
         proof: &[u8],
         payload_context: Option<&[u8]>,
     ) -> Result<VerifiedSector, ProofError> {
-        let verifier = self.verifiers.get(system).ok_or_else(|| {
-            ProofError::VerifierKeyNotFound {
-                program_id: format!("{system:?}"),
-            }
-        })?;
+        let verifier =
+            self.verifiers
+                .get(system)
+                .ok_or_else(|| ProofError::VerifierKeyNotFound {
+                    program_id: format!("{system:?}"),
+                })?;
         verifier.verify(cid, program_id, version, proof, payload_context)
     }
 

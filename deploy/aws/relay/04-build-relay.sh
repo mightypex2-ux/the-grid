@@ -31,6 +31,15 @@ fi
 
 sudo mkdir -p "${RELAY_BUILD_DIR}"
 sudo chown "\${USER}":"\${USER}" "${RELAY_BUILD_DIR}"
+sudo mkdir -p "${ZID_BUILD_DIR}"
+sudo chown "\${USER}":"\${USER}" "${ZID_BUILD_DIR}"
+
+if [[ -d "${ZID_BUILD_DIR}/.git" ]]; then
+  git -C "${ZID_BUILD_DIR}" fetch --depth 1 origin "${ZID_REPO_REF}"
+  git -C "${ZID_BUILD_DIR}" checkout -f FETCH_HEAD
+else
+  git clone --depth 1 --branch "${ZID_REPO_REF}" "${ZID_REPO_URL}" "${ZID_BUILD_DIR}"
+fi
 
 if [[ -d "${RELAY_BUILD_DIR}/.git" ]]; then
   git -C "${RELAY_BUILD_DIR}" fetch --depth 1 origin "${GRID_REPO_REF}"

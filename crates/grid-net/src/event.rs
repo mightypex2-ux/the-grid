@@ -1,6 +1,6 @@
+use grid_core::{SectorRequest, SectorResponse};
 use libp2p::request_response::{OutboundRequestId, ResponseChannel};
 use libp2p::Multiaddr;
-use grid_core::{SectorRequest, SectorResponse};
 
 use crate::ZodeId;
 

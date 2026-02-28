@@ -2,22 +2,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui;
+use grid_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
+use grid_crypto::SectorKey;
+use grid_programs_interlink::interlink::{
+    ChannelId, InterlinkDescriptor, ZMessage, TEST_CHANNEL_ID,
+};
+use grid_proof_groth16::Groth16ShapeProver;
+use grid_storage::SectorStore;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use tracing::info;
 use zid::MachineKeyCapabilities;
-use grid_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
-use grid_crypto::SectorKey;
-use grid_proof_groth16::Groth16ShapeProver;
-use grid_programs_interlink::interlink::{ChannelId, InterlinkDescriptor, ZMessage, TEST_CHANNEL_ID};
-use grid_storage::SectorStore;
 
 use crate::app::ZodeApp;
 use crate::components::{
     error_label, field_label, info_grid, kv_row, section, std_button, text_input,
 };
 use crate::helpers::format_timestamp_ms;
-use crate::state::{InterlinkState, InterlinkUpdate, DisplayMessage, SignatureStatus};
+use crate::state::{DisplayMessage, InterlinkState, InterlinkUpdate, SignatureStatus};
 
 fn derive_test_sector_key() -> SectorKey {
     let hk = Hkdf::<Sha256>::new(None, b"interlink-main-channel-v1");
@@ -481,8 +483,9 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
         ui.label(egui::RichText::new(format!("{name}:")).monospace().strong());
         ui.label(&msg.content);
 
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            match msg.signature_status {
+        ui.with_layout(
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| match msg.signature_status {
                 SignatureStatus::Verified => {
                     let size = 14.0;
                     let (resp, painter) =
@@ -513,8 +516,8 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
                     );
                 }
                 SignatureStatus::None => {}
-            }
-        });
+            },
+        );
     });
 }
 
@@ -525,8 +528,7 @@ fn render_interlink_compose(app: &mut ZodeApp, ui: &mut egui::Ui) {
         let should_focus = il.focus_compose;
         il.focus_compose = false;
         let resp = ui.add(
-            text_input(&mut il.compose, ui.available_width() - 70.0)
-                .hint_text("Type a message..."),
+            text_input(&mut il.compose, ui.available_width() - 70.0).hint_text("Type a message..."),
         );
         if should_focus {
             resp.request_focus();

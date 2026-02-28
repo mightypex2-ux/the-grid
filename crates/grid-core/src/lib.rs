@@ -6,14 +6,14 @@ mod error;
 mod field_schema;
 mod program_descriptor;
 mod program_id;
+mod program_topic;
 mod sector_id;
 mod sector_protocol;
-mod program_topic;
 mod util;
 
 pub use cbor::{decode_canonical, encode_canonical};
 pub use cid::Cid;
-pub use error::{ErrorCode, SectorStoreError, GridError};
+pub use error::{ErrorCode, GridError, SectorStoreError};
 pub use field_schema::{CborType, FieldDef, FieldSchema, ProofSystem};
 pub use program_descriptor::ProgramDescriptor;
 pub use program_id::ProgramId;

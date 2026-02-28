@@ -48,6 +48,6 @@ bash 06-verify.sh
 - State is written to `.state` in this directory.
 - `EC2_VPC_ID`, `EC2_SUBNET_ID`, and `EC2_AMI_ID` auto-resolve when omitted.
 - If key settings are omitted, stage 03 creates a temporary EC2 key pair and stores path in `.state`.
-- `04-build-relay.sh` clones from `https://github.com/cypher-asi/the-grid` on the Ubuntu host and builds there.
+- `04-build-relay.sh` clones `zid` to `/opt/zid` and `the-grid` to `/opt/the-grid` on the Ubuntu host, then builds there.
 - `05-deploy-service.sh` installs a `systemd` service named `grid-relayd` using the host-built binary.
 - Make scripts executable if needed: `chmod +x *.sh`.

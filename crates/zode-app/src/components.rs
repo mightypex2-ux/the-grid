@@ -228,11 +228,15 @@ pub(crate) fn error_label(ui: &mut egui::Ui, text: &str) {
 fn square_icon_button(ui: &mut egui::Ui, icon: &str) -> bool {
     let size = egui::vec2(WIDGET_HEIGHT, WIDGET_HEIGHT);
     ui.add(
-        egui::Button::new(egui::RichText::new(icon).size(ICON_SIZE).color(egui::Color32::WHITE))
-            .fill(egui::Color32::BLACK)
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(55, 55, 60)))
-            .rounding(0.0)
-            .min_size(size),
+        egui::Button::new(
+            egui::RichText::new(icon)
+                .size(ICON_SIZE)
+                .color(egui::Color32::WHITE),
+        )
+        .fill(egui::Color32::BLACK)
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(55, 55, 60)))
+        .rounding(0.0)
+        .min_size(size),
     )
     .clicked()
 }

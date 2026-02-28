@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tracing::warn;
 use grid_core::{
     Cid, ErrorCode, GossipSectorAppend, ProgramId, ProofSystem, SectorAppendRequest,
     SectorAppendResponse, SectorAppendResult, SectorBatchAppendEntry, SectorBatchAppendRequest,
@@ -12,6 +11,7 @@ use grid_core::{
 };
 use grid_proof::ProofVerifierRegistry;
 use grid_storage::{SectorStore, StorageError};
+use tracing::warn;
 
 use crate::config::{SectorFilter, SectorLimitsConfig};
 use crate::metrics::ZodeMetrics;
@@ -102,12 +102,9 @@ impl<S: SectorStore> SectorRequestHandler<S> {
                 if let Some(ref proof) = req.shape_proof {
                     let mut buf = Vec::new();
                     if ciborium::into_writer(proof, &mut buf).is_ok() {
-                        let _ = self.storage.store_proof(
-                            &req.program_id,
-                            &req.sector_id,
-                            index,
-                            &buf,
-                        );
+                        let _ =
+                            self.storage
+                                .store_proof(&req.program_id, &req.sector_id, index, &buf);
                     }
                 }
                 SectorAppendResponse {
@@ -209,12 +206,7 @@ impl<S: SectorStore> SectorRequestHandler<S> {
                 if let Some(ref proof) = entry.shape_proof {
                     let mut buf = Vec::new();
                     if ciborium::into_writer(proof, &mut buf).is_ok() {
-                        let _ = self.storage.store_proof(
-                            pid,
-                            &entry.sector_id,
-                            index,
-                            &buf,
-                        );
+                        let _ = self.storage.store_proof(pid, &entry.sector_id, index, &buf);
                     }
                 }
                 SectorAppendResult {
@@ -298,9 +290,7 @@ impl<S: SectorStore> SectorRequestHandler<S> {
                 self.store_proof_if_present(msg);
                 GossipAppendResult::Stored
             }
-            Ok(false) => {
-                self.handle_index_conflict(msg)
-            }
+            Ok(false) => self.handle_index_conflict(msg),
             Err(e) => {
                 warn!(error = %e, "gossip append store failed");
                 GossipAppendResult::Rejected(GossipRejectReason::StorageError {
@@ -314,10 +304,7 @@ impl<S: SectorStore> SectorRequestHandler<S> {
     /// that index is identical (true duplicate from gossip retry) or a
     /// different message (multi-writer index conflict). On conflict, fall
     /// back to `append()` so the message is not lost.
-    fn handle_index_conflict(
-        &self,
-        msg: &GossipSectorAppend,
-    ) -> crate::types::GossipAppendResult {
+    fn handle_index_conflict(&self, msg: &GossipSectorAppend) -> crate::types::GossipAppendResult {
         use crate::types::{GossipAppendResult, GossipRejectReason};
 
         let existing = self
@@ -355,12 +342,9 @@ impl<S: SectorStore> SectorRequestHandler<S> {
         if let Some(ref proof) = msg.shape_proof {
             let mut buf = Vec::new();
             if ciborium::into_writer(proof, &mut buf).is_ok() {
-                let _ = self.storage.store_proof(
-                    &msg.program_id,
-                    &msg.sector_id,
-                    index,
-                    &buf,
-                );
+                let _ = self
+                    .storage
+                    .store_proof(&msg.program_id, &msg.sector_id, index, &buf);
             }
         }
     }
