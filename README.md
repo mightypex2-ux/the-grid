@@ -55,6 +55,7 @@ Two ZODE applications ship in this workspace:
 
 - **zode-app** — a standalone desktop GUI built with eframe / egui.
 - **zode-cli** — a console TUI built with ratatui / crossterm.
+- **grid-relayd** — a standalone public relay service for relay-first NAT connectivity.
 
 See [Run a ZODE](docs/run-a-zode.md) for prerequisites, build instructions, and configuration.
 
@@ -84,6 +85,7 @@ See [Run a ZODE](docs/run-a-zode.md) for prerequisites, build instructions, and 
 | `grid-programs/zfs` | ZFS file-system program (placeholder) |
 | `zode-app` | Standalone desktop GUI for the Zode |
 | `zode-cli` | Console TUI for the Zode |
+| `grid-relayd` | Public relay service for NAT-restricted peers |
 
 ## Project Structure
 
@@ -102,6 +104,7 @@ zfs/
     zode/                 # core node logic
     zode-app/             # desktop GUI (eframe/egui)
     zode-cli/             # console TUI (ratatui/crossterm)
+    grid-relayd/          # standalone relay service
     grid-programs/
       zid/                # Zero Identity program
       interlink/          # chat program

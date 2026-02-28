@@ -74,6 +74,8 @@ Key flags:
 | `--data-dir` | `.zode/data` | RocksDB storage directory |
 | `--listen` | `/ip4/0.0.0.0/udp/3690/quic-v1` | libp2p listen multiaddr |
 | `--bootstrap <ADDR>` | *(none)* | Bootstrap peer multiaddr (repeatable) |
+| `--enable-relay` | off | Enable relay transport for NAT-restricted nodes |
+| `--relay <ADDR>` | *(none)* | Public relay multiaddr (repeatable) |
 | `--enable-kademlia` | off | Enable Kademlia DHT peer discovery |
 | `--kademlia-mode` | `server` | `server` for Zodes, `client` for SDK clients |
 | `--no-zid` | off | Disable the ZID program |
@@ -153,6 +155,46 @@ The `ZodeConfig` struct (in `crates/zode/src/config.rs`) controls node behavior:
 | Variable | Description |
 |---|---|
 | `RUST_LOG` | Controls tracing verbosity (e.g. `info`, `debug`, `warn`, `zode=debug,grid_net=trace`) |
+
+### Relay-First NAT Connectivity
+
+Run a public relay service:
+
+```sh
+cargo run -p grid-relayd -- --listen /ip4/0.0.0.0/tcp/3691
+```
+
+Configure a Zode to use that relay:
+
+```sh
+cargo run -p zode-cli -- \
+  --enable-relay \
+  --relay /ip4/<relay-public-ip>/tcp/3691/p2p/<relay-peer-id> \
+  --bootstrap /ip4/<bootstrap-ip>/udp/3690/quic-v1/p2p/<bootstrap-peer-id>
+```
+
+Relay service env vars (`CLI > env` precedence):
+
+| Variable | Description |
+|---|---|
+| `GRID_RELAY_LISTEN` | Relay listen multiaddr |
+| `GRID_RELAY_LOG` | Relay log filter (fallback to `RUST_LOG`) |
+| `GRID_RELAY_MAX_RESERVATIONS` | Optional reservation limit (parsed and validated) |
+| `GRID_RELAY_MAX_CIRCUITS` | Optional circuit limit (parsed and validated) |
+
+Example systemd-style environment:
+
+```sh
+GRID_RELAY_LISTEN=/ip4/0.0.0.0/tcp/3691
+GRID_RELAY_LOG=info
+GRID_RELAY_MAX_RESERVATIONS=256
+GRID_RELAY_MAX_CIRCUITS=512
+```
+
+Networking notes:
+
+- Expose the relay TCP port publicly (security groups/firewall).
+- Keep regular Zode bootstrap peers configured; relay is a connectivity fallback path.
 
 ## Running Tests
 
