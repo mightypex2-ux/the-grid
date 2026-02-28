@@ -92,10 +92,11 @@ pub(crate) fn dial_bootstrap_peers(
     for peer_addr in peers {
         if kademlia_enabled {
             if let Some(peer_id) = extract_peer_id(peer_addr) {
+                let normalized = crate::addr::normalize_multiaddr(peer_addr);
                 swarm
                     .behaviour_mut()
                     .kademlia
-                    .add_address(&peer_id, peer_addr.clone());
+                    .add_address(&peer_id, normalized);
                 debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
             }
         }
@@ -114,10 +115,11 @@ pub(crate) fn dial_relay_peers(
     for relay_addr in peers {
         if kademlia_enabled {
             if let Some(peer_id) = extract_peer_id(relay_addr) {
+                let normalized = crate::addr::normalize_multiaddr(relay_addr);
                 swarm
                     .behaviour_mut()
                     .kademlia
-                    .add_address(&peer_id, relay_addr.clone());
+                    .add_address(&peer_id, normalized);
                 debug!(%peer_id, %relay_addr, "added relay peer to kademlia");
             }
         }

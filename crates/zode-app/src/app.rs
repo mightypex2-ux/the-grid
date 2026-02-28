@@ -104,11 +104,11 @@ impl ZodeApp {
 
     /// Path where the peer cache is stored (next to the settings file).
     fn peer_cache_path(&self) -> std::path::PathBuf {
-        self.settings_file_path()
-            .with_file_name("peer_cache.json")
+        self.settings_file_path().with_file_name("peer_cache.json")
     }
 
     /// Merge previously cached peers into a network config's bootstrap list.
+    /// Sanitizes historical addresses to remove duplicate `/p2p/` segments.
     fn merge_peer_cache(&self, config: &mut zode::ZodeConfig) {
         let path = self.peer_cache_path();
         let cached = crate::settings::load_peer_cache(&path);
@@ -119,9 +119,10 @@ impl ZodeApp {
             let stripped = grid_net::strip_zx_multiaddr(s);
             match stripped.parse::<grid_net::Multiaddr>() {
                 Ok(addr) => {
+                    let sanitized = grid_net::sanitize_dial_addr(&addr);
                     parsed += 1;
-                    if !config.network.bootstrap_peers.contains(&addr) {
-                        config.network.bootstrap_peers.push(addr);
+                    if !config.network.bootstrap_peers.contains(&sanitized) {
+                        config.network.bootstrap_peers.push(sanitized);
                     }
                 }
                 Err(e) => {

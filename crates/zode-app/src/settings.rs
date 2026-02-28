@@ -166,8 +166,7 @@ impl Settings {
     /// Persist current settings to a JSON file.
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create settings dir: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("create settings dir: {e}"))?;
         }
         let json = serde_json::to_string_pretty(&self.to_persisted())
             .map_err(|e| format!("serialize settings: {e}"))?;
@@ -175,10 +174,12 @@ impl Settings {
     }
 
     /// Merge currently connected peers into `known_peers` for next startup.
+    /// Sanitizes addresses to prevent persisting malformed entries.
     pub fn remember_peers(&mut self, connected: &[String]) {
         for peer in connected {
-            if !self.known_peers.contains(peer) {
-                self.known_peers.push(peer.clone());
+            let sanitized = sanitize_peer_string(peer);
+            if !self.known_peers.contains(&sanitized) {
+                self.known_peers.push(sanitized);
             }
         }
         const MAX_KNOWN: usize = 200;
@@ -289,16 +290,30 @@ impl Settings {
             .collect()
     }
 
-    /// Best-effort parse of known peers; silently drops unparseable entries.
+    /// Best-effort parse of known peers; sanitizes duplicate `/p2p/` segments
+    /// and silently drops unparseable entries.
     fn parse_known_peers(&self) -> Vec<grid_net::Multiaddr> {
         self.known_peers
             .iter()
-            .filter_map(|s| grid_net::strip_zx_multiaddr(s).parse().ok())
+            .filter_map(|s| {
+                let addr: grid_net::Multiaddr = grid_net::strip_zx_multiaddr(s).parse().ok()?;
+                Some(grid_net::sanitize_dial_addr(&addr))
+            })
             .collect()
     }
 }
 
 const MAX_CACHED_PEERS: usize = 200;
+
+/// Parse-sanitize-reserialize a peer multiaddr string, removing duplicate
+/// `/p2p/` segments. Returns the original string unchanged if parsing fails.
+fn sanitize_peer_string(s: &str) -> String {
+    let stripped = grid_net::strip_zx_multiaddr(s);
+    match stripped.parse::<grid_net::Multiaddr>() {
+        Ok(addr) => grid_net::sanitize_dial_addr(&addr).to_string(),
+        Err(_) => s.to_string(),
+    }
+}
 
 /// Load peer multiaddrs from a JSON cache file (best-effort).
 pub(crate) fn load_peer_cache(path: &Path) -> Vec<String> {
@@ -309,15 +324,18 @@ pub(crate) fn load_peer_cache(path: &Path) -> Vec<String> {
 }
 
 /// Persist peer multiaddrs to a JSON cache file, capped at [`MAX_CACHED_PEERS`].
+/// Sanitizes addresses before writing to prevent persisting malformed entries.
 pub(crate) fn save_peer_cache(path: &Path, peers: &[String]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create peer cache dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create peer cache dir: {e}"))?;
     }
-    let capped: Vec<&String> = if peers.len() > MAX_CACHED_PEERS {
-        peers[peers.len() - MAX_CACHED_PEERS..].iter().collect()
+    let sanitized: Vec<String> = peers.iter().map(|s| sanitize_peer_string(s)).collect();
+    let capped: Vec<&String> = if sanitized.len() > MAX_CACHED_PEERS {
+        sanitized[sanitized.len() - MAX_CACHED_PEERS..]
+            .iter()
+            .collect()
     } else {
-        peers.iter().collect()
+        sanitized.iter().collect()
     };
     let json =
         serde_json::to_string_pretty(&capped).map_err(|e| format!("serialize peer cache: {e}"))?;

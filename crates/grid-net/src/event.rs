@@ -59,10 +59,7 @@ pub enum NetworkEvent {
     },
 
     /// An outgoing dial/connection attempt failed.
-    ConnectionFailed {
-        peer: Option<ZodeId>,
-        error: String,
-    },
+    ConnectionFailed { peer: Option<ZodeId>, error: String },
 
     /// Kademlia DHT bootstrap started successfully.
     KademliaBootstrapped,

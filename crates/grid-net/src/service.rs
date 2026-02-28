@@ -220,11 +220,7 @@ impl NetworkService {
         self.swarm
             .connected_peers()
             .map(|peer| {
-                let addrs = self
-                    .peer_addresses
-                    .get(peer)
-                    .cloned()
-                    .unwrap_or_default();
+                let addrs = self.peer_addresses.get(peer).cloned().unwrap_or_default();
                 (*peer, addrs)
             })
             .collect()
@@ -319,19 +315,20 @@ impl NetworkService {
                     self.pending_discovery_dials -= 1;
                 }
                 debug!(%peer_id, num = %num_established, "connection established");
-                let addr = endpoint.get_remote_address().clone();
-                self.peer_addresses
-                    .entry(peer_id)
-                    .or_default()
-                    .push(addr.clone());
-                if self.kademlia_enabled {
+                let raw_addr = endpoint.get_remote_address().clone();
+                let normalized = crate::addr::normalize_multiaddr(&raw_addr);
+                let stored = self.peer_addresses.entry(peer_id).or_default();
+                if !stored.contains(&normalized) {
+                    stored.push(normalized.clone());
+                }
+                if self.kademlia_enabled && crate::addr::is_globally_routable(&normalized) {
                     self.swarm
                         .behaviour_mut()
                         .kademlia
-                        .add_address(&peer_id, addr.clone());
+                        .add_address(&peer_id, normalized);
                 }
 
-                self.try_start_relay_listeners(&peer_id, &addr);
+                self.try_start_relay_listeners(&peer_id, &raw_addr);
                 self.try_kademlia_bootstrap();
 
                 (num_established.get() == 1).then(|| NetworkEvent::PeerConnected(peer_id))
@@ -354,11 +351,7 @@ impl NetworkService {
                 info!(%address, "listening");
                 Some(NetworkEvent::ListenAddress(address))
             }
-            SwarmEvent::OutgoingConnectionError {
-                peer_id,
-                error,
-                ..
-            } => {
+            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 warn!(
                     peer_id = ?peer_id,
                     error = %error,
@@ -384,10 +377,7 @@ impl NetworkService {
         }
 
         let remote_transport = strip_p2p(remote_addr);
-        let is_relay = self
-            .relay_transport_addrs
-            .iter()
-            .any(|ra| *ra == remote_transport);
+        let is_relay = self.relay_transport_addrs.contains(&remote_transport);
 
         if !is_relay {
             debug!(
@@ -409,17 +399,14 @@ impl NetworkService {
                 info!(%circuit_addr, "listening via relay circuit");
                 self.active_relay_listeners.insert(*connected_peer);
                 self.pending_relay_events
-                    .push(NetworkEvent::RelayListening {
-                        circuit_addr,
-                    });
+                    .push(NetworkEvent::RelayListening { circuit_addr });
             }
             Err(e) => {
                 warn!(%circuit_addr, error = %e, "failed to listen on relay circuit");
-                self.pending_relay_events
-                    .push(NetworkEvent::RelayFailed {
-                        circuit_addr,
-                        error: e.to_string(),
-                    });
+                self.pending_relay_events.push(NetworkEvent::RelayFailed {
+                    circuit_addr,
+                    error: e.to_string(),
+                });
             }
         }
     }
@@ -469,10 +456,11 @@ impl NetworkService {
         }
 
         for addr in addrs {
+            let normalized = crate::addr::normalize_multiaddr(addr);
             self.swarm
                 .behaviour_mut()
                 .kademlia
-                .add_address(peer_id, addr.clone());
+                .add_address(peer_id, normalized);
         }
 
         for base in &self.relay_circuit_bases {
@@ -512,11 +500,7 @@ impl NetworkService {
     fn map_identify_event(&mut self, event: identify::Event) -> Option<NetworkEvent> {
         match event {
             identify::Event::Received { peer_id, info, .. } => {
-                let listen_addrs = self.ingest_identify_info(
-                    peer_id,
-                    info,
-                    "identify received",
-                );
+                let listen_addrs = self.ingest_identify_info(peer_id, info, "identify received");
                 if self.discovered_peers.insert(peer_id) {
                     self.try_discovery_dial(&peer_id, &listen_addrs);
                     Some(NetworkEvent::PeerDiscovered {
@@ -557,21 +541,27 @@ impl NetworkService {
             "{log_message}"
         );
 
-        self.swarm.add_external_address(info.observed_addr);
+        if crate::addr::is_globally_routable(&info.observed_addr) {
+            self.swarm.add_external_address(info.observed_addr);
+        }
 
         if self.kademlia_enabled {
             for addr in &listen_addrs {
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, addr.clone());
+                let normalized = crate::addr::normalize_multiaddr(addr);
+                if crate::addr::is_globally_routable(&normalized) {
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, normalized);
+                }
             }
         }
 
         let stored = self.peer_addresses.entry(peer_id).or_default();
         for a in &listen_addrs {
-            if !stored.contains(a) {
-                stored.push(a.clone());
+            let normalized = crate::addr::normalize_multiaddr(a);
+            if !stored.contains(&normalized) {
+                stored.push(normalized);
             }
         }
 
@@ -629,7 +619,10 @@ impl NetworkService {
             kad::Event::RoutingUpdated {
                 peer, addresses, ..
             } => {
-                let addrs: Vec<Multiaddr> = addresses.iter().cloned().collect();
+                let addrs: Vec<Multiaddr> = addresses
+                    .iter()
+                    .map(crate::addr::normalize_multiaddr)
+                    .collect();
                 let stored = self.peer_addresses.entry(peer).or_default();
                 for a in &addrs {
                     if !stored.contains(a) {
@@ -676,7 +669,11 @@ impl NetworkService {
         let mut first_new_peer = None;
         for peer in &ok.peers {
             let peer_id = peer.peer_id;
-            let addrs: Vec<Multiaddr> = peer.addrs.clone();
+            let addrs: Vec<Multiaddr> = peer
+                .addrs
+                .iter()
+                .map(crate::addr::normalize_multiaddr)
+                .collect();
             let stored = self.peer_addresses.entry(peer_id).or_default();
             for a in &addrs {
                 if !stored.contains(a) {
@@ -697,11 +694,6 @@ impl NetworkService {
     }
 }
 
-/// Strip any trailing `/p2p/<peer_id>` component from a multiaddr so only
-/// the transport portion remains. Used to compare relay addresses regardless
-/// of whether they were configured with or without an explicit peer ID.
 fn strip_p2p(addr: &Multiaddr) -> Multiaddr {
-    addr.iter()
-        .filter(|p| !matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
-        .collect()
+    crate::addr::strip_all_p2p(addr)
 }

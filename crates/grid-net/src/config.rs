@@ -56,21 +56,12 @@ pub const DEFAULT_RELAY_PEER: &str =
     "/ip4/3.129.15.45/tcp/3691/p2p/12D3KooWHvyFJm77ZAUR7DzAhRCjyhGgcwNxhQAoCptScBhQCs2b";
 
 /// Relay transport configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RelayConfig {
     /// Enable relay transport support.
     pub enabled: bool,
     /// Relay peers to dial on startup.
     pub relay_peers: Vec<Multiaddr>,
-}
-
-impl Default for RelayConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            relay_peers: Vec::new(),
-        }
-    }
 }
 
 impl Default for DiscoveryConfig {

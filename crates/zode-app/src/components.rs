@@ -150,7 +150,8 @@ pub(crate) fn title_bar_icon(ui: &mut egui::Ui, icon: &str, active: bool) -> egu
     let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
     let vis = ui.style().interact_selectable(&resp, active);
     if !active && resp.hovered() {
-        ui.painter().rect_filled(rect, vis.corner_radius, vis.bg_fill);
+        ui.painter()
+            .rect_filled(rect, vis.corner_radius, vis.bg_fill);
     }
     let text_color = if active {
         egui::Color32::WHITE

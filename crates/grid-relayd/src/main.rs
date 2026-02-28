@@ -118,11 +118,8 @@ async fn main() -> Result<()> {
             RelayBehaviour {
                 relay: relay::Behaviour::new(peer_id, Default::default()),
                 identify: identify::Behaviour::new(
-                    identify::Config::new(
-                        GRID_IDENTIFY_PROTOCOL.to_string(),
-                        key.public(),
-                    )
-                    .with_push_listen_addr_updates(true),
+                    identify::Config::new(GRID_IDENTIFY_PROTOCOL.to_string(), key.public())
+                        .with_push_listen_addr_updates(true),
                 ),
                 kademlia,
                 ping: ping::Behaviour::new(ping::Config::new()),
@@ -159,10 +156,13 @@ async fn main() -> Result<()> {
                     direction = ?endpoint,
                     "peer connected"
                 );
-                swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, addr);
+                let normalized = normalize_multiaddr(&addr);
+                if is_globally_routable(&normalized) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, normalized);
+                }
                 connected_peer_ids.insert(peer_id);
                 for ext_addr in &relay_external_addrs {
                     let circuit = strip_p2p_suffix(ext_addr)
@@ -193,124 +193,118 @@ async fn main() -> Result<()> {
                     "peer disconnected"
                 );
             }
-            Some(SwarmEvent::OutgoingConnectionError {
-                peer_id, error, ..
-            }) => {
+            Some(SwarmEvent::OutgoingConnectionError { peer_id, error, .. }) => {
                 warn!(
                     peer_id = ?peer_id,
                     error = %error,
                     "outgoing connection failed"
                 );
             }
-            Some(SwarmEvent::Behaviour(event)) => {
-                match event {
-                    RelayBehaviourEvent::Identify(identify::Event::Received {
-                        peer_id,
-                        info,
-                        ..
-                    }) => {
-                        info!(
-                            %peer_id,
-                            listen_addrs = ?info.listen_addrs,
-                            observed = %info.observed_addr,
-                            protocols = ?info.protocols,
-                            "identify received"
-                        );
-                        ingest_identify_update(&mut swarm, &peer_id, &info);
-                        ingest_circuit_addrs(
-                            &mut swarm,
-                            &peer_id,
-                            &info.observed_addr,
-                            local_peer_id,
-                            &mut relay_external_addrs,
-                            &connected_peer_ids,
-                        );
-                    }
-                    RelayBehaviourEvent::Identify(identify::Event::Pushed {
-                        peer_id,
-                        info,
-                        ..
-                    }) => {
-                        debug!(
-                            %peer_id,
-                            listen_addrs = ?info.listen_addrs,
-                            observed = %info.observed_addr,
-                            "identify pushed"
-                        );
-                        ingest_identify_update(&mut swarm, &peer_id, &info);
-                        ingest_circuit_addrs(
-                            &mut swarm,
-                            &peer_id,
-                            &info.observed_addr,
-                            local_peer_id,
-                            &mut relay_external_addrs,
-                            &connected_peer_ids,
-                        );
-                    }
-                    RelayBehaviourEvent::Identify(ref ev) => {
-                        debug!(?ev, "identify event");
-                    }
-                    RelayBehaviourEvent::Relay(relay::Event::ReservationReqAccepted {
-                        src_peer_id,
-                        ..
-                    }) => {
-                        info!(%src_peer_id, "relay reservation accepted");
-                    }
-                    RelayBehaviourEvent::Relay(relay::Event::ReservationReqDenied {
-                        src_peer_id, ..
-                    }) => {
-                        warn!(%src_peer_id, "relay reservation DENIED");
-                    }
-                    RelayBehaviourEvent::Relay(relay::Event::CircuitReqAccepted {
-                        src_peer_id,
-                        dst_peer_id,
-                        ..
-                    }) => {
-                        info!(
-                            %src_peer_id,
-                            %dst_peer_id,
-                            "relay circuit opened"
-                        );
-                    }
-                    RelayBehaviourEvent::Relay(relay::Event::CircuitReqDenied {
-                        src_peer_id,
-                        dst_peer_id, ..
-                    }) => {
-                        warn!(
-                            %src_peer_id,
-                            %dst_peer_id,
-                            "relay circuit DENIED"
-                        );
-                    }
-                    RelayBehaviourEvent::Relay(ref ev) => {
-                        debug!(?ev, "relay event");
-                    }
-                    RelayBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
-                        peer,
-                        ref addresses,
-                        ..
-                    }) => {
-                        let addrs: Vec<_> = addresses.iter().collect();
-                        debug!(
-                            %peer,
-                            addresses = ?addrs,
-                            "kademlia routing updated"
-                        );
-                    }
-                    RelayBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
-                        ref result,
-                        ..
-                    }) => {
-                        debug!(?result, "kademlia query progressed");
-                    }
-                    RelayBehaviourEvent::Kademlia(ref ev) => {
-                        debug!(?ev, "kademlia event");
-                    }
-                    RelayBehaviourEvent::Ping(ref ev) => {
-                        debug!(?ev, "ping event");
-                    }
+            Some(SwarmEvent::Behaviour(event)) => match event {
+                RelayBehaviourEvent::Identify(identify::Event::Received {
+                    peer_id, info, ..
+                }) => {
+                    info!(
+                        %peer_id,
+                        listen_addrs = ?info.listen_addrs,
+                        observed = %info.observed_addr,
+                        protocols = ?info.protocols,
+                        "identify received"
+                    );
+                    ingest_identify_update(&mut swarm, &peer_id, &info);
+                    ingest_circuit_addrs(
+                        &mut swarm,
+                        &peer_id,
+                        &info.observed_addr,
+                        local_peer_id,
+                        &mut relay_external_addrs,
+                        &connected_peer_ids,
+                    );
                 }
-            }
+                RelayBehaviourEvent::Identify(identify::Event::Pushed {
+                    peer_id, info, ..
+                }) => {
+                    debug!(
+                        %peer_id,
+                        listen_addrs = ?info.listen_addrs,
+                        observed = %info.observed_addr,
+                        "identify pushed"
+                    );
+                    ingest_identify_update(&mut swarm, &peer_id, &info);
+                    ingest_circuit_addrs(
+                        &mut swarm,
+                        &peer_id,
+                        &info.observed_addr,
+                        local_peer_id,
+                        &mut relay_external_addrs,
+                        &connected_peer_ids,
+                    );
+                }
+                RelayBehaviourEvent::Identify(ref ev) => {
+                    debug!(?ev, "identify event");
+                }
+                RelayBehaviourEvent::Relay(relay::Event::ReservationReqAccepted {
+                    src_peer_id,
+                    ..
+                }) => {
+                    info!(%src_peer_id, "relay reservation accepted");
+                }
+                RelayBehaviourEvent::Relay(relay::Event::ReservationReqDenied {
+                    src_peer_id,
+                    ..
+                }) => {
+                    warn!(%src_peer_id, "relay reservation DENIED");
+                }
+                RelayBehaviourEvent::Relay(relay::Event::CircuitReqAccepted {
+                    src_peer_id,
+                    dst_peer_id,
+                    ..
+                }) => {
+                    info!(
+                        %src_peer_id,
+                        %dst_peer_id,
+                        "relay circuit opened"
+                    );
+                }
+                RelayBehaviourEvent::Relay(relay::Event::CircuitReqDenied {
+                    src_peer_id,
+                    dst_peer_id,
+                    ..
+                }) => {
+                    warn!(
+                        %src_peer_id,
+                        %dst_peer_id,
+                        "relay circuit DENIED"
+                    );
+                }
+                RelayBehaviourEvent::Relay(ref ev) => {
+                    debug!(?ev, "relay event");
+                }
+                RelayBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
+                    peer,
+                    ref addresses,
+                    ..
+                }) => {
+                    let addrs: Vec<_> = addresses.iter().collect();
+                    debug!(
+                        %peer,
+                        addresses = ?addrs,
+                        "kademlia routing updated"
+                    );
+                }
+                RelayBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
+                    ref result,
+                    ..
+                }) => {
+                    debug!(?result, "kademlia query progressed");
+                }
+                RelayBehaviourEvent::Kademlia(ref ev) => {
+                    debug!(?ev, "kademlia event");
+                }
+                RelayBehaviourEvent::Ping(ref ev) => {
+                    debug!(?ev, "ping event");
+                }
+            },
             Some(SwarmEvent::IncomingConnectionError {
                 send_back_addr,
                 error,
@@ -394,6 +388,84 @@ fn strip_p2p_suffix(addr: &Multiaddr) -> Multiaddr {
         .collect()
 }
 
+/// Normalize a multiaddr for Kademlia storage.
+///
+/// Direct addresses: strip all `/p2p/` segments (Kademlia stores peer ID
+/// separately). Circuit addresses: rebuild canonical
+/// `<transport>/p2p/<relay>/p2p-circuit/p2p/<dest>` form.
+fn normalize_multiaddr(addr: &Multiaddr) -> Multiaddr {
+    use libp2p::multiaddr::Protocol;
+
+    let has_circuit = addr.iter().any(|p| matches!(p, Protocol::P2pCircuit));
+
+    if !has_circuit {
+        return strip_p2p_suffix(addr);
+    }
+
+    let mut transport = Multiaddr::empty();
+    let mut relay_peer = None;
+    let mut dest_peer = None;
+    let mut past_circuit = false;
+
+    for proto in addr.iter() {
+        if matches!(&proto, Protocol::P2pCircuit) {
+            past_circuit = true;
+            continue;
+        }
+        if let Protocol::P2p(ref peer) = proto {
+            if past_circuit {
+                if dest_peer.is_none() {
+                    dest_peer = Some(*peer);
+                }
+            } else {
+                relay_peer = Some(*peer);
+            }
+            continue;
+        }
+        if !past_circuit {
+            transport = transport.with(proto);
+        }
+    }
+
+    let mut result = transport;
+    if let Some(relay) = relay_peer {
+        result = result.with(Protocol::P2p(relay));
+    }
+    result = result.with(Protocol::P2pCircuit);
+    if let Some(dest) = dest_peer {
+        result = result.with(Protocol::P2p(dest));
+    }
+    result
+}
+
+/// Returns true when every IP in the multiaddr is globally routable
+/// (not loopback, private, link-local, or unspecified).
+fn is_globally_routable(addr: &Multiaddr) -> bool {
+    use libp2p::multiaddr::Protocol;
+
+    for proto in addr.iter() {
+        match proto {
+            Protocol::Ip4(ip) => {
+                if ip.is_loopback()
+                    || ip.is_private()
+                    || ip.is_link_local()
+                    || ip.is_unspecified()
+                    || ip.is_broadcast()
+                {
+                    return false;
+                }
+            }
+            Protocol::Ip6(ip) => {
+                if ip.is_loopback() || ip.is_unspecified() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
 fn load_or_generate_keypair(path: &std::path::Path) -> Result<libp2p::identity::Keypair> {
     if path.exists() {
         let bytes = std::fs::read(path)
@@ -429,13 +501,18 @@ fn ingest_identify_update(
         listen_addrs = info.listen_addrs.len(),
         "ingesting identify: adding external addr + kademlia entries"
     );
-    swarm.add_external_address(info.observed_addr.clone());
+    if is_globally_routable(&info.observed_addr) {
+        swarm.add_external_address(info.observed_addr.clone());
+    }
     for addr in &info.listen_addrs {
-        debug!(%peer_id, %addr, "adding peer listen addr to kademlia");
-        swarm
-            .behaviour_mut()
-            .kademlia
-            .add_address(peer_id, addr.clone());
+        let normalized = normalize_multiaddr(addr);
+        if is_globally_routable(&normalized) {
+            debug!(%peer_id, %normalized, "adding peer listen addr to kademlia");
+            swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(peer_id, normalized);
+        }
     }
 }
 
@@ -452,6 +529,14 @@ fn ingest_circuit_addrs(
     relay_external_addrs: &mut Vec<Multiaddr>,
     connected_peer_ids: &HashSet<PeerId>,
 ) {
+    if !is_globally_routable(observed_addr) {
+        debug!(
+            %observed_addr,
+            "ignoring non-routable observed address for circuit registration"
+        );
+        return;
+    }
+
     let is_new_ext = !relay_external_addrs.contains(observed_addr);
     if is_new_ext {
         info!(
@@ -472,10 +557,7 @@ fn ingest_circuit_addrs(
             %circuit,
             "adding circuit addr to kademlia for peer"
         );
-        swarm
-            .behaviour_mut()
-            .kademlia
-            .add_address(peer_id, circuit);
+        swarm.behaviour_mut().kademlia.add_address(peer_id, circuit);
     }
 
     if is_new_ext {
