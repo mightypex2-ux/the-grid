@@ -8,4 +8,5 @@ pub(crate) struct GridBehaviour {
     pub(crate) kademlia: libp2p::kad::Behaviour<libp2p::kad::store::MemoryStore>,
     pub(crate) relay: libp2p::relay::client::Behaviour,
     pub(crate) identify: libp2p::identify::Behaviour,
+    pub(crate) ping: libp2p::ping::Behaviour,
 }

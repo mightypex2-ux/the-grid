@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use libp2p::{gossipsub, identify, kad, request_response, Multiaddr, PeerId, StreamProtocol};
+use libp2p::{gossipsub, identify, kad, ping, request_response, Multiaddr, PeerId, StreamProtocol};
 use tracing::debug;
 
 use crate::behaviour::GridBehaviour;
@@ -43,7 +43,7 @@ pub(crate) fn build_swarm(
         .map_err(|e| NetworkError::Transport(format!("{e}")))?
         .with_behaviour(|key, relay| build_behaviour(key, gossipsub_config, relay))
         .map_err(|e| NetworkError::Transport(format!("{e}")))?
-        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(7200)))
         .build();
     Ok((swarm, kp))
 }
@@ -75,12 +75,16 @@ fn build_behaviour(
         identify::Config::new(GRID_IDENTIFY_PROTOCOL.to_string(), key.public())
             .with_push_listen_addr_updates(true),
     );
+    let ping = ping::Behaviour::new(
+        ping::Config::new().with_interval(Duration::from_secs(15)),
+    );
     Ok(GridBehaviour {
         gossipsub,
         sector_rr,
         kademlia,
         relay,
         identify,
+        ping,
     })
 }
 

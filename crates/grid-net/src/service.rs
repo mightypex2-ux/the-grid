@@ -40,6 +40,8 @@ pub struct NetworkService {
     /// Pre-computed relay circuit base addresses derived from relay config,
     /// used to speculatively construct circuit-routed paths for discovered peers.
     relay_circuit_bases: Vec<Multiaddr>,
+    /// Original relay peer multiaddrs from config, kept for reconnection.
+    relay_addrs: Vec<Multiaddr>,
     /// Events queued by helper methods (relay listeners, kademlia bootstrap)
     /// that must be returned from the next `next_event` call.
     pending_relay_events: Vec<NetworkEvent>,
@@ -94,6 +96,12 @@ impl NetworkService {
                 "relay dialing configured"
             );
         }
+
+        let relay_addrs: Vec<Multiaddr> = if relay_enabled {
+            config.relay.relay_peers.clone()
+        } else {
+            Vec::new()
+        };
 
         let relay_circuit_bases: Vec<Multiaddr> = if relay_enabled {
             config
@@ -150,6 +158,7 @@ impl NetworkService {
             relay_peer_ids,
             active_relay_listeners: HashSet::new(),
             relay_circuit_bases,
+            relay_addrs,
             pending_relay_events: Vec::new(),
             dial_backoff: HashMap::new(),
             dial_backoff_duration,
@@ -365,6 +374,7 @@ impl NetworkService {
                     self.active_relay_listeners.remove(&peer_id);
                     self.discovered_peers.remove(&peer_id);
                     self.peer_addresses.remove(&peer_id);
+                    self.try_reconnect_relay(&peer_id);
                 }
                 (num_established == 0).then(|| NetworkEvent::PeerDisconnected(peer_id))
             }
@@ -452,6 +462,26 @@ impl NetworkService {
                     circuit_addr,
                     error: e.to_string(),
                 });
+            }
+        }
+    }
+
+    /// If the disconnected peer is a configured relay, attempt to reconnect
+    /// so the relay circuit listener can be re-established.
+    fn try_reconnect_relay(&mut self, disconnected_peer: &PeerId) {
+        if !self.relay_peer_ids.contains(disconnected_peer) {
+            return;
+        }
+        for addr in &self.relay_addrs {
+            if extract_peer_id(addr).as_ref() == Some(disconnected_peer) {
+                info!(%disconnected_peer, %addr, "relay disconnected, attempting reconnect");
+                match self.swarm.dial(addr.clone()) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        warn!(%disconnected_peer, error = %e, "failed to reconnect to relay");
+                    }
+                }
+                return;
             }
         }
     }
@@ -591,6 +621,7 @@ impl NetworkService {
             GridBehaviourEvent::Kademlia(ev) => self.map_kademlia_event(ev),
             GridBehaviourEvent::Relay(ev) => self.map_relay_event(ev),
             GridBehaviourEvent::Identify(ev) => self.map_identify_event(ev),
+            GridBehaviourEvent::Ping(_) => None,
         }
     }
 

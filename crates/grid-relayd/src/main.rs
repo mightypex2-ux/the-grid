@@ -90,10 +90,6 @@ async fn main() -> Result<()> {
         "starting grid-relayd"
     );
 
-    if config.max_reservations.is_some() || config.max_circuits.is_some() {
-        warn!("relay limits are parsed but not currently applied to libp2p relay config");
-    }
-
     let key = load_or_generate_keypair(&config.key_file)?;
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -115,8 +111,32 @@ async fn main() -> Result<()> {
             let mut kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
             kademlia.set_mode(Some(kad::Mode::Server));
 
+            let mut relay_config = relay::Config::default();
+            relay_config.reservation_duration = Duration::from_secs(60 * 60);
+            relay_config.max_circuit_duration = Duration::from_secs(24 * 60 * 60);
+            relay_config.max_circuit_bytes = 0;
+            if let Some(max_res) = config.max_reservations {
+                relay_config.max_reservations = max_res;
+            }
+            if let Some(max_circ) = config.max_circuits {
+                relay_config.max_circuits = max_circ;
+            } else {
+                relay_config.max_circuits = 512;
+            }
+            relay_config.max_circuits_per_peer = 16;
+
+            info!(
+                max_reservations = relay_config.max_reservations,
+                max_circuits = relay_config.max_circuits,
+                max_circuits_per_peer = relay_config.max_circuits_per_peer,
+                max_circuit_duration = ?relay_config.max_circuit_duration,
+                max_circuit_bytes = relay_config.max_circuit_bytes,
+                reservation_duration = ?relay_config.reservation_duration,
+                "relay config"
+            );
+
             RelayBehaviour {
-                relay: relay::Behaviour::new(peer_id, Default::default()),
+                relay: relay::Behaviour::new(peer_id, relay_config),
                 identify: identify::Behaviour::new(
                     identify::Config::new(GRID_IDENTIFY_PROTOCOL.to_string(), key.public())
                         .with_push_listen_addr_updates(true),
@@ -126,6 +146,7 @@ async fn main() -> Result<()> {
             }
         })
         .context("failed to build relay behaviour")?
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(7200)))
         .build();
 
     let local_peer_id = *swarm.local_peer_id();
