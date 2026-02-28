@@ -14,9 +14,9 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use grid_core::ProgramId;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
-use grid_core::ProgramId;
 use zode::{DefaultProgramsConfig, RpcConfig, Zode, ZodeConfig};
 
 use crate::app::{App, Screen};
@@ -56,6 +56,14 @@ struct Cli {
     /// Disable Kademlia DHT automatic peer discovery.
     #[arg(long)]
     no_kademlia: bool,
+
+    /// Enable relay transport support.
+    #[arg(long)]
+    enable_relay: bool,
+
+    /// Relay peer multiaddrs (repeatable).
+    #[arg(long)]
+    relay: Vec<String>,
 
     /// Kademlia mode: "server" (default, for Zodes) or "client" (for SDK clients).
     #[arg(long, default_value = "server")]
@@ -101,7 +109,8 @@ async fn main() -> Result<()> {
 }
 
 fn build_config(cli: &Cli) -> Result<ZodeConfig> {
-    let listen_addr: grid_net::Multiaddr = cli.listen.parse().context("invalid listen multiaddr")?;
+    let listen_addr: grid_net::Multiaddr =
+        cli.listen.parse().context("invalid listen multiaddr")?;
 
     let bootstrap_peers: Vec<grid_net::Multiaddr> = cli
         .bootstrap
@@ -110,6 +119,16 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
             grid_net::strip_zx_multiaddr(s)
                 .parse()
                 .context("invalid bootstrap multiaddr")
+        })
+        .collect::<Result<_>>()?;
+
+    let relay_peers: Vec<grid_net::Multiaddr> = cli
+        .relay
+        .iter()
+        .map(|s| {
+            grid_net::strip_zx_multiaddr(s)
+                .parse()
+                .context("invalid relay multiaddr")
         })
         .collect::<Result<_>>()?;
 
@@ -133,15 +152,16 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
 
     let network = grid_net::NetworkConfig::new(listen_addr)
         .with_bootstrap_peers(bootstrap_peers)
+        .with_relay(grid_net::RelayConfig {
+            enabled: cli.enable_relay || !relay_peers.is_empty(),
+            relay_peers,
+        })
         .with_discovery(discovery);
 
     let storage = grid_storage::StorageConfig::new(cli.data_dir.clone());
 
     let rpc = if cli.rpc {
-        let bind_addr = cli
-            .rpc_bind
-            .parse()
-            .context("invalid --rpc-bind address")?;
+        let bind_addr = cli.rpc_bind.parse().context("invalid --rpc-bind address")?;
         RpcConfig {
             enabled: true,
             bind_addr,
