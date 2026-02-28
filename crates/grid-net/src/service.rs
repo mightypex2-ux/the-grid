@@ -344,12 +344,31 @@ impl NetworkService {
                 debug!(%peer_id, num = %num_established, "connection closed");
                 if num_established == 0 {
                     self.active_relay_listeners.remove(&peer_id);
+                    self.discovered_peers.remove(&peer_id);
+                    self.peer_addresses.remove(&peer_id);
                 }
                 (num_established == 0).then(|| NetworkEvent::PeerDisconnected(peer_id))
             }
             SwarmEvent::NewListenAddr { address, .. } => {
                 info!(%address, "listening");
                 Some(NetworkEvent::ListenAddress(address))
+            }
+            SwarmEvent::ListenerClosed {
+                addresses, reason, ..
+            } => {
+                let is_relay = addresses.iter().any(|a| {
+                    a.iter()
+                        .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit))
+                });
+                if is_relay {
+                    warn!(
+                        ?addresses,
+                        ?reason,
+                        "relay circuit listener closed, clearing active relay listeners"
+                    );
+                    self.active_relay_listeners.clear();
+                }
+                None
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 warn!(
@@ -489,10 +508,7 @@ impl NetworkService {
             GridBehaviourEvent::Gossipsub(ev) => Self::map_gossip_event(ev),
             GridBehaviourEvent::SectorRr(ev) => Self::map_sector_rr_event(ev),
             GridBehaviourEvent::Kademlia(ev) => self.map_kademlia_event(ev),
-            GridBehaviourEvent::Relay(ev) => {
-                debug!(?ev, "relay event");
-                None
-            }
+            GridBehaviourEvent::Relay(ev) => self.map_relay_event(ev),
             GridBehaviourEvent::Identify(ev) => self.map_identify_event(ev),
         }
     }
@@ -566,6 +582,32 @@ impl NetworkService {
         }
 
         listen_addrs
+    }
+
+    fn map_relay_event(&mut self, event: libp2p::relay::client::Event) -> Option<NetworkEvent> {
+        match event {
+            libp2p::relay::client::Event::ReservationReqAccepted {
+                relay_peer_id,
+                renewal,
+                ..
+            } => {
+                info!(
+                    %relay_peer_id,
+                    renewal,
+                    "relay reservation accepted"
+                );
+                self.active_relay_listeners.insert(relay_peer_id);
+                None
+            }
+            libp2p::relay::client::Event::InboundCircuitEstablished { src_peer_id, .. } => {
+                debug!(%src_peer_id, "inbound circuit established via relay");
+                None
+            }
+            libp2p::relay::client::Event::OutboundCircuitEstablished { relay_peer_id, .. } => {
+                debug!(%relay_peer_id, "outbound circuit established via relay");
+                None
+            }
+        }
     }
 
     fn map_gossip_event(event: gossipsub::Event) -> Option<NetworkEvent> {

@@ -185,13 +185,26 @@ async fn main() -> Result<()> {
                     "peer roster updated"
                 );
             }
-            Some(SwarmEvent::ConnectionClosed { peer_id, .. }) => {
-                connected_peer_ids.remove(&peer_id);
-                info!(
-                    %peer_id,
-                    connected_count = connected_peer_ids.len(),
-                    "peer disconnected"
-                );
+            Some(SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            }) => {
+                if num_established == 0 {
+                    connected_peer_ids.remove(&peer_id);
+                    swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                    info!(
+                        %peer_id,
+                        connected_count = connected_peer_ids.len(),
+                        "peer fully disconnected, removed from kademlia"
+                    );
+                } else {
+                    debug!(
+                        %peer_id,
+                        remaining = num_established,
+                        "connection closed (peer still has other connections)"
+                    );
+                }
             }
             Some(SwarmEvent::OutgoingConnectionError { peer_id, error, .. }) => {
                 warn!(
