@@ -17,6 +17,12 @@
 ### Windows
 
 - [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload (provides MSVC, CMake, and the Windows SDK).
+- **Windows x64 `libclang` requirement (if build fails):** If you see `Unable to find libclang ... set the LIBCLANG_PATH environment variable`, install 64-bit [LLVM](https://llvm.org/) and set `LIBCLANG_PATH` to your LLVM `bin` folder (where `libclang.dll` lives), for example:
+
+```powershell
+$env:LIBCLANG_PATH="C:\Program Files\LLVM\bin"
+setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"
+```
 
 ### macOS
 
