@@ -297,3 +297,29 @@ impl Settings {
             .collect()
     }
 }
+
+const MAX_CACHED_PEERS: usize = 200;
+
+/// Load peer multiaddrs from a JSON cache file (best-effort).
+pub(crate) fn load_peer_cache(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|data| serde_json::from_str::<Vec<String>>(&data).ok())
+        .unwrap_or_default()
+}
+
+/// Persist peer multiaddrs to a JSON cache file, capped at [`MAX_CACHED_PEERS`].
+pub(crate) fn save_peer_cache(path: &Path, peers: &[String]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create peer cache dir: {e}"))?;
+    }
+    let capped: Vec<&String> = if peers.len() > MAX_CACHED_PEERS {
+        peers[peers.len() - MAX_CACHED_PEERS..].iter().collect()
+    } else {
+        peers.iter().collect()
+    };
+    let json =
+        serde_json::to_string_pretty(&capped).map_err(|e| format!("serialize peer cache: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("write peer cache: {e}"))
+}

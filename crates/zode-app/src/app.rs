@@ -20,6 +20,8 @@ pub(crate) struct ZodeApp {
     pub settings_error: Option<String>,
     pub shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
     pub poller_handle: Option<tokio::task::JoinHandle<()>>,
+    pub peer_persist_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    pub peer_persist_handle: Option<tokio::task::JoinHandle<()>>,
     pub interlink_state: Option<crate::state::InterlinkState>,
     pub identity_state: crate::state::IdentityState,
     pub visualization: crate::visualization::NetworkVisualization,
@@ -66,6 +68,8 @@ impl ZodeApp {
             settings_error: None,
             shutdown_tx: None,
             poller_handle: None,
+            peer_persist_tx: None,
+            peer_persist_handle: None,
             interlink_state: None,
             identity_state: Default::default(),
             visualization: Default::default(),
@@ -95,6 +99,26 @@ impl ZodeApp {
             profile::settings_path_for_profile(&base, id)
         } else {
             profile::global_settings_path(&base)
+        }
+    }
+
+    /// Path where the peer cache is stored (next to the settings file).
+    fn peer_cache_path(&self) -> std::path::PathBuf {
+        self.settings_file_path()
+            .with_file_name("peer_cache.json")
+    }
+
+    /// Merge previously cached peers into a network config's bootstrap list.
+    fn merge_peer_cache(&self, config: &mut zode::ZodeConfig) {
+        let cached = crate::settings::load_peer_cache(&self.peer_cache_path());
+        for s in cached {
+            if let Ok(addr) = grid_net::strip_zx_multiaddr(&s)
+                .parse::<grid_net::Multiaddr>()
+            {
+                if !config.network.bootstrap_peers.contains(&addr) {
+                    config.network.bootstrap_peers.push(addr);
+                }
+            }
         }
     }
 
@@ -210,6 +234,7 @@ impl ZodeApp {
                 if let Some(kp) = keypair {
                     c.network = c.network.with_keypair(kp);
                 }
+                self.merge_peer_cache(&mut c);
                 c
             }
             Err(e) => {
@@ -234,6 +259,15 @@ impl ZodeApp {
                 self.poller_handle =
                     Some(Self::spawn_status_poller(&self.rt, &zode, &shared, stop_rx));
                 Self::spawn_log_listener(&self.rt, &zode, &shared);
+
+                let (persist_tx, persist_rx) = tokio::sync::mpsc::channel::<()>(1);
+                self.peer_persist_tx = Some(persist_tx);
+                self.peer_persist_handle = Some(Self::spawn_peer_persister(
+                    &self.rt,
+                    &zode,
+                    self.peer_cache_path(),
+                    persist_rx,
+                ));
             }
             Err(e) => {
                 self.settings_error = Some(format!("Start failed: {e}"));
@@ -243,7 +277,10 @@ impl ZodeApp {
 
     pub fn boot_zode(&mut self) {
         let config = match self.settings.build_config() {
-            Ok(c) => c,
+            Ok(mut c) => {
+                self.merge_peer_cache(&mut c);
+                c
+            }
             Err(e) => {
                 self.settings_error = Some(e);
                 return;
@@ -266,6 +303,15 @@ impl ZodeApp {
                 self.poller_handle =
                     Some(Self::spawn_status_poller(&self.rt, &zode, &shared, stop_rx));
                 Self::spawn_log_listener(&self.rt, &zode, &shared);
+
+                let (persist_tx, persist_rx) = tokio::sync::mpsc::channel::<()>(1);
+                self.peer_persist_tx = Some(persist_tx);
+                self.peer_persist_handle = Some(Self::spawn_peer_persister(
+                    &self.rt,
+                    &zode,
+                    self.peer_cache_path(),
+                    persist_rx,
+                ));
             }
             Err(e) => {
                 self.settings_error = Some(format!("Start failed: {e}"));
@@ -289,6 +335,33 @@ impl ZodeApp {
                 }
                 let status = bg_zode.status();
                 bg_shared.lock().await.status = Some(status);
+            }
+        })
+    }
+
+    fn spawn_peer_persister(
+        rt: &Runtime,
+        zode: &Arc<Zode>,
+        cache_path: std::path::PathBuf,
+        mut stop_rx: tokio::sync::mpsc::Receiver<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        let bg_zode = Arc::clone(zode);
+        rt.spawn(async move {
+            const PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+            loop {
+                tokio::select! {
+                    _ = stop_rx.recv() => return,
+                    _ = tokio::time::sleep(PERSIST_INTERVAL) => {}
+                }
+                let addrs = bg_zode.peer_multiaddrs().await;
+                if addrs.is_empty() {
+                    continue;
+                }
+                if let Err(e) = crate::settings::save_peer_cache(&cache_path, &addrs) {
+                    tracing::warn!("failed to persist peer cache: {e}");
+                } else {
+                    tracing::debug!(count = addrs.len(), "peer cache persisted");
+                }
             }
         })
     }
@@ -344,16 +417,25 @@ impl ZodeApp {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.try_send(());
         }
+        if let Some(tx) = self.peer_persist_tx.take() {
+            let _ = tx.try_send(());
+        }
         if let Some(ref zode) = self.zode {
             self.rt.block_on(zode.shutdown());
         }
         if let Some(handle) = self.poller_handle.take() {
             let _ = self.rt.block_on(handle);
         }
+        if let Some(handle) = self.peer_persist_handle.take() {
+            let _ = self.rt.block_on(handle);
+        }
 
         if let Some(ref zode) = self.zode {
             let addrs = self.rt.block_on(zode.peer_multiaddrs());
             self.settings.remember_peers(&addrs);
+            if let Err(e) = crate::settings::save_peer_cache(&self.peer_cache_path(), &addrs) {
+                tracing::warn!("failed to persist peer cache on shutdown: {e}");
+            }
         }
         self.save_settings();
 
