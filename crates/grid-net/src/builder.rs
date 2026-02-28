@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use libp2p::{gossipsub, kad, request_response, Multiaddr, PeerId, StreamProtocol};
+use libp2p::{gossipsub, identify, kad, request_response, Multiaddr, PeerId, StreamProtocol};
 use tracing::debug;
 
 use crate::behaviour::GridBehaviour;
@@ -10,6 +10,7 @@ use crate::error::NetworkError;
 
 const GRID_SECTOR_PROTOCOL: &str = "/grid/sector/1.0.0";
 const GRID_KAD_PROTOCOL: &str = "/grid/kad/1.0.0";
+const GRID_IDENTIFY_PROTOCOL: &str = "/grid/id/1.0.0";
 
 pub(crate) fn build_swarm(
     keypair: Option<libp2p::identity::Keypair>,
@@ -69,11 +70,16 @@ fn build_behaviour(
     kad_config.set_query_timeout(Duration::from_secs(60));
     let store = kad::store::MemoryStore::new(peer_id);
     let kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
+    let identify = identify::Behaviour::new(identify::Config::new(
+        GRID_IDENTIFY_PROTOCOL.to_string(),
+        key.public(),
+    ));
     Ok(GridBehaviour {
         gossipsub,
         sector_rr,
         kademlia,
         relay,
+        identify,
     })
 }
 
@@ -99,8 +105,21 @@ pub(crate) fn dial_bootstrap_peers(
     Ok(())
 }
 
-pub(crate) fn dial_relay_peers(swarm: &mut libp2p::Swarm<GridBehaviour>, peers: &[Multiaddr]) {
+pub(crate) fn dial_relay_peers(
+    swarm: &mut libp2p::Swarm<GridBehaviour>,
+    peers: &[Multiaddr],
+    kademlia_enabled: bool,
+) {
     for relay_addr in peers {
+        if kademlia_enabled {
+            if let Some(peer_id) = extract_peer_id(relay_addr) {
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, relay_addr.clone());
+                debug!(%peer_id, %relay_addr, "added relay peer to kademlia");
+            }
+        }
         match swarm.dial(relay_addr.clone()) {
             Ok(()) => debug!(%relay_addr, "dialed relay peer"),
             Err(e) => debug!(%relay_addr, error = %e, "failed to dial relay peer"),

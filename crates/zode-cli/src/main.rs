@@ -122,7 +122,7 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
         })
         .collect::<Result<_>>()?;
 
-    let relay_peers: Vec<grid_net::Multiaddr> = cli
+    let mut relay_peers: Vec<grid_net::Multiaddr> = cli
         .relay
         .iter()
         .map(|s| {
@@ -131,6 +131,13 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
                 .context("invalid relay multiaddr")
         })
         .collect::<Result<_>>()?;
+
+    if relay_peers.is_empty() {
+        let default_relay: grid_net::Multiaddr = grid_net::DEFAULT_RELAY_PEER
+            .parse()
+            .expect("well-known constant multiaddr");
+        relay_peers.push(default_relay);
+    }
 
     let topics: HashSet<ProgramId> = cli
         .topic
@@ -153,7 +160,7 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
     let network = grid_net::NetworkConfig::new(listen_addr)
         .with_bootstrap_peers(bootstrap_peers)
         .with_relay(grid_net::RelayConfig {
-            enabled: cli.enable_relay || !relay_peers.is_empty(),
+            enabled: true,
             relay_peers,
         })
         .with_discovery(discovery);

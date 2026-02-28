@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use futures::StreamExt;
-use libp2p::{gossipsub, kad, request_response, swarm::SwarmEvent, Multiaddr, PeerId};
-use tracing::{debug, info};
+use libp2p::{gossipsub, identify, kad, request_response, swarm::SwarmEvent, Multiaddr, PeerId};
+use tracing::{debug, info, warn};
 
 use crate::behaviour::{GridBehaviour, GridBehaviourEvent};
 use crate::builder::{build_swarm, dial_bootstrap_peers, dial_relay_peers};
@@ -25,6 +25,11 @@ pub struct NetworkService {
     discovered_peers: HashSet<PeerId>,
     /// Observed addresses for peers (from connection endpoints and Kademlia).
     peer_addresses: HashMap<PeerId, Vec<Multiaddr>>,
+    /// Relay multiaddrs the zode should listen on via p2p-circuit once
+    /// the underlying connection to the relay is established.
+    pending_relay_listeners: Vec<Multiaddr>,
+    /// Relay circuit addresses we have already started listening on.
+    active_relay_listeners: HashSet<Multiaddr>,
 }
 
 impl NetworkService {
@@ -55,8 +60,16 @@ impl NetworkService {
             .map_err(|e| NetworkError::Transport(e.to_string()))?;
 
         dial_bootstrap_peers(&mut swarm, &config.bootstrap_peers, kademlia_enabled)?;
+
+        let mut pending_relay_listeners = Vec::new();
         if relay_enabled {
-            dial_relay_peers(&mut swarm, &config.relay.relay_peers);
+            for relay_addr in &config.relay.relay_peers {
+                let circuit_addr = relay_addr
+                    .clone()
+                    .with(libp2p::multiaddr::Protocol::P2pCircuit);
+                pending_relay_listeners.push(circuit_addr);
+            }
+            dial_relay_peers(&mut swarm, &config.relay.relay_peers, kademlia_enabled);
             debug!(
                 count = config.relay.relay_peers.len(),
                 "relay dialing configured"
@@ -78,6 +91,8 @@ impl NetworkService {
             pending_discovery_dials: 0,
             discovered_peers: HashSet::new(),
             peer_addresses: HashMap::new(),
+            pending_relay_listeners,
+            active_relay_listeners: HashSet::new(),
         })
     }
 
@@ -238,6 +253,9 @@ impl NetworkService {
                         .kademlia
                         .add_address(&peer_id, addr);
                 }
+
+                self.try_start_relay_listeners(&peer_id);
+
                 (num_established.get() == 1).then(|| NetworkEvent::PeerConnected(peer_id))
             }
             SwarmEvent::ConnectionClosed {
@@ -256,6 +274,37 @@ impl NetworkService {
                 Some(NetworkEvent::ListenAddress(address))
             }
             _ => None,
+        }
+    }
+
+    /// When we connect to a relay peer, start listening on its circuit address
+    /// so other zodes can reach us through the relay.
+    fn try_start_relay_listeners(&mut self, connected_peer: &PeerId) {
+        let to_listen: Vec<Multiaddr> = self
+            .pending_relay_listeners
+            .iter()
+            .filter(|addr| {
+                addr.iter().any(|proto| match proto {
+                    libp2p::multiaddr::Protocol::P2p(pid) => pid == *connected_peer,
+                    _ => false,
+                })
+            })
+            .cloned()
+            .collect();
+
+        for circuit_addr in to_listen {
+            if self.active_relay_listeners.contains(&circuit_addr) {
+                continue;
+            }
+            match self.swarm.listen_on(circuit_addr.clone()) {
+                Ok(_) => {
+                    info!(%circuit_addr, "listening via relay circuit");
+                    self.active_relay_listeners.insert(circuit_addr.clone());
+                }
+                Err(e) => {
+                    warn!(%circuit_addr, error = %e, "failed to listen on relay circuit");
+                }
+            }
         }
     }
 
@@ -307,6 +356,62 @@ impl NetworkService {
             GridBehaviourEvent::Kademlia(ev) => self.map_kademlia_event(ev),
             GridBehaviourEvent::Relay(ev) => {
                 debug!(?ev, "relay event");
+                None
+            }
+            GridBehaviourEvent::Identify(ev) => self.map_identify_event(ev),
+        }
+    }
+
+    fn map_identify_event(&mut self, event: identify::Event) -> Option<NetworkEvent> {
+        match event {
+            identify::Event::Received { peer_id, info, .. } => {
+                debug!(
+                    %peer_id,
+                    protocols = ?info.protocols,
+                    listen_addrs = ?info.listen_addrs,
+                    observed = %info.observed_addr,
+                    "identify received"
+                );
+
+                self.swarm
+                    .add_external_address(info.observed_addr.clone());
+
+                if self.kademlia_enabled {
+                    for addr in &info.listen_addrs {
+                        self.swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&peer_id, addr.clone());
+                    }
+                }
+
+                let stored = self.peer_addresses.entry(peer_id).or_default();
+                for a in &info.listen_addrs {
+                    if !stored.contains(a) {
+                        stored.push(a.clone());
+                    }
+                }
+
+                if self.discovered_peers.insert(peer_id) {
+                    self.try_discovery_dial(&peer_id, &info.listen_addrs);
+                    Some(NetworkEvent::PeerDiscovered {
+                        zode_id: peer_id,
+                        addresses: info.listen_addrs,
+                    })
+                } else {
+                    None
+                }
+            }
+            identify::Event::Sent { peer_id, .. } => {
+                debug!(%peer_id, "identify sent");
+                None
+            }
+            identify::Event::Error { peer_id, error, .. } => {
+                debug!(%peer_id, %error, "identify error");
+                None
+            }
+            identify::Event::Pushed { peer_id, .. } => {
+                debug!(%peer_id, "identify pushed");
                 None
             }
         }

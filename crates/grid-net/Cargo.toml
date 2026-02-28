@@ -18,6 +18,7 @@ libp2p = { version = "0.56", features = [
     "request-response",
     "cbor",
     "kad",
+    "identify",
 ] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 serde = { version = "1", features = ["derive"] }

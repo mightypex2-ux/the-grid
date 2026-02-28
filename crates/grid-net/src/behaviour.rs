@@ -7,4 +7,5 @@ pub(crate) struct GridBehaviour {
     pub(crate) sector_rr: libp2p::request_response::cbor::Behaviour<SectorRequest, SectorResponse>,
     pub(crate) kademlia: libp2p::kad::Behaviour<libp2p::kad::store::MemoryStore>,
     pub(crate) relay: libp2p::relay::client::Behaviour,
+    pub(crate) identify: libp2p::identify::Behaviour,
 }

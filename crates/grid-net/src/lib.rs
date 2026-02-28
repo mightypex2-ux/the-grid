@@ -27,7 +27,7 @@ mod error;
 mod event;
 mod service;
 
-pub use config::{DiscoveryConfig, KademliaMode, NetworkConfig, RelayConfig};
+pub use config::{DiscoveryConfig, KademliaMode, NetworkConfig, RelayConfig, DEFAULT_RELAY_PEER};
 pub use error::NetworkError;
 pub use event::NetworkEvent;
 pub use service::NetworkService;

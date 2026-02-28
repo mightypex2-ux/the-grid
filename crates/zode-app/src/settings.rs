@@ -59,10 +59,10 @@ fn default_rpc_bind() -> String {
     "127.0.0.1:4690".into()
 }
 fn default_bootstrap_peers() -> Vec<String> {
-    vec!["/ip4/3.129.15.45/tcp/3691".into()]
+    vec![grid_net::DEFAULT_RELAY_PEER.into()]
 }
 fn default_relay_peers() -> Vec<String> {
-    vec!["/ip4/3.129.15.45/tcp/3691".into()]
+    vec![grid_net::DEFAULT_RELAY_PEER.into()]
 }
 
 pub(crate) struct Settings {
@@ -93,10 +93,10 @@ impl Default for Settings {
             data_dir: ".zode/data".into(),
             listen_addr: "/ip4/127.0.0.1/udp/3690/quic-v1".into(),
             bootstrap_input: String::new(),
-            bootstrap_peers: vec!["/ip4/3.129.15.45/tcp/3691".into()],
+            bootstrap_peers: vec![grid_net::DEFAULT_RELAY_PEER.into()],
             enable_relay: true,
             relay_input: String::new(),
-            relay_peers: vec!["/ip4/3.129.15.45/tcp/3691".into()],
+            relay_peers: vec![grid_net::DEFAULT_RELAY_PEER.into()],
             enable_zid: true,
             enable_interlink: true,
             topic_input: String::new(),
