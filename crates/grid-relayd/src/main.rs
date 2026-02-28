@@ -110,6 +110,9 @@ async fn main() -> Result<()> {
         .context("failed to build relay behaviour")?
         .build();
 
+    let local_peer_id = *swarm.local_peer_id();
+    info!(%local_peer_id, "relay peer ID");
+
     swarm
         .listen_on(config.listen.clone())
         .context("failed to start listener")?;
@@ -117,7 +120,10 @@ async fn main() -> Result<()> {
     loop {
         match swarm.next().await {
             Some(SwarmEvent::NewListenAddr { address, .. }) => {
-                info!(%address, "relay listening");
+                let full = address
+                    .clone()
+                    .with(libp2p::multiaddr::Protocol::P2p(local_peer_id));
+                info!(%address, %full, "relay listening");
             }
             Some(SwarmEvent::ConnectionEstablished { peer_id, .. }) => {
                 info!(%peer_id, "peer connected");

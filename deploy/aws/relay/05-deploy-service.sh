@@ -28,6 +28,8 @@ set -euo pipefail
 test -f "${RELAY_BUILD_DIR}/target/release/grid-relayd"
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin grid 2>/dev/null || true
 sudo install -m 0755 "${RELAY_BUILD_DIR}/target/release/grid-relayd" /usr/local/bin/grid-relayd
+sudo mkdir -p /var/lib/grid-relayd
+sudo chown grid:grid /var/lib/grid-relayd
 sudo tee /etc/systemd/system/grid-relayd.service >/dev/null <<UNIT
 [Unit]
 Description=GRID relay service

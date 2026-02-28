@@ -21,8 +21,14 @@ echo "Fetching recent logs..."
 ssh -i "${KEY_PATH}" -o StrictHostKeyChecking=accept-new "${REMOTE}" \
   "sudo journalctl -u grid-relayd -n 80 --no-pager"
 
+PEER_ID=$(ssh -i "${KEY_PATH}" -o StrictHostKeyChecking=accept-new "${REMOTE}" \
+  "sudo journalctl -u grid-relayd --no-pager -o cat | grep 'relay peer ID' | head -1 | sed 's/.*local_peer_id=//' | awk '{print \$1}'" 2>/dev/null || true)
+
 echo
 echo "Relay endpoint:"
-echo "/ip4/${EC2_PUBLIC_IP}/tcp/${RELAY_PORT}"
-echo
-echo "To include peer ID, read local_peer_id from logs and append /p2p/<peer-id>."
+echo "  /ip4/${EC2_PUBLIC_IP}/tcp/${RELAY_PORT}"
+if [[ -n "${PEER_ID}" ]]; then
+  echo
+  echo "Full endpoint (with peer ID):"
+  echo "  /ip4/${EC2_PUBLIC_IP}/tcp/${RELAY_PORT}/p2p/${PEER_ID}"
+fi
