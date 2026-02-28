@@ -14,6 +14,9 @@ pub struct NetworkConfig {
     /// Discovery settings (Kademlia DHT, mDNS).
     pub discovery: DiscoveryConfig,
 
+    /// Relay transport settings.
+    pub relay: RelayConfig,
+
     /// Pre-existing libp2p keypair. When `Some`, the swarm reuses this
     /// identity instead of generating a fresh one each launch.
     pub keypair: Option<libp2p::identity::Keypair>,
@@ -48,6 +51,24 @@ pub enum KademliaMode {
     Client,
 }
 
+/// Relay transport configuration.
+#[derive(Debug, Clone)]
+pub struct RelayConfig {
+    /// Enable relay transport support.
+    pub enabled: bool,
+    /// Relay peers to dial on startup.
+    pub relay_peers: Vec<Multiaddr>,
+}
+
+impl Default for RelayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            relay_peers: Vec::new(),
+        }
+    }
+}
+
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
@@ -65,6 +86,7 @@ impl NetworkConfig {
             listen_addr,
             bootstrap_peers: Vec::new(),
             discovery: DiscoveryConfig::default(),
+            relay: RelayConfig::default(),
             keypair: None,
         }
     }
@@ -76,6 +98,11 @@ impl NetworkConfig {
 
     pub fn with_discovery(mut self, discovery: DiscoveryConfig) -> Self {
         self.discovery = discovery;
+        self
+    }
+
+    pub fn with_relay(mut self, relay: RelayConfig) -> Self {
+        self.relay = relay;
         self
     }
 
@@ -93,6 +120,7 @@ impl Default for NetworkConfig {
                 .expect("well-known constant multiaddr"),
             bootstrap_peers: Vec::new(),
             discovery: DiscoveryConfig::default(),
+            relay: RelayConfig::default(),
             keypair: None,
         }
     }
