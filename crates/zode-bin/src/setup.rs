@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::ZodeApp;
-use crate::components::{action_button, editable_list, error_label, field_label, hint_label};
+use crate::components::{action_button, centered_row, editable_list, error_label, field_label, hint_label};
 use crate::identity;
 use crate::profile;
 use crate::state::AppPhase;
@@ -23,51 +23,59 @@ impl ZodeApp {
             .inner_margin(32.0);
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            let rect = ui.max_rect();
-            ui.vertical_centered(|ui| {
-                let content_height = 220.0;
-                ui.add_space(((rect.height() - content_height) / 2.0).max(20.0));
+            let panel = ui.max_rect();
+            let col_w = 380.0_f32.min(panel.width());
+            let col = egui::Rect::from_center_size(
+                panel.center(),
+                egui::vec2(col_w, panel.height()),
+            );
 
-                ui.add(
-                    egui::Image::new(&tex)
-                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
-                        .corner_radius(8.0),
-                );
-                ui.add_space(16.0);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(col), |ui| {
+                ui.vertical_centered(|ui| {
+                    let content_height = 220.0;
+                    ui.add_space(((panel.height() - content_height) / 2.0).max(20.0));
 
-                ui.label(
-                    egui::RichText::new("SETUP YOUR ZODE")
-                        .strong()
-                        .size(12.0)
-                        .color(egui::Color32::from_rgb(140, 140, 145)),
-                );
-                ui.add_space(8.0);
-
-                if self.identity_state.recovery_mode {
-                    self.render_setup_recovery(ui);
-                } else {
-                    hint_label(ui, "Generate a new Neural Key to get started, or recover from existing shares.");
+                    ui.add(
+                        egui::Image::new(&tex)
+                            .fit_to_exact_size(egui::vec2(56.0, 56.0))
+                            .corner_radius(8.0),
+                    );
                     ui.add_space(16.0);
 
-                    ui.horizontal(|ui| {
-                        if action_button(ui, "Generate Neural Key") {
-                            identity::generate_new_identity(self);
-                            if self.identity_state.error.is_none() {
-                                self.identity_state.setup_step = 1;
-                            }
-                        }
-                        ui.add_space(8.0);
-                        if action_button(ui, "Recover from Shares") {
-                            self.identity_state.recovery_mode = true;
-                            self.identity_state.error = None;
-                        }
-                    });
-                }
-
-                if let Some(ref err) = self.identity_state.error.clone() {
+                    ui.label(
+                        egui::RichText::new("SETUP YOUR ZODE")
+                            .strong()
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(140, 140, 145)),
+                    );
                     ui.add_space(8.0);
-                    error_label(ui, err);
-                }
+
+                    if self.identity_state.recovery_mode {
+                        self.render_setup_recovery(ui);
+                    } else {
+                        hint_label(ui, "Generate a new Neural Key to get started, or recover from existing shares.");
+                        ui.add_space(16.0);
+
+                        centered_row(ui, "setup_btns", |ui| {
+                            if action_button(ui, "Generate Neural Key") {
+                                identity::generate_new_identity(self);
+                                if self.identity_state.error.is_none() {
+                                    self.identity_state.setup_step = 1;
+                                }
+                            }
+                            ui.add_space(8.0);
+                            if action_button(ui, "Recover from Shares") {
+                                self.identity_state.recovery_mode = true;
+                                self.identity_state.error = None;
+                            }
+                        });
+                    }
+
+                    if let Some(ref err) = self.identity_state.error.clone() {
+                        ui.add_space(8.0);
+                        error_label(ui, err);
+                    }
+                });
             });
         });
     }
@@ -88,7 +96,7 @@ impl ZodeApp {
 
         ui.add_space(8.0);
 
-        ui.horizontal(|ui| {
+        centered_row(ui, "recovery_btns", |ui| {
             if action_button(ui, "Recover") {
                 identity::attempt_recovery(self);
                 if self.identity_state.error.is_none() {
@@ -114,130 +122,148 @@ impl ZodeApp {
         let mut do_create = false;
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            let rect = ui.max_rect();
-            ui.vertical_centered(|ui| {
-                let content_height = 380.0;
-                ui.add_space(((rect.height() - content_height) / 2.0).max(20.0));
+            let panel = ui.max_rect();
+            let col_w = 380.0_f32.min(panel.width());
+            let col = egui::Rect::from_center_size(
+                panel.center(),
+                egui::vec2(col_w, panel.height()),
+            );
 
-                ui.add(
-                    egui::Image::new(&tex)
-                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
-                        .corner_radius(8.0),
-                );
-                ui.add_space(16.0);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(col), |ui| {
+                ui.vertical_centered(|ui| {
+                    let content_h = if self.identity_state.show_shares {
+                        520.0
+                    } else {
+                        380.0
+                    };
+                    ui.add_space(((panel.height() - content_h) / 2.0).max(20.0));
 
-                ui.label(
-                    egui::RichText::new("CREATE PROFILE")
-                        .strong()
-                        .size(12.0)
-                        .color(egui::Color32::from_rgb(140, 140, 145)),
-                );
-                ui.add_space(8.0);
+                    ui.add(
+                        egui::Image::new(&tex)
+                            .fit_to_exact_size(egui::vec2(56.0, 56.0))
+                            .corner_radius(8.0),
+                    );
+                    ui.add_space(16.0);
 
-                if let Some(ref did) = self.identity_state.did.clone() {
-                    ui.horizontal(|ui| {
-                        field_label(ui, "DID");
-                        ui.monospace(truncate_did(did));
-                    });
-                    ui.add_space(4.0);
-                }
+                    ui.label(
+                        egui::RichText::new("CREATE PROFILE")
+                            .strong()
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(140, 140, 145)),
+                    );
+                    ui.add_space(8.0);
 
-                ui.colored_label(
-                    crate::components::colors::WARN,
-                    "Back up your Neural Key shares before continuing.",
-                );
-
-                if self.identity_state.show_shares {
-                    ui.add_space(4.0);
-                    for share in &self.identity_state.shares {
-                        let hex = share.to_hex();
-                        ui.horizontal(|ui| {
-                            ui.monospace(
-                                egui::RichText::new(format!(
-                                    "Share {}: {}...",
-                                    share.index(),
-                                    &hex[..hex.len().min(24)]
-                                ))
-                                .weak(),
-                            );
-                            crate::components::copy_button(ui, &hex);
+                    if let Some(ref did) = self.identity_state.did.clone() {
+                        centered_row(ui, "did_row", |ui| {
+                            field_label(ui, "DID");
+                            ui.monospace(truncate_did(did));
                         });
+                        ui.add_space(4.0);
                     }
-                }
-                ui.add_space(4.0);
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(if self.identity_state.show_shares {
-                                "Hide Shares"
-                            } else {
-                                "Show Shares"
-                            })
-                            .size(11.0)
-                            .color(egui::Color32::from_rgb(100, 100, 108)),
-                        )
-                        .frame(false),
-                    )
-                    .clicked()
-                {
-                    self.identity_state.show_shares = !self.identity_state.show_shares;
-                }
 
-                ui.add_space(12.0);
+                    ui.colored_label(
+                        crate::components::colors::WARN,
+                        "Back up your Neural Key shares before continuing.",
+                    );
 
-                egui::Grid::new("setup_profile_form")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
-                        field_label(ui, "Profile Name");
-                        ui.add(
-                            egui::TextEdit::singleline(
-                                &mut self.identity_state.save_profile_name,
+                    if self.identity_state.show_shares {
+                        ui.add_space(4.0);
+                        for share in &self.identity_state.shares {
+                            let hex = share.to_hex();
+                            centered_row(
+                                ui,
+                                &format!("share_{}", share.index()),
+                                |ui| {
+                                    ui.monospace(
+                                        egui::RichText::new(format!(
+                                            "Share {}: {}...",
+                                            share.index(),
+                                            &hex[..hex.len().min(24)]
+                                        ))
+                                        .weak(),
+                                    );
+                                    crate::components::copy_button(ui, &hex);
+                                },
+                            );
+                        }
+                    }
+                    ui.add_space(4.0);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(if self.identity_state.show_shares {
+                                    "Hide Shares"
+                                } else {
+                                    "Show Shares"
+                                })
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(100, 100, 108)),
                             )
-                            .desired_width(200.0),
-                        );
-                        ui.end_row();
+                            .frame(false),
+                        )
+                        .clicked()
+                    {
+                        self.identity_state.show_shares = !self.identity_state.show_shares;
+                    }
 
-                        field_label(ui, "Password");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.identity_state.save_password)
+                    ui.add_space(16.0);
+
+                    egui::Grid::new("setup_profile_form")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            field_label(ui, "Profile Name");
+                            ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut self.identity_state.save_profile_name,
+                                )
+                                .desired_width(200.0),
+                            );
+                            ui.end_row();
+
+                            field_label(ui, "Password");
+                            ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut self.identity_state.save_password,
+                                )
                                 .password(true)
                                 .desired_width(200.0)
                                 .hint_text("Vault encryption password"),
-                        );
-                        ui.end_row();
+                            );
+                            ui.end_row();
 
-                        field_label(ui, "Confirm Password");
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(
-                                &mut self.identity_state.setup_password_confirm,
-                            )
-                            .password(true)
-                            .desired_width(200.0)
-                            .hint_text("Confirm password"),
-                        );
-                        ui.end_row();
+                            field_label(ui, "Confirm Password");
+                            let resp = ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut self.identity_state.setup_password_confirm,
+                                )
+                                .password(true)
+                                .desired_width(200.0)
+                                .hint_text("Confirm password"),
+                            );
+                            ui.end_row();
 
-                        if resp.lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        {
-                            do_create = true;
-                        }
-                    });
+                            if resp.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                do_create = true;
+                            }
+                        });
 
-                ui.add_space(12.0);
-                if action_button(ui, "Create Profile") {
-                    do_create = true;
-                }
+                    ui.add_space(16.0);
+                    if action_button(ui, "Create Profile") {
+                        do_create = true;
+                    }
 
-                if let Some(ref err) = self.identity_state.error.clone() {
-                    ui.add_space(8.0);
-                    error_label(ui, err);
-                }
-                if let Some(ref status) = self.identity_state.save_status.clone() {
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(status).weak().italics());
-                }
+                    if let Some(ref err) = self.identity_state.error.clone() {
+                        ui.add_space(8.0);
+                        error_label(ui, err);
+                    }
+                    if let Some(ref status) = self.identity_state.save_status.clone() {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(status).weak().italics());
+                    }
+                });
             });
         });
 

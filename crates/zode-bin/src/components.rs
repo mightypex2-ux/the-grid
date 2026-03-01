@@ -140,6 +140,25 @@ pub(crate) fn action_button(ui: &mut egui::Ui, label: &str) -> bool {
     styled_button(ui, label, egui::vec2(12.0, 5.0), 11.0)
 }
 
+/// Horizontal row whose content is centered within the available width.
+///
+/// Uses previous-frame measurement to compute the centering offset, so the
+/// first frame may be uncentered (imperceptible in practice).
+pub(crate) fn centered_row(ui: &mut egui::Ui, id_salt: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let id = ui.id().with(id_salt);
+    let avail = ui.available_width();
+    let prev_w: f32 = ui.ctx().data_mut(|d| d.get_temp(id).unwrap_or(avail));
+    let offset = ((avail - prev_w) / 2.0).max(0.0);
+
+    ui.horizontal(|ui| {
+        ui.add_space(offset);
+        let x0 = ui.cursor().left();
+        add_contents(ui);
+        let w = ui.cursor().left() - x0;
+        ui.ctx().data_mut(|d| d.insert_temp(id, w));
+    });
+}
+
 /// Title-bar icon button (custom-painted for tight layout control).
 pub(crate) fn title_bar_icon(ui: &mut egui::Ui, icon: &str, active: bool) -> egui::Response {
     let font_id = egui::FontId::proportional(16.0);

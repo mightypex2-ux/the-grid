@@ -222,6 +222,12 @@ async fn main() -> Result<()> {
                     error = %error,
                     "outgoing connection failed"
                 );
+                if let Some(failed_peer) = peer_id {
+                    if !connected_peer_ids.contains(&failed_peer) {
+                        swarm.behaviour_mut().kademlia.remove_peer(&failed_peer);
+                        debug!(%failed_peer, "removed unreachable peer from kademlia");
+                    }
+                }
             }
             Some(SwarmEvent::Behaviour(event)) => match event {
                 RelayBehaviourEvent::Identify(identify::Event::Received {
