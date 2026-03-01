@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui;
-use grid_core::{GossipSectorAppend, ProgramId, SectorId, ShapeProof};
+use grid_core::{
+    GossipSectorAppend, ProgramId, SectorId, SectorLogLengthRequest, SectorReadLogRequest,
+    SectorRequest, SectorResponse, ShapeProof,
+};
 use grid_crypto::SectorKey;
 use grid_programs_interlink::interlink::{
     ChannelId, InterlinkDescriptor, ZMessage, TEST_CHANNEL_ID,
@@ -75,6 +78,13 @@ impl ZodeApp {
                 update_tx,
                 refresh_rx,
             );
+            Self::spawn_interlink_catchup(
+                &self.rt,
+                zode,
+                program_id,
+                sector_id.clone(),
+                refresh_tx.clone(),
+            );
         }
 
         self.interlink_state = Some(InterlinkState {
@@ -122,6 +132,47 @@ impl ZodeApp {
                 tokio::select! {
                     _ = refresh_rx.recv() => {}
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                }
+            }
+        });
+    }
+
+    fn spawn_interlink_catchup(
+        rt: &tokio::runtime::Runtime,
+        zode: &Arc<zode::Zode>,
+        program_id: ProgramId,
+        sector_id: SectorId,
+        refresh_tx: tokio::sync::mpsc::Sender<()>,
+    ) {
+        let zode = Arc::clone(zode);
+        rt.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let mut event_rx = zode.subscribe_events();
+            loop {
+                match interlink_catchup(&zode, program_id, &sector_id).await {
+                    Ok(0) => {
+                        info!("interlink catch-up: already up to date");
+                        break;
+                    }
+                    Ok(count) => {
+                        info!(count, "interlink catch-up complete");
+                        let _ = refresh_tx.try_send(());
+                        break;
+                    }
+                    Err(e) => {
+                        info!(error = %e, "interlink catch-up deferred, waiting for peers");
+                    }
+                }
+                loop {
+                    match event_rx.recv().await {
+                        Ok(zode::LogEvent::PeerConnected(_)) => {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            break;
+                        }
+                        Err(_) => return,
+                        _ => continue,
+                    }
                 }
             }
         });
@@ -266,18 +317,86 @@ async fn poll_new_entries(
     if current_len <= known_len {
         return known_len;
     }
-    let entries = storage
-        .read_log(program_id, sector_id, known_len, 64)
+    let indexed = storage
+        .read_log_indexed(program_id, sector_id, known_len, 64)
         .unwrap_or_default();
-    if entries.is_empty() {
-        return known_len;
+    if indexed.is_empty() {
+        return current_len;
     }
-    let new_len = known_len + entries.len() as u64;
+    let new_len = indexed.last().unwrap().0 + 1;
+    let entries: Vec<Vec<u8>> = indexed.into_iter().map(|(_, v)| v).collect();
     let upd = decrypt_entries(entries, sector_key, program_id, sector_id);
     if update_tx.send(upd).await.is_err() {
         return new_len;
     }
     new_len
+}
+
+async fn interlink_catchup(
+    zode: &Arc<zode::Zode>,
+    program_id: ProgramId,
+    sector_id: &SectorId,
+) -> Result<u64, String> {
+    const MIN_CATCHUP: u64 = 100;
+    const BATCH_SIZE: u32 = 64;
+
+    let status = zode.status();
+    let peer = status
+        .connected_peers
+        .first()
+        .ok_or_else(|| "no connected peers".to_string())?
+        .clone();
+
+    let storage = zode.storage();
+    let local_len = storage.log_length(&program_id, sector_id).unwrap_or(0);
+
+    let len_request = SectorRequest::LogLength(SectorLogLengthRequest {
+        program_id,
+        sector_id: sector_id.clone(),
+    });
+    let peer_len = match zode.sector_request(&peer, len_request).await? {
+        SectorResponse::LogLength(r) if r.error_code.is_none() => r.length,
+        SectorResponse::LogLength(r) => {
+            return Err(format!("peer returned error: {:?}", r.error_code));
+        }
+        _ => return Err("unexpected response type".to_string()),
+    };
+
+    if peer_len == 0 || peer_len <= local_len {
+        return Ok(0);
+    }
+
+    let from_index = if local_len == 0 {
+        peer_len.saturating_sub(MIN_CATCHUP)
+    } else {
+        local_len
+    };
+
+    let mut stored = 0u64;
+    let mut cursor = from_index;
+    while cursor < peer_len {
+        let read_request = SectorRequest::ReadLog(SectorReadLogRequest {
+            program_id,
+            sector_id: sector_id.clone(),
+            from_index: cursor,
+            max_entries: BATCH_SIZE,
+        });
+        let entries = match zode.sector_request(&peer, read_request).await? {
+            SectorResponse::ReadLog(r) if r.error_code.is_none() => r.entries,
+            _ => break,
+        };
+        if entries.is_empty() {
+            break;
+        }
+        for (i, entry) in entries.iter().enumerate() {
+            let idx = cursor + i as u64;
+            let _ = storage.insert_at(&program_id, sector_id, idx, entry);
+            stored += 1;
+        }
+        cursor += entries.len() as u64;
+    }
+
+    Ok(stored)
 }
 
 fn decrypt_entries(

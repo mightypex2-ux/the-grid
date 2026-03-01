@@ -16,6 +16,10 @@ use crate::config::{KademliaMode, NetworkConfig};
 use crate::error::NetworkError;
 use crate::event::NetworkEvent;
 
+/// Maximum addresses stored per peer. Older entries beyond this limit are
+/// evicted to prevent stale NAT-mapped ephemeral ports from accumulating.
+const MAX_ADDRS_PER_PEER: usize = 8;
+
 /// Manages the libp2p swarm and exposes the Grid network API.
 ///
 /// The caller drives the service by calling [`next_event`](Self::next_event)
@@ -31,6 +35,10 @@ pub struct NetworkService {
     discovered_peers: HashSet<PeerId>,
     /// Observed addresses for peers (from connection endpoints and Kademlia).
     peer_addresses: HashMap<PeerId, Vec<Multiaddr>>,
+    /// Transport-only addresses of known relay peers (e.g. `/ip4/x.x.x.x/tcp/3691`).
+    /// Used to avoid incorrectly attributing the relay's address to NATted
+    /// peers that report relay listen addrs via identify.
+    relay_transport_addrs: HashSet<Multiaddr>,
     /// Peer IDs of configured relay nodes, used to recognise when a
     /// newly-established connection is to a relay so we can start a
     /// circuit listener on it.
@@ -125,6 +133,14 @@ impl NetworkService {
             Vec::new()
         };
 
+        let relay_transport_addrs: HashSet<Multiaddr> = config
+            .relay
+            .relay_peers
+            .iter()
+            .map(|a| crate::addr::strip_all_p2p(a))
+            .filter(crate::addr::has_transport)
+            .collect();
+
         info!(
             bootstrap_peers = config.bootstrap_peers.len(),
             relay_enabled,
@@ -158,6 +174,7 @@ impl NetworkService {
             pending_discovery_dials: 0,
             discovered_peers: HashSet::new(),
             peer_addresses: HashMap::new(),
+            relay_transport_addrs,
             relay_peer_ids,
             active_relay_listeners: HashSet::new(),
             relay_circuit_bases,
@@ -276,19 +293,65 @@ impl NetworkService {
             .iter()
             .flat_map(|(peer, addrs)| {
                 let peer = *peer;
-                addrs.iter().map(move |a| {
+                addrs.iter().filter_map(move |a| {
+                    if !crate::addr::has_transport(a) {
+                        return None;
+                    }
                     let already_ends_with_peer = a
                         .iter()
                         .last()
                         .is_some_and(|p| p == libp2p::multiaddr::Protocol::P2p(peer));
                     if already_ends_with_peer {
-                        a.to_string()
+                        Some(a.to_string())
                     } else {
-                        format!("{a}/p2p/{peer}")
+                        Some(format!("{a}/p2p/{peer}"))
                     }
                 })
             })
             .collect()
+    }
+
+    /// Store an address for a peer, enforcing the per-peer cap and
+    /// deduplicating addresses that share the same IP (keeping the newer
+    /// port, since ephemeral NAT mappings rotate frequently).
+    fn insert_peer_addr(&mut self, peer: PeerId, addr: Multiaddr) {
+        if self.relay_peer_ids.contains(&peer) {
+            return;
+        }
+        let transport_only = crate::addr::strip_all_p2p(&addr);
+        if self.relay_transport_addrs.contains(&transport_only) {
+            let has_circuit = addr
+                .iter()
+                .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit));
+            if !has_circuit {
+                return;
+            }
+        }
+        let stored = self.peer_addresses.entry(peer).or_default();
+        if stored.contains(&addr) {
+            return;
+        }
+        let new_ip = crate::addr::extract_ip(&addr);
+        let has_circuit = addr
+            .iter()
+            .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit));
+        if !has_circuit {
+            if let Some(ref ip) = new_ip {
+                stored.retain(|existing| {
+                    let is_circuit = existing
+                        .iter()
+                        .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit));
+                    if is_circuit {
+                        return true;
+                    }
+                    crate::addr::extract_ip(existing).as_ref() != Some(ip)
+                });
+            }
+        }
+        stored.push(addr);
+        while stored.len() > MAX_ADDRS_PER_PEER {
+            stored.remove(0);
+        }
     }
 
     /// Dial a peer at the given multiaddr.
@@ -352,10 +415,7 @@ impl NetworkService {
                 let raw_addr = endpoint.get_remote_address().clone();
                 let normalized = crate::addr::normalize_multiaddr(&raw_addr);
                 if crate::addr::is_globally_routable(&normalized) {
-                    let stored = self.peer_addresses.entry(peer_id).or_default();
-                    if !stored.contains(&normalized) {
-                        stored.push(normalized.clone());
-                    }
+                    self.insert_peer_addr(peer_id, normalized.clone());
                 }
                 if self.kademlia_enabled && crate::addr::is_globally_routable(&normalized) {
                     self.swarm
@@ -732,11 +792,10 @@ impl NetworkService {
             }
         }
 
-        let stored = self.peer_addresses.entry(peer_id).or_default();
         for a in &listen_addrs {
             let normalized = crate::addr::normalize_multiaddr(a);
-            if crate::addr::is_globally_routable(&normalized) && !stored.contains(&normalized) {
-                stored.push(normalized);
+            if crate::addr::is_globally_routable(&normalized) {
+                self.insert_peer_addr(peer_id, normalized);
             }
         }
 
@@ -824,10 +883,9 @@ impl NetworkService {
                     .iter()
                     .map(crate::addr::normalize_multiaddr)
                     .collect();
-                let stored = self.peer_addresses.entry(peer).or_default();
                 for a in &addrs {
-                    if crate::addr::is_globally_routable(a) && !stored.contains(a) {
-                        stored.push(a.clone());
+                    if crate::addr::is_globally_routable(a) {
+                        self.insert_peer_addr(peer, a.clone());
                     }
                 }
                 if self.discovered_peers.insert(peer) {
@@ -875,10 +933,9 @@ impl NetworkService {
                 .iter()
                 .map(crate::addr::normalize_multiaddr)
                 .collect();
-            let stored = self.peer_addresses.entry(peer_id).or_default();
             for a in &addrs {
-                if crate::addr::is_globally_routable(a) && !stored.contains(a) {
-                    stored.push(a.clone());
+                if crate::addr::is_globally_routable(a) {
+                    self.insert_peer_addr(peer_id, a.clone());
                 }
             }
             if self.discovered_peers.insert(peer_id) {

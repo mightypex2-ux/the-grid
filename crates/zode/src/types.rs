@@ -145,7 +145,13 @@ impl fmt::Display for LogEvent {
                 write!(f, "[RELAY ERR] failed {circuit_addr}: {error}")
             }
             Self::ConnectionFailed { peer, error } => {
-                write!(f, "[DIAL ERR] {peer}: {error}")
+                const MAX_ERR_LEN: usize = 300;
+                if error.len() > MAX_ERR_LEN {
+                    let truncated: String = error.chars().take(MAX_ERR_LEN).collect();
+                    write!(f, "[DIAL ERR] {peer}: {truncated}... (truncated)")
+                } else {
+                    write!(f, "[DIAL ERR] {peer}: {error}")
+                }
             }
             Self::KademliaReady => write!(f, "[DHT] kademlia bootstrap started"),
             Self::ShuttingDown => write!(f, "[SHUTDOWN] ZODE shutting down"),

@@ -120,6 +120,55 @@ impl SectorStore for RocksStorage {
     }
 }
 
+impl RocksStorage {
+    /// Like [`SectorStore::read_log`] but returns `(index, entry)` pairs,
+    /// allowing callers to correctly track progress in sparse logs where
+    /// entries may not start at `from_index`.
+    pub fn read_log_indexed(
+        &self,
+        program_id: &ProgramId,
+        sector_id: &SectorId,
+        from_index: u64,
+        max_entries: usize,
+    ) -> Result<Vec<(u64, Vec<u8>)>, StorageError> {
+        validate_sector_id(sector_id)?;
+        let cf = self.cf_handle(CF_SECTORS)?;
+        let prefix = build_sector_prefix(program_id, sector_id);
+        let start = build_entry_key(program_id, sector_id, from_index);
+        read_entries_indexed(self, cf, &prefix, &start, max_entries)
+    }
+}
+
+fn read_entries_indexed(
+    storage: &RocksStorage,
+    cf: &rocksdb::ColumnFamily,
+    prefix: &[u8],
+    start_key: &[u8],
+    max_entries: usize,
+) -> Result<Vec<(u64, Vec<u8>)>, StorageError> {
+    let mode = rocksdb::IteratorMode::From(start_key, rocksdb::Direction::Forward);
+    let iter = storage.db().iterator_cf(cf, mode);
+    let mut entries = Vec::with_capacity(max_entries.min(64));
+    for item in iter {
+        if entries.len() >= max_entries {
+            break;
+        }
+        let (key, value) = item?;
+        if !key.starts_with(prefix) {
+            break;
+        }
+        if key.len() != prefix.len() + IDX_LEN {
+            continue;
+        }
+        let idx: [u8; IDX_LEN] = key[prefix.len()..]
+            .try_into()
+            .expect("slice is exactly IDX_LEN bytes");
+        let index = u64::from_be_bytes(idx);
+        entries.push((index, value.to_vec()));
+    }
+    Ok(entries)
+}
+
 fn validate_sector_id(sector_id: &SectorId) -> Result<(), StorageError> {
     if sector_id.as_bytes().len() != SID_LEN {
         return Err(StorageError::Decode(format!(
