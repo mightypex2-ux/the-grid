@@ -26,11 +26,11 @@ This document defines the language, crate-per-layer layout, API and tooling rule
 | grid-net | `crates/grid-net` | Network abstraction over libp2p (QUIC, GossipSub) | grid-core |
 | zode | `crates/zode` | Zode node: libp2p, storage, proof, policy, metrics | grid-core, grid-crypto, grid-proof, grid-net, grid-storage |
 | zode-cli | `crates/zode-cli` | Console-only Zode: CLI/TUI | grid-core, zode |
-| zode-app | `crates/zode-app` | Standalone Zode application (desktop/tray) | grid-core, zode |
+| zode-bin | `crates/zode-bin` | Standalone Zode application (desktop/tray) | grid-core, zode |
 | grid-sdk | `crates/grid-sdk` | Client SDK: connect, encrypt, prove, upload, fetch, heads; identity + signing | zid, grid-core, grid-crypto, grid-proof, grid-net |
 
 **Build order:**
-`zid` (standalone) → `grid-core` → `grid-crypto`, `grid-storage`, `programs-zid`, `programs-interlink`, `programs-zfs` → `grid-proof`, `grid-net` → `zode`, `grid-sdk` → `zode-cli`, `zode-app`.
+`zid` (standalone) → `grid-core` → `grid-crypto`, `grid-storage`, `programs-zid`, `programs-interlink`, `programs-zfs` → `grid-proof`, `grid-net` → `zode`, `grid-sdk` → `zode-cli`, `zode-bin`.
 
 ## Crate dependency diagram (Mermaid)
 
@@ -44,7 +44,7 @@ flowchart TB
     net[grid-net]
     zodeLib[zode]
     zodeCli[zode-cli]
-    zodeApp[zode-app]
+    zodeApp[zode-bin]
     sdk[grid-sdk]
 
     crypto --> zn
@@ -81,7 +81,7 @@ flowchart TB
 - **Members:** All Grid crates under `crates/`, e.g. `crates/zid`, `crates/grid-core`, `crates/grid-crypto`, …
 - **Binaries:** Only crates that are runnable have `[[bin]]`:
   - `zode-cli`: binary for console-only Zode (e.g. `zode` or `zode-cli`).
-  - `zode-app`: binary for standalone Zode application (desktop or system-tray).
+  - `zode-bin`: binary for standalone Zode application (desktop or system-tray).
 
 Example root `Cargo.toml`:
 
@@ -101,12 +101,12 @@ members = [
   "crates/grid-net",
   "crates/zode",
   "crates/zode-cli",
-  "crates/zode-app",
+  "crates/zode-bin",
   "crates/grid-sdk",
 ]
 ```
 
-Each crate `Cargo.toml` declares `[lib]`; only `zode-cli` and `zode-app` add `[[bin]]` with the desired binary name.
+Each crate `Cargo.toml` declares `[lib]`; only `zode-cli` and `zode-bin` add `[[bin]]` with the desired binary name.
 
 ## Implementation
 

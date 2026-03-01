@@ -18,7 +18,7 @@
 
 - Clients can connect to Zodes, encrypt sectors, and upload with configurable replication.
 - Zodes persist blocks and heads in RocksDB, verify proofs when required, and enforce local storage policy.
-- Console CLI (zode-cli) and standalone app (zode-app) can run a Zode and show status, programs, peers, and live log.
+- Console CLI (zode-cli) and standalone app (zode-bin) can run a Zode and show status, programs, peers, and live log.
 - SDK supports connect, program_id/topic, encrypt, prove (optional), upload, fetch, and head helpers; ZID and Interlink helpers are available.
 - No RocksDB usage outside `grid-storage`; no direct libp2p outside `grid-net`.
 
@@ -54,7 +54,7 @@ flowchart LR
 | [05-standard-programs](05-standard-programs.md) | ZID and Interlink. |
 | [06-zode](06-zode.md) | Zode node requirements. |
 | [07-zode-cli](07-zode-cli.md) | Console-only Zode CLI. |
-| [08-zode-app](08-zode-app.md) | Standalone Zode application. |
+| [08-zode-bin](08-zode-bin.md) | Standalone Zode application. |
 | [09-sdk](09-sdk.md) | Client SDK. |
 | [10-crypto](10-crypto.md) | Client-side encryption. |
 | [11-core-types](11-core-types.md) | Shared types and identifiers. |

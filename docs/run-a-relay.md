@@ -148,7 +148,7 @@ cargo run -p zode-cli -- \
   --bootstrap /ip4/<bootstrap-ip>/udp/3690/quic-v1/p2p/<bootstrap-peer-id>
 ```
 
-`zode-app` example:
+`zode-bin` example:
 
 - Open Settings -> Relay.
 - Enable relay transport.

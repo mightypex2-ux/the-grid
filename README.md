@@ -54,7 +54,7 @@ You can read the first official protocol spec here: https://github.com/cypher-as
 
 Two ZODE applications ship in this workspace:
 
-- **zode-app** — a standalone desktop GUI built with eframe / egui.
+- **zode-bin** — a standalone desktop GUI built with eframe / egui.
 - **zode-cli** — a console TUI built with ratatui / crossterm.
 - **grid-relayd** — a standalone public relay service for relay-first NAT connectivity.
 
@@ -94,7 +94,7 @@ See [Run a ZODE](docs/run-a-zode.md) for full node setup and [Run a Relay](docs/
 | `grid-programs/zid` | ZID (Zero Identity) program descriptor and messages |
 | `grid-programs/interlink` | Interlink (chat) program descriptor and messages |
 | `grid-programs/zfs` | ZFS file-system program (placeholder) |
-| `zode-app` | Standalone desktop GUI for the Zode |
+| `zode-bin` | Standalone desktop GUI for the Zode |
 | `zode-cli` | Console TUI for the Zode |
 | `grid-relayd` | Public relay service for NAT-restricted peers |
 
@@ -113,7 +113,7 @@ zfs/
     grid-net/             # libp2p networking layer
     grid-sdk/             # client SDK
     zode/                 # core node logic
-    zode-app/             # desktop GUI (eframe/egui)
+    zode-bin/             # desktop GUI (eframe/egui)
     zode-cli/             # console TUI (ratatui/crossterm)
     grid-relayd/          # standalone relay service
     grid-programs/

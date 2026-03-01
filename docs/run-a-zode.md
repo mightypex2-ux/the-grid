@@ -69,7 +69,7 @@ cargo build
 ### Desktop GUI
 
 ```sh
-cargo run -p zode-app
+cargo run -p zode-bin
 ```
 
 The GUI opens a settings panel on first launch where you can configure the data
@@ -112,32 +112,32 @@ each target platform — there is no cross-compilation configuration.
 ### Windows (x86\_64-pc-windows-msvc)
 
 ```powershell
-cargo build --release -p zode-app
+cargo build --release -p zode-bin
 ```
 
-Binary: `target\release\zode-app.exe`
+Binary: `target\release\zode-bin.exe`
 
 ### macOS (aarch64-apple-darwin / x86\_64-apple-darwin)
 
 ```sh
-cargo build --release -p zode-app
+cargo build --release -p zode-bin
 ```
 
-Binary: `target/release/zode-app`
+Binary: `target/release/zode-bin`
 
 To produce a universal binary that runs on both Apple Silicon and Intel:
 
 ```sh
 # Build each architecture
 rustup target add x86_64-apple-darwin
-cargo build --release -p zode-app --target aarch64-apple-darwin
-cargo build --release -p zode-app --target x86_64-apple-darwin
+cargo build --release -p zode-bin --target aarch64-apple-darwin
+cargo build --release -p zode-bin --target x86_64-apple-darwin
 
 # Combine with lipo
 lipo -create \
-  target/aarch64-apple-darwin/release/zode-app \
-  target/x86_64-apple-darwin/release/zode-app \
-  -output zode-app-universal
+  target/aarch64-apple-darwin/release/zode-bin \
+  target/x86_64-apple-darwin/release/zode-bin \
+  -output zode-bin-universal
 ```
 
 ### Linux (x86\_64-unknown-linux-gnu)
@@ -145,10 +145,10 @@ lipo -create \
 Install the prerequisite system packages listed above, then:
 
 ```sh
-cargo build --release -p zode-app
+cargo build --release -p zode-bin
 ```
 
-Binary: `target/release/zode-app`
+Binary: `target/release/zode-bin`
 
 ## Configuration
 

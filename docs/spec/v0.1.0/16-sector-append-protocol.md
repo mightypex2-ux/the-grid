@@ -146,7 +146,7 @@ Unsubscribed sectors are silently dropped.
 | `grid-storage` | New `SectorStore` trait (append/insert_at/read_log/log_length). New key layout. |
 | `grid-core` | `GossipSectorAppend`, `SectorAppendRequest/Response`, `SectorReadLogRequest/Response`, `SectorLogLengthRequest/Response`, batch variants. |
 | `zode` | Handler dispatches append/read_log/log_length. Gossip decodes `GossipSectorAppend`, stores via `insert_at`. `SectorFilter` in config. |
-| `zode-app` | Chat uses single sector per channel. Updater polls `log_length`. Storage UI shows log entries. |
+| `zode-bin` | Chat uses single sector per channel. Updater polls `log_length`. Storage UI shows log entries. |
 | `grid-sdk` | `sector_append`, `sector_read_log`, `sector_log_length` replace `sector_store`/`sector_fetch`. |
 
 ## 9. Removed

@@ -168,7 +168,7 @@ pub enum NetworkEvent {
 - **Client event loop**: Handle `PeerDiscovered` — discovered Zodes can be added to the zode list for upload/fetch.
 - **Client mode Kademlia**: SDK clients should default to `KademliaMode::Client` so they don't serve as DHT routers.
 
-### zode-cli / zode-app
+### zode-cli / zode-bin
 
 - Display "Known peers" (routing table size) in addition to "Connected peers" in Status/Peers screens.
 - Show `[DHT] discovered <zode_id>` events in the live log.
@@ -236,4 +236,4 @@ flowchart LR
 - **Crate:** `grid-net`. This is the only crate that touches libp2p (per [01-architecture](01-architecture.md)).
 - **Dependencies:** `libp2p` already includes `kad` and `mdns` modules; no new crate dependencies needed, just feature flags.
 - **Default on:** `DiscoveryConfig::default()` enables Kademlia. Pass `--no-kademlia` (CLI) or set `enable_kademlia: false` (config) to revert to bootstrap-only mode.
-- **Config surface:** `zode-cli` flags: `--no-kademlia`, `--kademlia-mode server|client`, `--random-walk-interval <seconds>`. `zode-app` Settings tab: checkbox for Kademlia, mode selector, interval slider.
+- **Config surface:** `zode-cli` flags: `--no-kademlia`, `--kademlia-mode server|client`, `--random-walk-interval <seconds>`. `zode-bin` Settings tab: checkbox for Kademlia, mode selector, interval slider.

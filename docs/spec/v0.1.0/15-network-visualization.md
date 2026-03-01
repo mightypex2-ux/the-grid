@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The **Network Visualization** panel provides a GPU-accelerated, real-time graph of the local Zode and all connected / discovered Zodes. It is rendered inside the **ZODE** tab of `zode-app`, positioned **above** the existing Node section, giving the operator an immediate spatial overview of their node's place in the network.
+The **Network Visualization** panel provides a GPU-accelerated, real-time graph of the local Zode and all connected / discovered Zodes. It is rendered inside the **ZODE** tab of `zode-bin`, positioned **above** the existing Node section, giving the operator an immediate spatial overview of their node's place in the network.
 
 ## Requirements
 
@@ -113,7 +113,7 @@ Fields that cannot be resolved display "Unknown". The popup disappears on click-
 
 ### GPU acceleration via egui + wgpu
 
-`zode-app` already runs on `eframe` which uses `wgpu` as its rendering backend. The visualization uses egui's `PaintCallback` to issue custom wgpu draw calls inside the allocated UI rect:
+`zode-bin` already runs on `eframe` which uses `wgpu` as its rendering backend. The visualization uses egui's `PaintCallback` to issue custom wgpu draw calls inside the allocated UI rect:
 
 ```rust
 pub struct NetworkCanvas {
@@ -193,7 +193,7 @@ pub struct GeoResult {
 
 ## Impact on existing code
 
-### zode-app
+### zode-bin
 
 | File | Change |
 |------|--------|
@@ -223,7 +223,7 @@ flowchart LR
     subgraph zode
         Status[ZodeStatus poll]
     end
-    subgraph zode-app
+    subgraph zode-bin
         Viz[NetworkVisualizationState]
         Canvas[NetworkCanvas wgpu]
         Geo[GeoIP Cache]
@@ -266,7 +266,7 @@ stateDiagram-v2
 
 ## Implementation
 
-- **Crate:** `zode-app`. New module `visualization.rs`.
+- **Crate:** `zode-bin`. New module `visualization.rs`.
 - **GPU backend:** Uses the existing `eframe` / `wgpu` pipeline via `egui::PaintCallback`. No additional GPU framework needed.
 - **GeoIP:** Optional dependency `maxminddb` for reading `.mmdb` files. The GeoLite2-City database is not shipped in the repo; the operator places it in the data directory or the build bundles it. If absent, location fields show "Unknown".
 - **Performance budget:** Layout + draw must complete in < 2 ms per frame for 50 nodes to maintain 60 fps alongside the rest of the UI.

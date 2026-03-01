@@ -544,6 +544,6 @@ pub(crate) fn render_info(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnapsh
                 }
             });
 
-            muted_label(ui, &format!("zode-app v{}", env!("CARGO_PKG_VERSION")));
+            muted_label(ui, &format!("zode-bin v{}", env!("CARGO_PKG_VERSION")));
         });
 }

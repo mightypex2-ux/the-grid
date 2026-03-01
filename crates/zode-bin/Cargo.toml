@@ -1,11 +1,11 @@
 [package]
-name = "zode-app"
+name = "zode-bin"
 version = "0.2.0"
 edition = "2021"
 description = "ZODE App — standalone desktop GUI for the ZODE"
 
 [[bin]]
-name = "zode-app"
+name = "zode-bin"
 path = "src/main.rs"
 
 [dependencies]

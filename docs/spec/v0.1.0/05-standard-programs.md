@@ -61,7 +61,7 @@ fn sector_id_for_channel(channel_id: &ChannelId) -> SectorId {
 
 - **Size limits:** Document in crate (e.g. `ZMessage::MAX_SIZE`).
 - **Proof requirement:** `proof_required: bool` or enum in descriptor; Zode enforces when storing.
-- **Test channel:** For zode-app test messages (see [08-zode-app](08-zode-app.md)), a reserved channel id (e.g. `"INTERLINK-MAIN"` or a fixed byte string) may be used so test traffic does not collide with real channels.
+- **Test channel:** For zode-bin test messages (see [08-zode-bin](08-zode-bin.md)), a reserved channel id (e.g. `"INTERLINK-MAIN"` or a fixed byte string) may be used so test traffic does not collide with real channels.
 
 ## Diagrams (optional)
 

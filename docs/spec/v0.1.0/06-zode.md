@@ -12,7 +12,7 @@ The Zode is the storage node: it runs libp2p + QUIC, uses GossipSub for topic su
 - **Persist in RocksDB:** All persistence via `grid-storage` only (BlockStore, HeadStore, ProgramIndex). No direct RocksDB.
 - **Verify proofs when required:** Before persisting a block, if the program requires proof, call `ProofVerifier::verify`; reject with `ProofInvalid` on failure (see [04-proof](04-proof.md), [11-core-types](11-core-types.md)).
 - **Enforce local storage policy:** See [Storage policy](#storage-policy).
-- **Expose metrics/state to UI:** Counters and gauges (e.g. blocks stored, peer count, storage usage) for [07-zode-cli](07-zode-cli.md) and [08-zode-app](08-zode-app.md).
+- **Expose metrics/state to UI:** Counters and gauges (e.g. blocks stored, peer count, storage usage) for [07-zode-cli](07-zode-cli.md) and [08-zode-bin](08-zode-bin.md).
 
 ## Config schema
 
@@ -63,7 +63,7 @@ The `topics` field is reserved for **additional** (non-default) programs. An ope
 
 ### Settings persistence
 
-Changes to `default_programs` are persisted to the config file (or equivalent store). Both the CLI and the standalone app expose a **Settings** screen where these toggles are presented (see [07-zode-cli](07-zode-cli.md) and [08-zode-app](08-zode-app.md)).
+Changes to `default_programs` are persisted to the config file (or equivalent store). Both the CLI and the standalone app expose a **Settings** screen where these toggles are presented (see [07-zode-cli](07-zode-cli.md) and [08-zode-bin](08-zode-bin.md)).
 
 ## Storage policy
 

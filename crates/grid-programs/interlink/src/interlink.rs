@@ -257,5 +257,5 @@ impl ZMessage {
     }
 }
 
-/// Reserved test channel ID for zode-app test traffic.
+/// Reserved test channel ID for zode-bin test traffic.
 pub const TEST_CHANNEL_ID: &str = "INTERLINK-MAIN";
