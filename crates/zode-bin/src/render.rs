@@ -40,21 +40,66 @@ pub(crate) fn render_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
         }
     });
 
-    egui::SidePanel::left("settings_nav")
-        .exact_width(160.0)
+    let nav_resp = egui::SidePanel::left("settings_nav")
+        .exact_width(168.0)
         .resizable(false)
+        .show_separator_line(false)
         .frame(
             egui::Frame::default()
                 .fill(colors::PANEL_BG)
-                .inner_margin(egui::Margin { left: 0, right: 0, top: spacing::LG as i8, bottom: spacing::LG as i8 })
-                .stroke(egui::Stroke::new(1.0, colors::BORDER)),
+                .inner_margin(egui::Margin {
+                    left: 0,
+                    right: spacing::MD as i8,
+                    top: spacing::LG as i8,
+                    bottom: spacing::LG as i8,
+                })
+                .outer_margin(egui::Margin {
+                    left: 0,
+                    right: spacing::MD as i8,
+                    top: 0,
+                    bottom: spacing::MD as i8,
+                }),
         )
         .show_inside(ui, |ui| {
+            ui.set_min_height(ui.available_height());
             ui.set_width(ui.available_width());
+
+            let panel_left = ui.cursor().min.x;
+            let mut row_positions: Vec<(SettingsSection, f32, f32)> = Vec::new();
+
             for sec in SettingsSection::ALL {
-                settings_nav_item(ui, &mut app.settings_section, sec);
+                let (clicked, row_y, row_h) = settings_nav_item(ui, app.settings_section, sec);
+                row_positions.push((sec, row_y, row_h));
+                if clicked {
+                    app.settings_section = sec;
+                }
+            }
+
+            if let Some(&(_, target_y, h)) = row_positions
+                .iter()
+                .find(|(s, _, _)| *s == app.settings_section)
+            {
+                let anim_y = ui.ctx().animate_value_with_time(
+                    egui::Id::new("settings_nav_indicator_y"),
+                    target_y,
+                    0.15,
+                );
+                let indicator = egui::Rect::from_min_size(
+                    egui::pos2(panel_left, anim_y),
+                    egui::vec2(2.0, h),
+                );
+                ui.painter()
+                    .rect_filled(indicator, 0.0, egui::Color32::WHITE);
             }
         });
+
+    let nav_rect = nav_resp.response.rect;
+    let border_rect = egui::Rect::from_min_max(
+        nav_rect.min,
+        egui::pos2(nav_rect.max.x - spacing::MD, nav_rect.max.y - spacing::MD),
+    );
+    let border_stroke = egui::Stroke::new(1.0, colors::BORDER);
+    ui.painter().rect_stroke(border_rect, 0.0, border_stroke, egui::StrokeKind::Inside);
 
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
@@ -79,47 +124,45 @@ pub(crate) fn render_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Renders a nav label and returns `(clicked, row_y, row_height)`.
+/// The active indicator bar is drawn separately so it can be animated.
 fn settings_nav_item(
     ui: &mut egui::Ui,
-    current: &mut SettingsSection,
+    current: SettingsSection,
     target: SettingsSection,
-) {
-    let active = *current == target;
-    let text_color = if active {
-        colors::ACCENT
-    } else {
-        colors::TEXT_SECONDARY
-    };
+) -> (bool, f32, f32) {
+    let active = current == target;
+    let label_text = target.label().to_uppercase();
 
-    let label = egui::RichText::new(target.label())
-        .size(font_size::BODY)
-        .color(text_color);
-
-    let item_rect = ui.horizontal(|ui| {
-        if active {
-            let rect = ui.cursor();
-            let indicator = egui::Rect::from_min_size(
-                rect.min,
-                egui::vec2(2.0, spacing::XL + spacing::MD * 2.0),
-            );
-            ui.painter().rect_filled(indicator, 0.0, colors::ACCENT);
-        }
-        ui.add_space(spacing::LG);
-
-        let response = ui.selectable_label(false, label);
-        if response.clicked() {
-            *current = target;
-        }
-    }).response;
+    let row_height = ui.spacing().interact_size.y;
+    let row_width = ui.available_width();
+    let (row_id, row_rect) = ui.allocate_space(egui::vec2(row_width, row_height));
+    let response = ui.interact(row_rect, row_id, egui::Sense::click());
 
     if active {
-        let bg = item_rect.rect;
-        ui.painter().rect_filled(
-            bg,
-            0.0,
-            egui::Color32::from_white_alpha(4),
-        );
+        ui.painter()
+            .rect_filled(row_rect, 0.0, colors::SURFACE_INTERACTIVE);
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(row_rect, 0.0, colors::SURFACE_RAISED);
     }
+
+    let text_color = if active || response.hovered() {
+        egui::Color32::WHITE
+    } else {
+        egui::Color32::from_gray(180)
+    };
+
+    let text_pos = row_rect.min + egui::vec2(spacing::LG, (row_height - font_size::BODY) / 2.0);
+    ui.painter().text(
+        text_pos,
+        egui::Align2::LEFT_TOP,
+        &label_text,
+        egui::FontId::proportional(font_size::BODY),
+        text_color,
+    );
+
+    (response.clicked(), row_rect.min.y, row_height)
 }
 
 fn render_settings_general(app: &mut ZodeApp, ui: &mut egui::Ui, running: bool) {
