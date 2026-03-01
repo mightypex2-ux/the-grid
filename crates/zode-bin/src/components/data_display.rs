@@ -29,13 +29,6 @@ pub(crate) fn kv_row_copyable(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.end_row();
 }
 
-/// Monospace ID string with a copy button in a horizontal row.
-pub(crate) fn copyable_id_row(ui: &mut egui::Ui, value: &str) {
-    ui.horizontal(|ui| {
-        ui.monospace(value);
-        copy_button(ui, value);
-    });
-}
 
 /// Text input + ADD button + removable monospace items.
 pub(crate) fn editable_list(
