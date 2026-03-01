@@ -5,17 +5,32 @@ use super::tokens::{self, colors, font_size, ICON_SIZE, WIDGET_HEIGHT};
 fn styled_button(ui: &mut egui::Ui, label: &str, padding: egui::Vec2, font_size: f32) -> bool {
     let old_padding = ui.spacing().button_padding;
     ui.spacing_mut().button_padding = padding;
+
+    let wv = &mut ui.visuals_mut().widgets;
+    let saved = (
+        wv.inactive.weak_bg_fill,
+        wv.hovered.weak_bg_fill,
+        wv.active.weak_bg_fill,
+    );
+    wv.inactive.weak_bg_fill = egui::Color32::BLACK;
+    wv.hovered.weak_bg_fill = colors::SURFACE_INTERACTIVE;
+    wv.active.weak_bg_fill = colors::BORDER;
+
     let r = ui.add(
         egui::Button::new(
             egui::RichText::new(label.to_uppercase())
                 .color(egui::Color32::WHITE)
                 .size(font_size),
         )
-        .fill(egui::Color32::BLACK)
         .stroke(tokens::default_stroke())
         .corner_radius(0.0)
         .min_size(egui::vec2(0.0, WIDGET_HEIGHT)),
     );
+
+    let wv = &mut ui.visuals_mut().widgets;
+    wv.inactive.weak_bg_fill = saved.0;
+    wv.hovered.weak_bg_fill = saved.1;
+    wv.active.weak_bg_fill = saved.2;
     ui.spacing_mut().button_padding = old_padding;
     r.clicked()
 }
@@ -114,16 +129,31 @@ pub(crate) fn copy_button(ui: &mut egui::Ui, text: &str) {
 
 pub(super) fn square_icon_button(ui: &mut egui::Ui, icon: &str) -> bool {
     let size = egui::vec2(WIDGET_HEIGHT, WIDGET_HEIGHT);
-    ui.add(
+
+    let wv = &mut ui.visuals_mut().widgets;
+    let saved = (
+        wv.inactive.weak_bg_fill,
+        wv.hovered.weak_bg_fill,
+        wv.active.weak_bg_fill,
+    );
+    wv.inactive.weak_bg_fill = egui::Color32::BLACK;
+    wv.hovered.weak_bg_fill = colors::SURFACE_INTERACTIVE;
+    wv.active.weak_bg_fill = colors::BORDER;
+
+    let r = ui.add(
         egui::Button::new(
             egui::RichText::new(icon)
                 .size(ICON_SIZE)
                 .color(egui::Color32::WHITE),
         )
-        .fill(egui::Color32::BLACK)
         .stroke(tokens::default_stroke())
         .corner_radius(0.0)
         .min_size(size),
-    )
-    .clicked()
+    );
+
+    let wv = &mut ui.visuals_mut().widgets;
+    wv.inactive.weak_bg_fill = saved.0;
+    wv.hovered.weak_bg_fill = saved.1;
+    wv.active.weak_bg_fill = saved.2;
+    r.clicked()
 }
