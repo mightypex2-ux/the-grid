@@ -23,13 +23,13 @@ pub(crate) fn render_identity(app: &mut ZodeApp, ui: &mut egui::Ui) {
     } else if has_identity {
         render_identity_info(app, ui);
         ui.add_space(4.0);
-        render_machine_keys(app, ui);
-        ui.add_space(4.0);
         if app.identity_state.pending_save {
             render_save_profile(app, ui);
         } else if app.active_profile_id.is_some() {
             render_profile_panel(app, ui);
         }
+        ui.add_space(4.0);
+        render_machine_keys(app, ui);
     } else {
         render_no_identity(app, ui);
     }
