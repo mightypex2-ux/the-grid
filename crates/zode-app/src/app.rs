@@ -229,13 +229,17 @@ impl ZodeApp {
                 let data_dir = profile::data_dir_for_profile(&base, profile_id);
                 self.settings.data_dir = data_dir.to_string_lossy().to_string();
 
-                if let Some(kp) = libp2p_keypair {
-                    self.boot_zode_with_keypair(Some(kp));
+                if self.zode.is_some() {
+                    self.phase = AppPhase::Running;
                 } else {
-                    self.boot_zode();
+                    if let Some(kp) = libp2p_keypair {
+                        self.boot_zode_with_keypair(Some(kp));
+                    } else {
+                        self.boot_zode();
+                    }
+                    self.phase = AppPhase::Revealing;
+                    self.reveal_start = None;
                 }
-                self.phase = AppPhase::Revealing;
-                self.reveal_start = None;
             }
             Err(e) => {
                 self.unlock_error = Some(e.to_string());
@@ -497,29 +501,18 @@ impl ZodeApp {
     }
 
     pub(crate) fn lock_session(&mut self) {
-        self.stop_zode();
-        self.settings = Settings::default();
         self.unlock_password.clear();
         self.unlock_error = None;
         self.confirm_delete_profile = None;
-        self.active_profile_id = None;
         self.session_password = None;
-        self.status_first_seen = None;
         self.identity_state = Default::default();
-        self.shared =
-            std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::AppState::default()));
         self.tab = Tab::Status;
 
-        self.phase = if self.profiles.is_empty() {
-            self.identity_state = Default::default();
-            AppPhase::Setup
-        } else if self.profiles.len() > 1 {
-            AppPhase::ProfileSelect
-        } else {
-            AppPhase::Unlock {
-                profile_id: self.profiles[0].id.clone(),
-            }
-        };
+        let profile_id = self
+            .active_profile_id
+            .clone()
+            .unwrap_or_else(|| self.profiles[0].id.clone());
+        self.phase = AppPhase::Unlock { profile_id };
     }
 
     fn handle_resize_edges(ctx: &egui::Context) -> bool {
@@ -678,7 +671,7 @@ impl ZodeApp {
 
         if !self.profiles.is_empty() {
             if title_bar_icon(ui, egui_phosphor::regular::LOCK, false)
-                .on_hover_text("Lock & switch profile")
+                .on_hover_text("Lock")
                 .clicked()
             {
                 self.lock_session();
