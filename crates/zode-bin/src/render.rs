@@ -139,10 +139,7 @@ fn settings_nav_item(
     let (row_id, row_rect) = ui.allocate_space(egui::vec2(row_width, row_height));
     let response = ui.interact(row_rect, row_id, egui::Sense::click());
 
-    if active {
-        ui.painter()
-            .rect_filled(row_rect, 0.0, colors::SURFACE_INTERACTIVE);
-    } else if response.hovered() {
+    if !active && response.hovered() {
         ui.painter()
             .rect_filled(row_rect, 0.0, colors::SURFACE_RAISED);
     }
