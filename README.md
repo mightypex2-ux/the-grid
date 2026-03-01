@@ -58,7 +58,17 @@ Two ZODE applications ship in this workspace:
 - **zode-cli** — a console TUI built with ratatui / crossterm.
 - **grid-relayd** — a standalone public relay service for relay-first NAT connectivity.
 
-See [Run a ZODE](docs/run-a-zode.md) for node setup and [Run a Relay](docs/run-a-relay.md) for relay hosting and operations.
+### Quick Start
+
+Clone the [zid](https://github.com/cypher-asi/zid) repo first — it must sit **next to** the `the-grid` directory:
+
+```sh
+git clone https://github.com/cypher-asi/zid
+git clone https://github.com/cypher-asi/the-grid && cd the-grid
+cargo build
+```
+
+See [Run a ZODE](docs/run-a-zode.md) for full node setup and [Run a Relay](docs/run-a-relay.md) for relay hosting and operations.
 
 ## Principles
 

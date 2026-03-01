@@ -14,6 +14,7 @@
 - **Rust** stable toolchain (edition 2021). Install via [rustup](https://rustup.rs/).
 - **C/C++ compiler** — required by the `rocksdb` crate which builds RocksDB from source.
 - **CMake** — required on some platforms for the RocksDB build.
+- **[zid](https://github.com/cypher-asi/zid)** — the PQ-hybrid identity crate. Clone it so that it sits **next to** (sibling of) the `the-grid` directory (see [Running Locally](#running-locally)).
 
 ### Windows
 
@@ -45,12 +46,25 @@ sudo apt install build-essential cmake libxcb-render0-dev libxcb-shape0-dev \
 
 ## Running Locally
 
-Clone the repository and build the entire workspace:
+Clone both **the-grid** and the **zid** dependency so they sit side-by-side:
 
 ```sh
-git clone <repo-url> && cd the-grid
+git clone https://github.com/cypher-asi/zid
+git clone https://github.com/cypher-asi/the-grid && cd the-grid
 cargo build
 ```
+
+> **Important:** Several workspace crates depend on the `zid` crate via a
+> relative path (`../../../zid`). The final directory layout must look like:
+>
+> ```
+> parent-dir/
+>   zid/          # ← git clone https://github.com/cypher-asi/zid
+>   the-grid/     # ← git clone https://github.com/cypher-asi/the-grid
+> ```
+>
+> If the `zid` repo is missing or in the wrong location, `cargo build` will
+> fail with a path-dependency error.
 
 ### Desktop GUI
 
