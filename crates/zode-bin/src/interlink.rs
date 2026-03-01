@@ -64,16 +64,20 @@ impl ZodeApp {
             .expect("Interlink descriptor is valid");
         let sector_id = channel_id.sector_id();
 
-        let (update_tx, update_rx) = tokio::sync::mpsc::channel::<InterlinkUpdate>(4);
+        let (update_tx, update_rx) = tokio::sync::mpsc::channel::<InterlinkUpdate>(16);
         let (refresh_tx, refresh_rx) = tokio::sync::mpsc::channel::<()>(4);
 
-        let (initial_messages, initial_seen, initial_len) = self
+        // Only query log_length (fast RocksDB seek) to compute the tail
+        // position.  All decryption happens on the background updater.
+        let (tail_start, _total_len) = self
             .zode
             .as_ref()
             .map(|z| {
-                load_local_messages(z.storage(), &sector_key, &program_id, &sector_id)
+                let len = z.storage().log_length(&program_id, &sector_id).unwrap_or(0);
+                let start = len.saturating_sub(INITIAL_PAGE_SIZE);
+                (start, len)
             })
-            .unwrap_or_default();
+            .unwrap_or((0, 0));
 
         if let Some(ref zode) = self.zode {
             Self::spawn_interlink_updater(
@@ -84,7 +88,7 @@ impl ZodeApp {
                 sector_id.clone(),
                 update_tx,
                 refresh_rx,
-                initial_len,
+                tail_start,
             );
             Self::spawn_interlink_catchup(
                 &self.rt,
@@ -103,8 +107,8 @@ impl ZodeApp {
         });
 
         self.interlink_state = Some(InterlinkState {
-            messages: initial_messages,
-            seen_messages: initial_seen,
+            messages: Vec::new(),
+            seen_messages: std::collections::HashSet::new(),
             compose: String::new(),
             sector_key: Some(sector_key),
             machine_did,
@@ -114,11 +118,13 @@ impl ZodeApp {
             sector_id: Some(sector_id),
             prover: None,
             prover_rx: Some(prover_rx),
+            earliest_loaded_index: tail_start,
             error: None,
             initialized: true,
             scroll_to_bottom: true,
             focus_compose: true,
             update_rx: Some(update_rx),
+            history_rx: None,
             refresh_tx: Some(refresh_tx),
         });
     }
@@ -138,6 +144,7 @@ impl ZodeApp {
         rt.spawn(async move {
             let mut known_len: u64 = initial_known_len;
             loop {
+                let prev = known_len;
                 known_len = poll_new_entries(
                     &bg_storage,
                     &bg_key,
@@ -147,6 +154,11 @@ impl ZodeApp {
                     &update_tx,
                 )
                 .await;
+                // When a full batch was returned there are likely more
+                // entries to read — loop immediately instead of sleeping.
+                if known_len - prev >= POLL_BATCH_SIZE as u64 {
+                    continue;
+                }
                 tokio::select! {
                     _ = refresh_rx.recv() => {}
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
@@ -326,28 +338,47 @@ fn encrypt_message(
 }
 
 // ---------------------------------------------------------------------------
-// Synchronous local load (instant display of persisted messages)
+// Lazy message loading
 // ---------------------------------------------------------------------------
 
-fn load_local_messages(
+const INITIAL_PAGE_SIZE: u64 = 50;
+const HISTORY_PAGE_SIZE: usize = 50;
+
+/// Load older messages preceding `before_index`, returning them in
+/// chronological order along with the new earliest index.
+fn load_older_messages(
     storage: &Arc<grid_storage::RocksStorage>,
     sector_key: &SectorKey,
     program_id: &ProgramId,
     sector_id: &SectorId,
-) -> (Vec<DisplayMessage>, std::collections::HashSet<u64>, u64) {
-    let len = storage.log_length(program_id, sector_id).unwrap_or(0);
-    if len == 0 {
-        return (Vec::new(), std::collections::HashSet::new(), 0);
+    before_index: u64,
+) -> (Vec<DisplayMessage>, u64) {
+    if before_index == 0 {
+        return (Vec::new(), 0);
     }
+    let start = before_index.saturating_sub(HISTORY_PAGE_SIZE as u64);
+    let (msgs, _seen) =
+        read_and_decrypt_range(storage, sector_key, program_id, sector_id, start, before_index);
+    (msgs, start)
+}
 
+fn read_and_decrypt_range(
+    storage: &Arc<grid_storage::RocksStorage>,
+    sector_key: &SectorKey,
+    program_id: &ProgramId,
+    sector_id: &SectorId,
+    from: u64,
+    to: u64,
+) -> (Vec<DisplayMessage>, std::collections::HashSet<u64>) {
     let mut messages = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let mut cursor: u64 = 0;
+    let mut cursor = from;
     const BATCH: usize = 64;
 
-    while cursor < len {
+    while cursor < to {
+        let want = ((to - cursor) as usize).min(BATCH);
         let indexed = storage
-            .read_log_indexed(program_id, sector_id, cursor, BATCH)
+            .read_log_indexed(program_id, sector_id, cursor, want)
             .unwrap_or_default();
         if indexed.is_empty() {
             break;
@@ -363,14 +394,14 @@ fn load_local_messages(
         }
         cursor = next;
     }
-
-    info!(count = messages.len(), "loaded local interlink messages");
-    (messages, seen, len)
+    (messages, seen)
 }
 
 // ---------------------------------------------------------------------------
 // Background polling
 // ---------------------------------------------------------------------------
+
+const POLL_BATCH_SIZE: usize = 8;
 
 async fn poll_new_entries(
     storage: &Arc<grid_storage::RocksStorage>,
@@ -387,7 +418,7 @@ async fn poll_new_entries(
         return known_len;
     }
     let indexed = storage
-        .read_log_indexed(program_id, sector_id, known_len, 64)
+        .read_log_indexed(program_id, sector_id, known_len, POLL_BATCH_SIZE)
         .unwrap_or_default();
     if indexed.is_empty() {
         return current_len;
@@ -487,6 +518,7 @@ fn decrypt_entries(
     InterlinkUpdate {
         new_messages: display,
         error: first_error,
+        prepend_earliest: None,
     }
 }
 
@@ -637,20 +669,66 @@ fn drain_interlink_updates(app: &mut ZodeApp) {
             }
         }
     }
+
+    if let Some(ref mut rx) = il.history_rx {
+        if let Ok(upd) = rx.try_recv() {
+            if let Some(new_earliest) = upd.prepend_earliest {
+                let mut older: Vec<DisplayMessage> = Vec::new();
+                for msg in upd.new_messages {
+                    let h = msg.dedup_hash();
+                    if il.seen_messages.insert(h) {
+                        older.push(msg);
+                    }
+                }
+                if !older.is_empty() {
+                    older.append(&mut il.messages);
+                    il.messages = older;
+                }
+                il.earliest_loaded_index = new_earliest;
+            }
+            il.history_rx = None;
+        }
+    }
 }
 
 fn render_interlink_messages(app: &mut ZodeApp, ui: &mut egui::Ui) {
     let il = app.interlink_state.as_mut().unwrap();
     let should_scroll = il.scroll_to_bottom;
     il.scroll_to_bottom = false;
+    let has_more_history = il.earliest_loaded_index > 0;
+    let history_loading = il.history_rx.is_some();
 
     let available = ui.available_height() - 40.0;
+    let mut load_history = false;
+
     egui::ScrollArea::vertical()
         .max_height(available.max(100.0))
         .auto_shrink([false, false])
         .stick_to_bottom(true)
         .show(ui, |ui| {
             let il = app.interlink_state.as_ref().unwrap();
+
+            if history_loading {
+                ui.vertical_centered(|ui| {
+                    ui.spinner();
+                });
+                ui.add_space(4.0);
+            } else if has_more_history {
+                ui.vertical_centered(|ui| {
+                    if ui
+                        .link(
+                            egui::RichText::new("Load earlier messages")
+                                .weak()
+                                .italics(),
+                        )
+                        .clicked()
+                    {
+                        load_history = true;
+                    }
+                });
+                ui.add_space(4.0);
+            }
+
             if il.messages.is_empty() {
                 ui.label(
                     egui::RichText::new("No messages yet. Type something below!")
@@ -667,6 +745,44 @@ fn render_interlink_messages(app: &mut ZodeApp, ui: &mut egui::Ui) {
             }
         });
     ui.separator();
+
+    if load_history {
+        do_load_history(app);
+    }
+}
+
+fn do_load_history(app: &mut ZodeApp) {
+    let storage = match app.zode {
+        Some(ref z) => Arc::clone(z.storage()),
+        None => return,
+    };
+    let il = app.interlink_state.as_mut().unwrap();
+    let (Some(ref sector_key), Some(ref program_id), Some(ref sector_id)) =
+        (&il.sector_key, &il.program_id, &il.sector_id)
+    else {
+        return;
+    };
+
+    let before = il.earliest_loaded_index;
+    if before == 0 || il.history_rx.is_some() {
+        return;
+    }
+
+    let key = sector_key.clone();
+    let pid = *program_id;
+    let sid = sector_id.clone();
+    let (hist_tx, hist_rx) = tokio::sync::mpsc::channel::<InterlinkUpdate>(1);
+    il.history_rx = Some(hist_rx);
+
+    std::thread::spawn(move || {
+        let (msgs, new_earliest) =
+            load_older_messages(&storage, &key, &pid, &sid, before);
+        let _ = hist_tx.blocking_send(InterlinkUpdate {
+            new_messages: msgs,
+            error: None,
+            prepend_earliest: Some(new_earliest),
+        });
+    });
 }
 
 fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {

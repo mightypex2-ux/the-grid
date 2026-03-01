@@ -173,10 +173,13 @@ pub(crate) enum SignatureStatus {
     Failed,
 }
 
-/// Incremental update carrying only newly-discovered messages.
+/// Incremental update carrying newly-discovered or history messages.
 pub(crate) struct InterlinkUpdate {
     pub new_messages: Vec<DisplayMessage>,
     pub error: Option<String>,
+    /// When set, messages are older history that should be prepended, and
+    /// `earliest_loaded_index` should be updated to this value.
+    pub prepend_earliest: Option<u64>,
 }
 
 pub(crate) struct InterlinkState {
@@ -193,11 +196,15 @@ pub(crate) struct InterlinkState {
     pub prover: Option<Box<grid_proof_groth16::Groth16ShapeProver>>,
     /// Receives the prover once background loading completes.
     pub prover_rx: Option<tokio::sync::mpsc::Receiver<Box<grid_proof_groth16::Groth16ShapeProver>>>,
+    /// Earliest log index that has been loaded into `messages`.
+    /// When > 0 there is older history available to lazy-load.
+    pub earliest_loaded_index: u64,
     pub error: Option<String>,
     pub initialized: bool,
     pub scroll_to_bottom: bool,
     pub focus_compose: bool,
     pub update_rx: Option<tokio::sync::mpsc::Receiver<InterlinkUpdate>>,
+    pub history_rx: Option<tokio::sync::mpsc::Receiver<InterlinkUpdate>>,
     pub refresh_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
@@ -215,11 +222,13 @@ impl InterlinkState {
             sector_id: None,
             prover: None,
             prover_rx: None,
+            earliest_loaded_index: 0,
             error: Some(msg.to_string()),
             initialized: true,
             scroll_to_bottom: false,
             focus_compose: false,
             update_rx: None,
+            history_rx: None,
             refresh_tx: None,
         }
     }
