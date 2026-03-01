@@ -83,7 +83,7 @@ impl NetworkService {
             .listen_on(config.listen_addr)
             .map_err(|e| NetworkError::Transport(e.to_string()))?;
 
-        dial_bootstrap_peers(&mut swarm, &config.bootstrap_peers, kademlia_enabled)?;
+        dial_bootstrap_peers(&mut swarm, &config.bootstrap_peers, kademlia_enabled);
 
         let mut relay_peer_ids = HashSet::new();
         if relay_enabled {

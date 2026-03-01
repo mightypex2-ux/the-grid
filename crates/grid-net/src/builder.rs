@@ -108,29 +108,32 @@ pub(crate) fn dial_bootstrap_peers(
     swarm: &mut libp2p::Swarm<GridBehaviour>,
     peers: &[Multiaddr],
     kademlia_enabled: bool,
-) -> Result<(), NetworkError> {
+) {
+    let local_peer_id = *swarm.local_peer_id();
     for peer_addr in peers {
         let normalized = crate::addr::normalize_multiaddr(peer_addr);
         if !crate::addr::has_transport(&normalized) {
             debug!(%peer_addr, "skipping bootstrap peer with no transport address");
             continue;
         }
-        if kademlia_enabled {
-            if let Some(peer_id) = extract_peer_id(peer_addr) {
-                if crate::addr::is_globally_routable(&normalized) {
-                    swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .add_address(&peer_id, normalized);
-                    debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
-                }
+        if let Some(peer_id) = extract_peer_id(peer_addr) {
+            if peer_id == local_peer_id {
+                debug!(%peer_addr, "skipping self-dial");
+                continue;
+            }
+            if kademlia_enabled && crate::addr::is_globally_routable(&normalized) {
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, normalized);
+                debug!(%peer_id, %peer_addr, "added bootstrap peer to kademlia");
             }
         }
-        swarm
-            .dial(peer_addr.clone())
-            .map_err(|e| NetworkError::Dial(e.to_string()))?;
+        match swarm.dial(peer_addr.clone()) {
+            Ok(()) => debug!(%peer_addr, "dialed bootstrap peer"),
+            Err(e) => debug!(%peer_addr, error = %e, "failed to dial bootstrap peer"),
+        }
     }
-    Ok(())
 }
 
 pub(crate) fn dial_relay_peers(
