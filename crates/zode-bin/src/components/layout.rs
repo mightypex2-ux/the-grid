@@ -8,6 +8,7 @@ pub(crate) fn section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(
         .fill(colors::SURFACE)
         .corner_radius(0.0)
         .inner_margin(spacing::XL)
+        .outer_margin(egui::Margin::symmetric(1, 0))
         .stroke(tokens::border_stroke())
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
