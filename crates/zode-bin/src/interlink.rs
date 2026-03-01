@@ -89,6 +89,7 @@ impl ZodeApp {
 
         self.interlink_state = Some(InterlinkState {
             messages: Vec::new(),
+            seen_messages: std::collections::HashSet::new(),
             compose: String::new(),
             sector_key: Some(sector_key),
             machine_did,
@@ -553,9 +554,12 @@ fn drain_interlink_updates(app: &mut ZodeApp) {
             if upd.error.is_some() {
                 il.error = upd.error;
             }
-            if !upd.new_messages.is_empty() {
-                il.messages.extend(upd.new_messages);
-                il.scroll_to_bottom = true;
+            for msg in upd.new_messages {
+                let h = msg.dedup_hash();
+                if il.seen_messages.insert(h) {
+                    il.messages.push(msg);
+                    il.scroll_to_bottom = true;
+                }
             }
         }
     }

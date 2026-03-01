@@ -1,4 +1,5 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use grid_core::{ProgramId, SectorId};
@@ -122,6 +123,16 @@ pub(crate) struct DisplayMessage {
     pub signature_status: SignatureStatus,
 }
 
+impl DisplayMessage {
+    pub fn dedup_hash(&self) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.sender.hash(&mut h);
+        self.timestamp_ms.hash(&mut h);
+        self.content.hash(&mut h);
+        h.finish()
+    }
+}
+
 /// Signature verification status for display purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SignatureStatus {
@@ -138,6 +149,7 @@ pub(crate) struct InterlinkUpdate {
 
 pub(crate) struct InterlinkState {
     pub messages: Vec<DisplayMessage>,
+    pub seen_messages: HashSet<u64>,
     pub compose: String,
     pub sector_key: Option<SectorKey>,
     pub machine_did: String,
@@ -159,6 +171,7 @@ impl InterlinkState {
     pub fn error_only(msg: &str) -> Self {
         Self {
             messages: Vec::new(),
+            seen_messages: HashSet::new(),
             compose: String::new(),
             sector_key: None,
             machine_did: String::new(),

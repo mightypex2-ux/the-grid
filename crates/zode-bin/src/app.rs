@@ -634,8 +634,8 @@ impl ZodeApp {
         ui.selectable_value(&mut self.tab, Tab::Storage, "STORAGE");
         ui.selectable_value(&mut self.tab, Tab::Peers, "PEERS");
         ui.selectable_value(&mut self.tab, Tab::Log, "LOG");
-        ui.selectable_value(&mut self.tab, Tab::Interlink, "INTERLINK");
         ui.selectable_value(&mut self.tab, Tab::Info, "INFO");
+        ui.selectable_value(&mut self.tab, Tab::Interlink, "INTERLINK");
     }
 
     fn render_window_controls(&mut self, ui: &mut egui::Ui) {
