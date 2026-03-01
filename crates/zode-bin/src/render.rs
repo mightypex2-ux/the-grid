@@ -97,6 +97,24 @@ pub(crate) fn render_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
     let border_stroke = egui::Stroke::new(1.0, colors::BORDER);
     ui.painter().rect_stroke(border_rect, 0.0, border_stroke, egui::StrokeKind::Inside);
 
+    if let Some(ref err) = app.settings_error {
+        egui::TopBottomPanel::bottom("settings_error_panel")
+            .resizable(false)
+            .frame(
+                egui::Frame::default()
+                    .fill(colors::PANEL_BG)
+                    .inner_margin(egui::Margin {
+                        left: spacing::MD as i8,
+                        right: spacing::MD as i8,
+                        top: spacing::SM as i8,
+                        bottom: spacing::SM as i8,
+                    }),
+            )
+            .show_inside(ui, |ui| {
+                error_label(ui, err);
+            });
+    }
+
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
