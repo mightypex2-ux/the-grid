@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use grid_core::ProofSystem;
-use grid_net::{format_zode_id, NetworkEvent, NetworkService, ZodeId};
+use grid_net::{format_zode_id, NetworkEvent, NetworkService, OutboundRequestId, ZodeId};
 use grid_programs_interlink::InterlinkDescriptor;
 use grid_proof::{NoopVerifier, ProofVerifierRegistry};
 use grid_proof_groth16::Groth16ShapeVerifier;
@@ -17,6 +17,12 @@ use crate::error::ZodeError;
 use crate::metrics::ZodeMetrics;
 use crate::sector_handler::SectorRequestHandler;
 pub use crate::types::{LogEvent, ZodeStatus};
+
+type SectorRequestSubmission = (
+    ZodeId,
+    grid_core::SectorRequest,
+    tokio::sync::oneshot::Sender<Result<grid_core::SectorResponse, String>>,
+);
 
 /// The Zode — ties together storage, network, proof, and programs.
 ///
@@ -36,6 +42,7 @@ pub struct Zode {
     event_tx: broadcast::Sender<LogEvent>,
     shutdown_tx: mpsc::Sender<()>,
     publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+    sector_request_tx: mpsc::Sender<SectorRequestSubmission>,
     event_loop_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     rpc_server: Mutex<Option<RpcServer>>,
     rpc_config: RpcConfig,
@@ -80,6 +87,7 @@ impl Zode {
         let (event_tx, _) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let (publish_tx, publish_rx) = mpsc::channel(64);
+        let (sector_request_tx, sector_request_rx) = mpsc::channel(16);
         let metrics = Arc::new(ZodeMetrics::default());
         let connected_peers: Arc<RwLock<Vec<String>>> = Arc::default();
 
@@ -140,6 +148,7 @@ impl Zode {
             Arc::clone(&connected_peers),
             shutdown_rx,
             publish_rx,
+            sector_request_rx,
         );
 
         Ok(Self {
@@ -154,6 +163,7 @@ impl Zode {
             event_tx,
             shutdown_tx,
             publish_tx,
+            sector_request_tx,
             event_loop_handle: Mutex::new(Some(event_loop_handle)),
             rpc_server: Mutex::new(rpc_server),
             rpc_config: config.rpc.clone(),
@@ -199,6 +209,7 @@ impl Zode {
         connected_peers: Arc<RwLock<Vec<String>>>,
         shutdown_rx: mpsc::Receiver<()>,
         publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+        sector_request_rx: mpsc::Receiver<SectorRequestSubmission>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             Self::event_loop(
@@ -209,6 +220,7 @@ impl Zode {
                 connected_peers,
                 shutdown_rx,
                 publish_rx,
+                sector_request_rx,
             )
             .await;
         })
@@ -243,6 +255,19 @@ impl Zode {
             )
         };
 
+        let peer_ips = if let Ok(net) = self.network.try_lock() {
+            net.connected_peers_with_addrs()
+                .into_iter()
+                .filter_map(|(peer_id, addrs)| {
+                    let zid = format_zode_id(&peer_id);
+                    let ip = addrs.iter().find_map(grid_net::addr::extract_ip)?;
+                    Some((zid, ip))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
         ZodeStatus {
             zode_id: format_zode_id(&self.zode_id),
             peer_count,
@@ -252,6 +277,7 @@ impl Zode {
             rpc_enabled,
             rpc_addr,
             rpc_auth_required,
+            peer_ips,
         }
     }
 
@@ -302,6 +328,25 @@ impl Zode {
         }
     }
 
+    /// Send a sector protocol request to a specific peer and await the
+    /// response. The request is routed through the event loop so the
+    /// network lock is acquired safely.
+    pub async fn sector_request(
+        &self,
+        peer_id: &str,
+        request: grid_core::SectorRequest,
+    ) -> Result<grid_core::SectorResponse, String> {
+        let peer = grid_net::parse_zode_id(peer_id)
+            .map_err(|e| format!("invalid peer ID: {e}"))?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.sector_request_tx
+            .send((peer, request, tx))
+            .await
+            .map_err(|_| "sector request channel closed".to_string())?;
+        rx.await
+            .map_err(|_| "sector response channel dropped".to_string())?
+    }
+
     /// Access the network service (for advanced operations).
     pub fn network(&self) -> &Arc<Mutex<NetworkService>> {
         &self.network
@@ -329,7 +374,13 @@ impl Zode {
         connected_peers: Arc<RwLock<Vec<String>>>,
         mut shutdown_rx: mpsc::Receiver<()>,
         mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+        mut sector_request_rx: mpsc::Receiver<SectorRequestSubmission>,
     ) {
+        let mut pending_sector_requests: HashMap<
+            OutboundRequestId,
+            tokio::sync::oneshot::Sender<Result<grid_core::SectorResponse, String>>,
+        > = HashMap::new();
+
         loop {
             let event = {
                 let mut net = network.lock().await;
@@ -345,12 +396,40 @@ impl Zode {
                         }
                         continue;
                     }
+                    Some((peer, request, response_tx)) = sector_request_rx.recv() => {
+                        let request_id = net.send_sector_request(&peer, request);
+                        pending_sector_requests.insert(request_id, response_tx);
+                        continue;
+                    }
                 }
             };
 
             let Some(event) = event else {
                 warn!("network event stream ended");
                 return;
+            };
+
+            // Route responses for outbound sector requests to their callers
+            let event = match event {
+                NetworkEvent::SectorRequestResult {
+                    request_id,
+                    response,
+                    ..
+                } => {
+                    if let Some(tx) = pending_sector_requests.remove(&request_id) {
+                        let _ = tx.send(Ok(*response));
+                    }
+                    continue;
+                }
+                NetworkEvent::SectorOutboundFailure {
+                    request_id, error, ..
+                } => {
+                    if let Some(tx) = pending_sector_requests.remove(&request_id) {
+                        let _ = tx.send(Err(error));
+                    }
+                    continue;
+                }
+                other => other,
             };
 
             Self::dispatch_event(

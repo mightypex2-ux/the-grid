@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::metrics::MetricsSnapshot;
@@ -273,4 +274,6 @@ pub struct ZodeStatus {
     pub rpc_addr: Option<String>,
     /// Whether the RPC server requires API key authentication.
     pub rpc_auth_required: bool,
+    /// Mapping of Zode ID to IP address string for connected peers.
+    pub peer_ips: HashMap<String, String>,
 }
