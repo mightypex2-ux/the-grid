@@ -98,6 +98,18 @@ pub fn has_transport(addr: &Multiaddr) -> bool {
     })
 }
 
+/// Extract the first IP address (v4 or v6) from a multiaddr as a string.
+pub fn extract_ip(addr: &Multiaddr) -> Option<String> {
+    for proto in addr.iter() {
+        match proto {
+            Protocol::Ip4(ip) => return Some(ip.to_string()),
+            Protocol::Ip6(ip) => return Some(ip.to_string()),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Returns `true` when every IP address in the multiaddr is globally routable
 /// (not loopback, private, link-local, or unspecified).
 ///
@@ -222,6 +234,19 @@ mod tests {
             let addr: Multiaddr = s.parse().unwrap();
             assert!(!is_globally_routable(&addr), "{s} should not be routable");
         }
+    }
+
+    #[test]
+    fn extract_ip_v4() {
+        let addr: Multiaddr = "/ip4/3.129.15.45/tcp/3691".parse().unwrap();
+        assert_eq!(extract_ip(&addr), Some("3.129.15.45".to_string()));
+    }
+
+    #[test]
+    fn extract_ip_none_for_bare_p2p() {
+        let peer = PeerId::random();
+        let addr: Multiaddr = format!("/p2p/{peer}").parse().unwrap();
+        assert_eq!(extract_ip(&addr), None);
     }
 
     #[test]

@@ -28,7 +28,9 @@ mod error;
 mod event;
 mod service;
 
-pub use addr::{has_transport, is_globally_routable, normalize_multiaddr, sanitize_dial_addr};
+pub use addr::{
+    extract_ip, has_transport, is_globally_routable, normalize_multiaddr, sanitize_dial_addr,
+};
 pub use config::{DiscoveryConfig, KademliaMode, NetworkConfig, RelayConfig, DEFAULT_RELAY_PEER};
 pub use error::NetworkError;
 pub use event::NetworkEvent;
