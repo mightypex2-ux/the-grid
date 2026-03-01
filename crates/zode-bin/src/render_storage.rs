@@ -29,7 +29,6 @@ pub(crate) fn render_storage(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnap
         .collect();
 
     render_stats_section(ui, zode);
-    ui.add_space(spacing::MD);
     render_programs_section(ui, zode, status, &known_programs);
 }
 
