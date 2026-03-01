@@ -4,11 +4,11 @@ use super::tokens::{self, colors, font_size, spacing};
 
 /// Card-like container with an uppercased title.
 pub(crate) fn section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
-    let avail = ui.available_rect_before_wrap();
+    let max = ui.max_rect();
 
     let prev_clip = ui.clip_rect();
     ui.set_clip_rect(prev_clip.intersect(egui::Rect::from_x_y_ranges(
-        avail.left()..=avail.right(),
+        max.left()..=max.right(),
         prev_clip.top()..=prev_clip.bottom(),
     )));
 
@@ -31,8 +31,8 @@ pub(crate) fn section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(
     let resp = prepared.end(ui);
 
     let border_rect = egui::Rect::from_min_max(
-        egui::pos2(avail.left() + 1.0, resp.rect.top()),
-        egui::pos2(avail.right() - 1.0, resp.rect.bottom()),
+        egui::pos2(max.left() + 1.0, resp.rect.top()),
+        egui::pos2(max.right() - 1.0, resp.rect.bottom()),
     );
     ui.painter()
         .rect_stroke(border_rect, 0.0, tokens::border_stroke(), egui::StrokeKind::Inside);
