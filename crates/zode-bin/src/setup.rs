@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::app::ZodeApp;
 use crate::components::{action_button, centered_row, editable_list, error_label, field_label, hint_label};
+use crate::helpers::shorten_id;
 use crate::identity;
 use crate::profile;
 use crate::state::AppPhase;
@@ -197,7 +198,7 @@ impl ZodeApp {
                     if let Some(ref did) = self.identity_state.did.clone() {
                         centered_row(ui, "did_row", |ui| {
                             field_label(ui, "DID");
-                            ui.monospace(truncate_did(did));
+                            ui.monospace(shorten_id(did, 16, 8));
                         });
                         ui.add_space(4.0);
                     }
@@ -384,10 +385,3 @@ impl ZodeApp {
     }
 }
 
-fn truncate_did(did: &str) -> String {
-    if did.len() > 32 {
-        format!("{}...{}", &did[..16], &did[did.len() - 8..])
-    } else {
-        did.to_string()
-    }
-}

@@ -10,3 +10,15 @@ pub(crate) fn format_timestamp_ms(ms: u64) -> String {
     let s = secs % 60;
     format!("{h:02}:{m:02}:{s:02}")
 }
+
+/// Shorten a long identifier by keeping `prefix_len` leading and `suffix_len`
+/// trailing characters, separated by `"..."`.  Returns the original string
+/// unchanged when it is short enough.
+pub(crate) fn shorten_id(id: &str, prefix_len: usize, suffix_len: usize) -> String {
+    let min_len = prefix_len + suffix_len + 3;
+    if id.len() > min_len {
+        format!("{}...{}", &id[..prefix_len], &id[id.len() - suffix_len..])
+    } else {
+        id.to_string()
+    }
+}

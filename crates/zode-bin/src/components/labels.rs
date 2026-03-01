@@ -12,9 +12,9 @@ pub(crate) fn hint_label(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).weak());
 }
 
-/// Placeholder / empty-state text (e.g. "No items.", "resolving...").
+/// Alias for [`hint_label`] — placeholder / empty-state text.
 pub(crate) fn muted_label(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).weak());
+    hint_label(ui, text);
 }
 
 /// Red error message with spacing below.

@@ -568,18 +568,14 @@ fn drain_interlink_updates(app: &mut ZodeApp) {
 fn short_sender(id: &str) -> String {
     const ZODE_PREFIX: &str = "Zx12D3KooW";
     const DID_PREFIX: &str = "did:key:z6Mk";
-    if id.starts_with(ZODE_PREFIX) {
-        let unique = &id[ZODE_PREFIX.len()..];
+    if let Some(unique) = id.strip_prefix(ZODE_PREFIX) {
         let n = 6.min(unique.len());
         format!("Zx..{}", &unique[unique.len() - n..])
-    } else if id.starts_with(DID_PREFIX) {
-        let unique = &id[DID_PREFIX.len()..];
+    } else if let Some(unique) = id.strip_prefix(DID_PREFIX) {
         let n = 6.min(unique.len());
         format!("did:..{}", &unique[unique.len() - n..])
-    } else if id.len() > 12 {
-        format!("{}..{}", &id[..4], &id[id.len() - 6..])
     } else {
-        id.to_string()
+        crate::helpers::shorten_id(id, 4, 6)
     }
 }
 

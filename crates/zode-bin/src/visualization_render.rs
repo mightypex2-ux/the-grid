@@ -9,14 +9,11 @@ use crate::visualization::{color_of, radius_of, Camera, GraphNode, NetworkVisual
 /// characters.  We skip that prefix and show the last N unique chars.
 fn short_zid(id: &str, unique_chars: usize) -> String {
     const COMMON_PREFIX: &str = "Zx12D3KooW";
-    if id.starts_with(COMMON_PREFIX) {
-        let unique = &id[COMMON_PREFIX.len()..];
+    if let Some(unique) = id.strip_prefix(COMMON_PREFIX) {
         let n = unique_chars.min(unique.len());
         format!("Zx..{}", &unique[unique.len() - n..])
-    } else if id.len() > unique_chars + 4 {
-        format!("{}..{}", &id[..4], &id[id.len() - unique_chars..])
     } else {
-        id.to_string()
+        crate::helpers::shorten_id(id, 4, unique_chars)
     }
 }
 

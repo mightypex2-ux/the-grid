@@ -11,6 +11,7 @@ use crate::components::{
     action_button, copy_button, editable_list, error_label, field_label, hint_label, info_grid,
     kv_row, kv_row_copyable, section, std_button,
 };
+use crate::helpers::shorten_id;
 use crate::profile;
 use crate::state::DerivedMachineKey;
 use crate::vault::VaultPlaintext;
@@ -100,7 +101,7 @@ fn render_identity_info(app: &mut ZodeApp, ui: &mut egui::Ui) {
             if let Some(ref did) = app.identity_state.did {
                 field_label(ui, "DID");
                 ui.horizontal(|ui| {
-                    ui.monospace(truncate_did(did));
+                    ui.monospace(shorten_id(did, 16, 8));
                     copy_button(ui, did);
                 });
                 ui.end_row();
@@ -490,7 +491,7 @@ fn render_profile_panel(app: &mut ZodeApp, ui: &mut egui::Ui) {
                 if !meta.did.is_empty() {
                     field_label(ui, "DID");
                     ui.horizontal(|ui| {
-                        ui.monospace(truncate_did(&meta.did));
+                        ui.monospace(shorten_id(&meta.did, 16, 8));
                         copy_button(ui, &meta.did);
                     });
                     ui.end_row();
@@ -498,7 +499,7 @@ fn render_profile_panel(app: &mut ZodeApp, ui: &mut egui::Ui) {
                 if !meta.peer_id.is_empty() {
                     field_label(ui, "Peer");
                     ui.horizontal(|ui| {
-                        ui.monospace(truncate_did(&meta.peer_id));
+                        ui.monospace(shorten_id(&meta.peer_id, 16, 8));
                         copy_button(ui, &meta.peer_id);
                     });
                     ui.end_row();
@@ -567,10 +568,3 @@ fn render_profile_panel(app: &mut ZodeApp, ui: &mut egui::Ui) {
     }
 }
 
-fn truncate_did(did: &str) -> String {
-    if did.len() > 32 {
-        format!("{}...{}", &did[..16], &did[did.len() - 8..])
-    } else {
-        did.to_string()
-    }
-}
