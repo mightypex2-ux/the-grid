@@ -6,8 +6,9 @@ use crate::components::{
     form_grid, hint_label, info_grid, kv_row, kv_row_copyable, loading_state, muted_label,
     section, text_input,
 };
+use crate::components::tokens::{font_size, spacing};
 use crate::helpers::format_bytes;
-use crate::state::StateSnapshot;
+use crate::state::{SettingsSection, StateSnapshot};
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -39,17 +40,34 @@ pub(crate) fn render_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
         }
     });
 
+    egui::SidePanel::left("settings_nav")
+        .exact_width(160.0)
+        .resizable(false)
+        .frame(
+            egui::Frame::default()
+                .fill(colors::PANEL_BG)
+                .inner_margin(egui::Margin { left: 0, right: 0, top: spacing::LG as i8, bottom: spacing::LG as i8 })
+                .stroke(egui::Stroke::new(1.0, colors::BORDER)),
+        )
+        .show_inside(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for sec in SettingsSection::ALL {
+                settings_nav_item(ui, &mut app.settings_section, sec);
+            }
+        });
+
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
-            render_settings_general(app, ui, running);
-            render_bootstrap_peers(app, ui);
-            render_relay_peers(app, ui);
-            render_default_programs(app, ui);
-            render_topics(app, ui);
-            render_discovery_settings(app, ui);
-            render_rpc_settings(app, ui);
-            render_known_peers(app, ui);
+            match app.settings_section {
+                SettingsSection::General => render_settings_general(app, ui, running),
+                SettingsSection::Peers => render_peers_settings(app, ui),
+                SettingsSection::Relay => render_relay_peers(app, ui),
+                SettingsSection::DefaultPrograms => render_default_programs(app, ui),
+                SettingsSection::AdditionalPrograms => render_topics(app, ui),
+                SettingsSection::Discovery => render_discovery_settings(app, ui),
+                SettingsSection::RpcServer => render_rpc_settings(app, ui),
+            }
         });
 
     if do_boot {
@@ -58,6 +76,49 @@ pub(crate) fn render_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
     }
     if do_stop {
         app.stop_zode();
+    }
+}
+
+fn settings_nav_item(
+    ui: &mut egui::Ui,
+    current: &mut SettingsSection,
+    target: SettingsSection,
+) {
+    let active = *current == target;
+    let text_color = if active {
+        colors::ACCENT
+    } else {
+        colors::TEXT_SECONDARY
+    };
+
+    let label = egui::RichText::new(target.label())
+        .size(font_size::BODY)
+        .color(text_color);
+
+    let item_rect = ui.horizontal(|ui| {
+        if active {
+            let rect = ui.cursor();
+            let indicator = egui::Rect::from_min_size(
+                rect.min,
+                egui::vec2(2.0, spacing::XL + spacing::MD * 2.0),
+            );
+            ui.painter().rect_filled(indicator, 0.0, colors::ACCENT);
+        }
+        ui.add_space(spacing::LG);
+
+        let response = ui.selectable_label(false, label);
+        if response.clicked() {
+            *current = target;
+        }
+    }).response;
+
+    if active {
+        let bg = item_rect.rect;
+        ui.painter().rect_filled(
+            bg,
+            0.0,
+            egui::Color32::from_white_alpha(4),
+        );
     }
 }
 
@@ -82,7 +143,7 @@ fn render_settings_general(app: &mut ZodeApp, ui: &mut egui::Ui, running: bool) 
     });
 }
 
-fn render_bootstrap_peers(app: &mut ZodeApp, ui: &mut egui::Ui) {
+fn render_peers_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
     section(ui, "Bootstrap Peers", |ui| {
         hint_label(
             ui,
@@ -96,6 +157,36 @@ fn render_bootstrap_peers(app: &mut ZodeApp, ui: &mut egui::Ui) {
             360.0,
         );
     });
+
+    if !app.settings.known_peers.is_empty() {
+        section(ui, "Known Peers (auto-saved)", |ui| {
+            hint_label(
+                ui,
+                "Peers remembered from previous sessions. They are added to bootstrap on startup.",
+            );
+            ui.add_space(8.0);
+            let mut to_remove = Vec::new();
+            for (i, peer) in app.settings.known_peers.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.monospace(peer);
+                    if ui
+                        .small_button(egui_phosphor::regular::TRASH)
+                        .on_hover_text("Remove")
+                        .clicked()
+                    {
+                        to_remove.push(i);
+                    }
+                });
+            }
+            for i in to_remove.into_iter().rev() {
+                app.settings.known_peers.remove(i);
+            }
+            ui.add_space(4.0);
+            if action_button(ui, "Clear All") {
+                app.settings.known_peers.clear();
+            }
+        });
+    }
 }
 
 fn render_relay_peers(app: &mut ZodeApp, ui: &mut egui::Ui) {
@@ -190,38 +281,6 @@ fn render_rpc_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
     });
 }
 
-fn render_known_peers(app: &mut ZodeApp, ui: &mut egui::Ui) {
-    if app.settings.known_peers.is_empty() {
-        return;
-    }
-    section(ui, "Known Peers (auto-saved)", |ui| {
-        hint_label(
-            ui,
-            "Peers remembered from previous sessions. They are added to bootstrap on startup.",
-        );
-        ui.add_space(8.0);
-        let mut to_remove = Vec::new();
-        for (i, peer) in app.settings.known_peers.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.monospace(peer);
-                if ui
-                    .small_button(egui_phosphor::regular::TRASH)
-                    .on_hover_text("Remove")
-                    .clicked()
-                {
-                    to_remove.push(i);
-                }
-            });
-        }
-        for i in to_remove.into_iter().rev() {
-            app.settings.known_peers.remove(i);
-        }
-        ui.add_space(4.0);
-        if action_button(ui, "Clear All") {
-            app.settings.known_peers.clear();
-        }
-    });
-}
 
 // ---------------------------------------------------------------------------
 // Status

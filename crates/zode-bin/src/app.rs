@@ -8,7 +8,7 @@ use zode::{LogEvent, Zode};
 use crate::components::{auth_screen_panel, colors, link_button, status_dot, title_bar_icon};
 use crate::profile::{self, ProfileMeta};
 use crate::settings::Settings;
-use crate::state::{AppPhase, AppState, Tab, MAX_LOG_ENTRIES};
+use crate::state::{AppPhase, AppState, SettingsSection, Tab, MAX_LOG_ENTRIES};
 
 pub(crate) struct ZodeApp {
     pub rt: Runtime,
@@ -36,6 +36,7 @@ pub(crate) struct ZodeApp {
     pub log_scroll_to_bottom: bool,
     pub active_profile_id: Option<String>,
     pub session_password: Option<String>,
+    pub settings_section: SettingsSection,
 }
 
 impl ZodeApp {
@@ -81,6 +82,7 @@ impl ZodeApp {
             log_scroll_to_bottom: false,
             active_profile_id: None,
             session_password: None,
+            settings_section: SettingsSection::General,
         };
 
         app

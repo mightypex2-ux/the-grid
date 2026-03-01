@@ -53,6 +53,41 @@ pub(crate) enum Tab {
     Identity,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsSection {
+    General,
+    Peers,
+    Relay,
+    DefaultPrograms,
+    AdditionalPrograms,
+    Discovery,
+    RpcServer,
+}
+
+impl SettingsSection {
+    pub const ALL: [SettingsSection; 7] = [
+        Self::General,
+        Self::Peers,
+        Self::Relay,
+        Self::DefaultPrograms,
+        Self::AdditionalPrograms,
+        Self::Discovery,
+        Self::RpcServer,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Peers => "Peers",
+            Self::Relay => "Relay",
+            Self::DefaultPrograms => "Default Programs",
+            Self::AdditionalPrograms => "Additional Programs",
+            Self::Discovery => "Discovery",
+            Self::RpcServer => "RPC Server",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AppPhase {
     Setup,
