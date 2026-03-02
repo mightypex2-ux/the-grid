@@ -561,14 +561,18 @@ pub(crate) fn render_log(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnap
 
     let total = state.log_entries.len();
 
-    let mut unique_services: Vec<String> = Vec::new();
-    for entry in &state.log_entries {
-        if let Some(ref svc) = entry.service {
-            if !unique_services.contains(svc) {
-                unique_services.push(svc.clone());
-            }
-        }
-    }
+    let active_services: Vec<String> = app
+        .zode
+        .as_ref()
+        .and_then(|z| z.service_registry().try_read().ok())
+        .map(|reg| {
+            reg.list_services()
+                .into_iter()
+                .filter(|s| s.running)
+                .map(|s| s.descriptor.name)
+                .collect()
+        })
+        .unwrap_or_default();
 
     let nav_resp = egui::SidePanel::left("log_filter_nav")
         .exact_width(168.0)
@@ -673,7 +677,7 @@ pub(crate) fn render_log(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnap
                 }
             }
 
-            for svc in &unique_services {
+            for svc in &active_services {
                 let active = app.log_service_filter.as_deref() == Some(svc.as_str());
                 let (clicked, y, h) = filter_nav_item(ui, svc, active, None);
                 if active {
