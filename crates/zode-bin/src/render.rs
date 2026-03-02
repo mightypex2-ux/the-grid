@@ -805,10 +805,11 @@ fn filter_nav_item(
     }
 
     let text_pos = egui::pos2(text_x, row_rect.center().y);
+    let label_upper = label.to_uppercase();
     ui.painter().text(
         text_pos,
         egui::Align2::LEFT_CENTER,
-        label,
+        &label_upper,
         egui::FontId::proportional(font_size::BODY),
         text_color,
     );
