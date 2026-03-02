@@ -85,10 +85,17 @@ impl Zode {
         let data_dir = config.storage.path.clone();
 
         let vk_dir = data_dir.join("proof_keys");
-        grid_proof_groth16::ensure_keys(&vk_dir)?;
-
-        let storage =
-            Arc::new(RocksStorage::open(config.storage.clone()).map_err(ZodeError::Storage)?);
+        let storage_config = config.storage.clone();
+        let vk_dir_clone = vk_dir.clone();
+        let (keys_result, storage_result) = tokio::task::spawn_blocking(move || {
+            let keys = grid_proof_groth16::ensure_keys(&vk_dir_clone);
+            let storage = RocksStorage::open(storage_config);
+            (keys, storage)
+        })
+        .await
+        .map_err(|e| ZodeError::Other(format!("blocking init task panicked: {e}")))?;
+        keys_result?;
+        let storage = Arc::new(storage_result.map_err(ZodeError::Storage)?);
         info!(path = ?config.storage.path, "storage opened");
 
         let (event_tx, _) = broadcast::channel(256);
@@ -525,7 +532,7 @@ impl Zode {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn event_loop<S: SectorStore>(
+    async fn event_loop<S: SectorStore + Send + Sync + 'static>(
         sector_handler: Arc<SectorRequestHandler<S>>,
         network: Arc<Mutex<NetworkService>>,
         event_tx: broadcast::Sender<LogEvent>,
@@ -630,9 +637,9 @@ impl Zode {
         }
     }
 
-    async fn dispatch_event<S: SectorStore>(
+    async fn dispatch_event<S: SectorStore + Send + Sync + 'static>(
         event: NetworkEvent,
-        sector_handler: &SectorRequestHandler<S>,
+        sector_handler: &Arc<SectorRequestHandler<S>>,
         network: &Arc<Mutex<NetworkService>>,
         event_tx: &broadcast::Sender<LogEvent>,
         metrics: &Arc<ZodeMetrics>,
@@ -749,8 +756,8 @@ impl Zode {
         let _ = event_tx.send(LogEvent::PeerDisconnected(peer_str));
     }
 
-    async fn handle_incoming_sector<S: SectorStore>(
-        sector_handler: &SectorRequestHandler<S>,
+    async fn handle_incoming_sector<S: SectorStore + Send + Sync + 'static>(
+        sector_handler: &Arc<SectorRequestHandler<S>>,
         network: &Arc<Mutex<NetworkService>>,
         event_tx: &broadcast::Sender<LogEvent>,
         peer: ZodeId,
@@ -758,11 +765,24 @@ impl Zode {
         channel: grid_net::ResponseChannel<grid_core::SectorResponse>,
     ) {
         debug!(%peer, "incoming sector request");
-        let response = sector_handler.handle_sector_request(&request);
-        emit_sector_log(event_tx, &request, &response);
-        let mut net = network.lock().await;
-        if let Err(e) = net.send_sector_response(channel, response) {
-            error!(error = %e, "failed to send sector response");
+        let handler = Arc::clone(sector_handler);
+        let result =
+            tokio::task::spawn_blocking(move || {
+                let response = handler.handle_sector_request(&request);
+                (request, response)
+            })
+            .await;
+        match result {
+            Ok((req, response)) => {
+                emit_sector_log(event_tx, &req, &response);
+                let mut net = network.lock().await;
+                if let Err(e) = net.send_sector_response(channel, response) {
+                    error!(error = %e, "failed to send sector response");
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "sector request handler panicked");
+            }
         }
     }
 }

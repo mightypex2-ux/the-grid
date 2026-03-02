@@ -90,7 +90,10 @@ async fn main() -> Result<()> {
         "starting grid-relayd"
     );
 
-    let key = load_or_generate_keypair(&config.key_file)?;
+    let key_file = config.key_file.clone();
+    let key = tokio::task::spawn_blocking(move || load_or_generate_keypair(&key_file))
+        .await
+        .context("keypair task panicked")??;
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
         .with_tokio()
         .with_tcp(

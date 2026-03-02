@@ -372,9 +372,14 @@ impl ZodeApp {
                     path = %cache_path.display(),
                     "persisting peer cache"
                 );
-                if let Err(e) = crate::settings::save_peer_cache(&cache_path, &addrs) {
-                    tracing::warn!("failed to persist peer cache: {e}");
-                }
+                let path = cache_path.clone();
+                let peers = addrs.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Err(e) = crate::settings::save_peer_cache(&path, &peers) {
+                        tracing::warn!("failed to persist peer cache: {e}");
+                    }
+                })
+                .await;
             }
         })
     }
