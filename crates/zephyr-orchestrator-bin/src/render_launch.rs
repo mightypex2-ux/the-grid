@@ -64,8 +64,10 @@ pub(crate) fn render_launch_screen(app: &mut OrchestratorApp, ui: &mut egui::Ui)
 
             if matches!(app.selected_preset, NetworkPreset::Custom { .. }) {
                 render_custom_inputs(ui, &mut app.selected_preset);
-                ui.add_space(spacing::MD);
+            } else {
+                ui.allocate_space(egui::vec2(0.0, ui.spacing().interact_size.y));
             }
+            ui.add_space(spacing::MD);
 
             ui.add_space(spacing::XXL);
 
