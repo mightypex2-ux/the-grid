@@ -20,6 +20,9 @@ pub enum StorageError {
 
     #[error("batch too large: {0}")]
     BatchTooLarge(String),
+
+    #[error("unsupported operation: {0}")]
+    Unsupported(String),
 }
 
 impl From<StorageError> for grid_core::GridError {

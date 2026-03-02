@@ -86,6 +86,10 @@ pub enum SectorRequest {
     LogLength(SectorLogLengthRequest),
     BatchAppend(SectorBatchAppendRequest),
     BatchLogLength(SectorBatchLogLengthRequest),
+    KvGet(KvGetRequest),
+    KvPut(KvPutRequest),
+    KvDelete(KvDeleteRequest),
+    KvContains(KvContainsRequest),
 }
 
 /// Zode → Client: sector response sent over `/grid/sector/1.0.0`.
@@ -96,6 +100,10 @@ pub enum SectorResponse {
     LogLength(SectorLogLengthResponse),
     BatchAppend(SectorBatchAppendResponse),
     BatchLogLength(SectorBatchLogLengthResponse),
+    KvGet(KvGetResponse),
+    KvPut(KvPutResponse),
+    KvDelete(KvDeleteResponse),
+    KvContains(KvContainsResponse),
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +231,77 @@ pub struct SectorLogLengthResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SectorBatchLogLengthResponse {
     pub results: Vec<SectorLogLengthResult>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error_code: Option<ErrorCode>,
+}
+
+// ---------------------------------------------------------------------------
+// Key-Value (service-local index)
+// ---------------------------------------------------------------------------
+
+/// Get a value by key from the service KV store.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KvGetRequest {
+    pub program_id: ProgramId,
+    #[serde(with = "serde_bytes")]
+    pub key: Vec<u8>,
+}
+
+/// Response to a KV get.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KvGetResponse {
+    #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none", default)]
+    pub value: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error_code: Option<ErrorCode>,
+}
+
+/// Put a value by key into the service KV store.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KvPutRequest {
+    pub program_id: ProgramId,
+    #[serde(with = "serde_bytes")]
+    pub key: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub value: Vec<u8>,
+}
+
+/// Response to a KV put.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvPutResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error_code: Option<ErrorCode>,
+}
+
+/// Delete a key from the service KV store.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KvDeleteRequest {
+    pub program_id: ProgramId,
+    #[serde(with = "serde_bytes")]
+    pub key: Vec<u8>,
+}
+
+/// Response to a KV delete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvDeleteResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error_code: Option<ErrorCode>,
+}
+
+/// Check if a key exists in the service KV store.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KvContainsRequest {
+    pub program_id: ProgramId,
+    #[serde(with = "serde_bytes")]
+    pub key: Vec<u8>,
+}
+
+/// Response to a KV contains check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvContainsResponse {
+    pub exists: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub error_code: Option<ErrorCode>,
 }

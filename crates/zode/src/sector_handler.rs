@@ -2,12 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use grid_core::{
-    Cid, ErrorCode, GossipSectorAppend, ProgramId, ProofSystem, SectorAppendRequest,
-    SectorAppendResponse, SectorAppendResult, SectorBatchAppendEntry, SectorBatchAppendRequest,
-    SectorBatchAppendResponse, SectorBatchLogLengthRequest, SectorBatchLogLengthResponse,
-    SectorLogLengthRequest, SectorLogLengthResponse, SectorLogLengthResult, SectorReadLogRequest,
-    SectorReadLogResponse, SectorRequest, SectorResponse, ShapeProof, MAX_BATCH_ENTRIES,
-    MAX_BATCH_PAYLOAD_BYTES,
+    Cid, ErrorCode, GossipSectorAppend, KvContainsRequest, KvContainsResponse, KvDeleteRequest,
+    KvDeleteResponse, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, ProgramId,
+    ProofSystem, SectorAppendRequest, SectorAppendResponse, SectorAppendResult,
+    SectorBatchAppendEntry, SectorBatchAppendRequest, SectorBatchAppendResponse,
+    SectorBatchLogLengthRequest, SectorBatchLogLengthResponse, SectorLogLengthRequest,
+    SectorLogLengthResponse, SectorLogLengthResult, SectorReadLogRequest, SectorReadLogResponse,
+    SectorRequest, SectorResponse, ShapeProof, MAX_BATCH_ENTRIES, MAX_BATCH_PAYLOAD_BYTES,
 };
 use grid_proof::ProofVerifierRegistry;
 use grid_storage::{SectorStore, StorageError};
@@ -67,6 +68,10 @@ impl<S: SectorStore> SectorRequestHandler<S> {
             SectorRequest::BatchLogLength(r) => {
                 SectorResponse::BatchLogLength(self.handle_batch_log_length(r))
             }
+            SectorRequest::KvGet(r) => SectorResponse::KvGet(self.handle_kv_get(r)),
+            SectorRequest::KvPut(r) => SectorResponse::KvPut(self.handle_kv_put(r)),
+            SectorRequest::KvDelete(r) => SectorResponse::KvDelete(self.handle_kv_delete(r)),
+            SectorRequest::KvContains(r) => SectorResponse::KvContains(self.handle_kv_contains(r)),
         }
     }
 
@@ -256,6 +261,70 @@ impl<S: SectorStore> SectorRequestHandler<S> {
         SectorBatchLogLengthResponse {
             results,
             error_code: None,
+        }
+    }
+
+    fn handle_kv_get(&self, req: &KvGetRequest) -> KvGetResponse {
+        match self.storage.kv_get(&req.program_id, &req.key) {
+            Ok(value) => KvGetResponse {
+                value,
+                error_code: None,
+            },
+            Err(e) => {
+                warn!(error = %e, "kv_get failed");
+                KvGetResponse {
+                    value: None,
+                    error_code: Some(storage_err_to_code(&e)),
+                }
+            }
+        }
+    }
+
+    fn handle_kv_put(&self, req: &KvPutRequest) -> KvPutResponse {
+        match self.storage.kv_put(&req.program_id, &req.key, &req.value) {
+            Ok(()) => KvPutResponse {
+                ok: true,
+                error_code: None,
+            },
+            Err(e) => {
+                warn!(error = %e, "kv_put failed");
+                KvPutResponse {
+                    ok: false,
+                    error_code: Some(storage_err_to_code(&e)),
+                }
+            }
+        }
+    }
+
+    fn handle_kv_delete(&self, req: &KvDeleteRequest) -> KvDeleteResponse {
+        match self.storage.kv_delete(&req.program_id, &req.key) {
+            Ok(()) => KvDeleteResponse {
+                ok: true,
+                error_code: None,
+            },
+            Err(e) => {
+                warn!(error = %e, "kv_delete failed");
+                KvDeleteResponse {
+                    ok: false,
+                    error_code: Some(storage_err_to_code(&e)),
+                }
+            }
+        }
+    }
+
+    fn handle_kv_contains(&self, req: &KvContainsRequest) -> KvContainsResponse {
+        match self.storage.kv_contains(&req.program_id, &req.key) {
+            Ok(exists) => KvContainsResponse {
+                exists,
+                error_code: None,
+            },
+            Err(e) => {
+                warn!(error = %e, "kv_contains failed");
+                KvContainsResponse {
+                    exists: false,
+                    error_code: Some(storage_err_to_code(&e)),
+                }
+            }
         }
     }
 

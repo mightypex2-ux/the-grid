@@ -20,11 +20,12 @@ pub use program_id::ProgramId;
 pub use program_topic::program_topic;
 pub use sector_id::SectorId;
 pub use sector_protocol::{
-    CiphertextHash, GossipSectorAppend, SchemaHash, SectorAppendRequest, SectorAppendResponse,
-    SectorAppendResult, SectorBatchAppendEntry, SectorBatchAppendRequest,
-    SectorBatchAppendResponse, SectorBatchLogLengthRequest, SectorBatchLogLengthResponse,
-    SectorLogLengthRequest, SectorLogLengthResponse, SectorLogLengthResult, SectorReadLogRequest,
-    SectorReadLogResponse, SectorRequest, SectorResponse, ShapeProof, MAX_BATCH_ENTRIES,
-    MAX_BATCH_PAYLOAD_BYTES,
+    CiphertextHash, GossipSectorAppend, KvContainsRequest, KvContainsResponse, KvDeleteRequest,
+    KvDeleteResponse, KvGetRequest, KvGetResponse, KvPutRequest, KvPutResponse, SchemaHash,
+    SectorAppendRequest, SectorAppendResponse, SectorAppendResult, SectorBatchAppendEntry,
+    SectorBatchAppendRequest, SectorBatchAppendResponse, SectorBatchLogLengthRequest,
+    SectorBatchLogLengthResponse, SectorLogLengthRequest, SectorLogLengthResponse,
+    SectorLogLengthResult, SectorReadLogRequest, SectorReadLogResponse, SectorRequest,
+    SectorResponse, ShapeProof, MAX_BATCH_ENTRIES, MAX_BATCH_PAYLOAD_BYTES,
 };
 pub use util::format_bytes;

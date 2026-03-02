@@ -84,4 +84,35 @@ pub trait SectorStore {
         sector_id: &SectorId,
         index: u64,
     ) -> Result<Option<Vec<u8>>, StorageError>;
+
+    /// Get a value from the service KV store.
+    ///
+    /// Key layout in the backing store: `program_id(32B) || key`.
+    fn kv_get(
+        &self,
+        _program_id: &ProgramId,
+        _key: &[u8],
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        Err(StorageError::Unsupported("kv_get".into()))
+    }
+
+    /// Put a value into the service KV store.
+    fn kv_put(
+        &self,
+        _program_id: &ProgramId,
+        _key: &[u8],
+        _value: &[u8],
+    ) -> Result<(), StorageError> {
+        Err(StorageError::Unsupported("kv_put".into()))
+    }
+
+    /// Delete a key from the service KV store.
+    fn kv_delete(&self, _program_id: &ProgramId, _key: &[u8]) -> Result<(), StorageError> {
+        Err(StorageError::Unsupported("kv_delete".into()))
+    }
+
+    /// Check if a key exists in the service KV store.
+    fn kv_contains(&self, _program_id: &ProgramId, _key: &[u8]) -> Result<bool, StorageError> {
+        Err(StorageError::Unsupported("kv_contains".into()))
+    }
 }

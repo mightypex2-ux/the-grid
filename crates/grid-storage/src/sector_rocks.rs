@@ -1,7 +1,7 @@
 use grid_core::{ProgramId, SectorId};
 
 use crate::error::StorageError;
-use crate::rocks::{RocksStorage, CF_PROOFS, CF_SECTORS};
+use crate::rocks::{RocksStorage, CF_PROOFS, CF_SECTORS, CF_SERVICE_KV};
 use crate::sector_traits::{SectorStorageStats, SectorStore};
 
 const PID_LEN: usize = 32;
@@ -118,6 +118,30 @@ impl SectorStore for RocksStorage {
         let key = build_entry_key(program_id, sector_id, index);
         Ok(self.db().get_cf(cf, &key)?)
     }
+
+    fn kv_get(&self, program_id: &ProgramId, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
+        let cf = self.cf_handle(CF_SERVICE_KV)?;
+        let db_key = build_kv_key(program_id, key);
+        Ok(self.db().get_cf(cf, &db_key)?)
+    }
+
+    fn kv_put(&self, program_id: &ProgramId, key: &[u8], value: &[u8]) -> Result<(), StorageError> {
+        let cf = self.cf_handle(CF_SERVICE_KV)?;
+        let db_key = build_kv_key(program_id, key);
+        self.db().put_cf(cf, &db_key, value)?;
+        Ok(())
+    }
+
+    fn kv_delete(&self, program_id: &ProgramId, key: &[u8]) -> Result<(), StorageError> {
+        let cf = self.cf_handle(CF_SERVICE_KV)?;
+        let db_key = build_kv_key(program_id, key);
+        self.db().delete_cf(cf, &db_key)?;
+        Ok(())
+    }
+
+    fn kv_contains(&self, program_id: &ProgramId, key: &[u8]) -> Result<bool, StorageError> {
+        Ok(self.kv_get(program_id, key)?.is_some())
+    }
 }
 
 impl RocksStorage {
@@ -168,6 +192,13 @@ fn read_entries_indexed(
         entries.push((index, value.to_vec()));
     }
     Ok(entries)
+}
+
+fn build_kv_key(program_id: &ProgramId, key: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(PID_LEN + key.len());
+    buf.extend_from_slice(program_id.as_bytes());
+    buf.extend_from_slice(key);
+    buf
 }
 
 fn validate_sector_id(sector_id: &SectorId) -> Result<(), StorageError> {

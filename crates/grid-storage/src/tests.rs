@@ -166,3 +166,49 @@ fn multiple_sectors_per_program() {
     let sectors = db.list_sectors(&pid).expect("list");
     assert_eq!(sectors.len(), 2);
 }
+
+#[test]
+fn kv_put_then_get_round_trip() {
+    let (db, _dir) = open_temp_db();
+    let pid = test_pid();
+    db.kv_put(&pid, b"counter", b"42").expect("kv_put");
+    let val = db.kv_get(&pid, b"counter").expect("kv_get");
+    assert_eq!(val.as_deref(), Some(b"42".as_slice()));
+}
+
+#[test]
+fn kv_contains_before_and_after_insert() {
+    let (db, _dir) = open_temp_db();
+    let pid = test_pid();
+    assert!(!db.kv_contains(&pid, b"key").expect("before"));
+    db.kv_put(&pid, b"key", b"val").expect("put");
+    assert!(db.kv_contains(&pid, b"key").expect("after"));
+}
+
+#[test]
+fn kv_delete_removes_key() {
+    let (db, _dir) = open_temp_db();
+    let pid = test_pid();
+    db.kv_put(&pid, b"ephemeral", b"data").expect("put");
+    db.kv_delete(&pid, b"ephemeral").expect("delete");
+    assert_eq!(db.kv_get(&pid, b"ephemeral").expect("get"), None);
+}
+
+#[test]
+fn kv_isolated_per_program() {
+    let (db, _dir) = open_temp_db();
+    let pid1 = ProgramId::from([0x11; 32]);
+    let pid2 = ProgramId::from([0x22; 32]);
+
+    db.kv_put(&pid1, b"shared-key", b"p1-val").expect("put p1");
+    db.kv_put(&pid2, b"shared-key", b"p2-val").expect("put p2");
+
+    assert_eq!(
+        db.kv_get(&pid1, b"shared-key").expect("get p1").as_deref(),
+        Some(b"p1-val".as_slice())
+    );
+    assert_eq!(
+        db.kv_get(&pid2, b"shared-key").expect("get p2").as_deref(),
+        Some(b"p2-val".as_slice())
+    );
+}

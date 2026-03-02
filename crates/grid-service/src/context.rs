@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use grid_core::{
-    ProgramId, SectorAppendRequest, SectorId, SectorLogLengthRequest, SectorReadLogRequest,
-    SectorRequest, SectorResponse,
+    KvContainsRequest, KvDeleteRequest, KvGetRequest, KvPutRequest, ProgramId, SectorAppendRequest,
+    SectorId, SectorLogLengthRequest, SectorReadLogRequest, SectorRequest, SectorResponse,
 };
 use grid_rpc::SectorDispatch;
 use hmac::{Hmac, Mac};
@@ -295,6 +295,83 @@ impl ProgramStore {
     /// The program ID this store operates on.
     pub fn program_id(&self) -> &ProgramId {
         &self.program_id
+    }
+
+    /// Get a value from the service KV store (local index, not append-log).
+    pub fn kv_get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, ServiceError> {
+        let req = SectorRequest::KvGet(KvGetRequest {
+            program_id: self.program_id,
+            key: key.to_vec(),
+        });
+        match self.sector_dispatch.dispatch(&req) {
+            SectorResponse::KvGet(r) => {
+                if let Some(code) = r.error_code {
+                    Err(ServiceError::Storage(format!("kv_get error: {code}")))
+                } else {
+                    Ok(r.value)
+                }
+            }
+            other => Err(ServiceError::Storage(format!(
+                "unexpected response: {other:?}"
+            ))),
+        }
+    }
+
+    /// Put a value into the service KV store (local index, not append-log).
+    pub fn kv_put(&self, key: &[u8], value: Vec<u8>) -> Result<(), ServiceError> {
+        let req = SectorRequest::KvPut(KvPutRequest {
+            program_id: self.program_id,
+            key: key.to_vec(),
+            value,
+        });
+        match self.sector_dispatch.dispatch(&req) {
+            SectorResponse::KvPut(r) if r.ok => Ok(()),
+            SectorResponse::KvPut(r) => Err(ServiceError::Storage(format!(
+                "kv_put failed: {:?}",
+                r.error_code
+            ))),
+            other => Err(ServiceError::Storage(format!(
+                "unexpected response: {other:?}"
+            ))),
+        }
+    }
+
+    /// Delete a key from the service KV store.
+    pub fn kv_delete(&self, key: &[u8]) -> Result<(), ServiceError> {
+        let req = SectorRequest::KvDelete(KvDeleteRequest {
+            program_id: self.program_id,
+            key: key.to_vec(),
+        });
+        match self.sector_dispatch.dispatch(&req) {
+            SectorResponse::KvDelete(r) if r.ok => Ok(()),
+            SectorResponse::KvDelete(r) => Err(ServiceError::Storage(format!(
+                "kv_delete failed: {:?}",
+                r.error_code
+            ))),
+            other => Err(ServiceError::Storage(format!(
+                "unexpected response: {other:?}"
+            ))),
+        }
+    }
+
+    /// Check if a key exists in the service KV store.
+    pub fn kv_contains(&self, key: &[u8]) -> Result<bool, ServiceError> {
+        let req = SectorRequest::KvContains(KvContainsRequest {
+            program_id: self.program_id,
+            key: key.to_vec(),
+        });
+        match self.sector_dispatch.dispatch(&req) {
+            SectorResponse::KvContains(r) => {
+                if let Some(code) = r.error_code {
+                    Err(ServiceError::Storage(format!("kv_contains error: {code}")))
+                } else {
+                    Ok(r.exists)
+                }
+            }
+            other => Err(ServiceError::Storage(format!(
+                "unexpected response: {other:?}"
+            ))),
+        }
     }
 
     fn key_to_sector_id(&self, key: &[u8]) -> SectorId {
