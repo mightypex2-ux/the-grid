@@ -296,6 +296,8 @@ impl ZodeApp {
                     self.peer_cache_path(),
                     persist_rx,
                 ));
+
+                self.init_interlink();
             }
             Err(e) => {
                 self.settings_error = Some(format!("Start failed: {e}"));
