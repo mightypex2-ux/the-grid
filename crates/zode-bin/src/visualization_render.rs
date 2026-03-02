@@ -259,7 +259,7 @@ impl NetworkVisualization {
                         crate::components::section_heading(
                             ui,
                             &format!(
-                                "The Grid  \u{2022}  {peer_count} {}",
+                                "THE GRID  \u{2022}  {peer_count} {}",
                                 if peer_count == 1 { "peer" } else { "peers" }
                             ),
                         );
