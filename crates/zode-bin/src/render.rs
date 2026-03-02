@@ -410,7 +410,11 @@ fn render_zode_status(ui: &mut egui::Ui, status: &zode::ZodeStatus, state: &Stat
             field_label(ui, "Address");
             ui.horizontal(|ui| {
                 if let Some(ref addr) = full_addr {
-                    ui.monospace(addr);
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(addr.as_str()).monospace())
+                            .truncate()
+                            .wrap_mode(egui::TextWrapMode::Truncate),
+                    );
                     copy_button(ui, addr);
                 } else {
                     muted_label(ui, "resolving...");

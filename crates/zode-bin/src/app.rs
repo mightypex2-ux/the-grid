@@ -733,18 +733,19 @@ impl ZodeApp {
 
     fn render_central_panel(&mut self, ctx: &egui::Context, state: &crate::state::StateSnapshot) {
         if self.detail_selection.is_some() {
-            let detail_frame = egui::Frame::default()
-                .fill(colors::PANEL_BG)
-                .inner_margin(egui::Margin {
-                    left: spacing::XL as i8,
-                    right: spacing::MD as i8,
-                    top: spacing::XXL as i8,
-                    bottom: spacing::MD as i8,
-                })
-                .stroke(egui::Stroke::new(1.0, colors::BORDER));
+            let detail_frame =
+                egui::Frame::default()
+                    .fill(colors::PANEL_BG)
+                    .inner_margin(egui::Margin {
+                        left: 0,
+                        right: spacing::MD as i8,
+                        top: spacing::MD as i8,
+                        bottom: spacing::MD as i8,
+                    });
             egui::SidePanel::right("detail_panel")
                 .exact_width(202.0)
                 .resizable(false)
+                .show_separator_line(false)
                 .frame(detail_frame)
                 .show(ctx, |ui| {
                     crate::render_detail::render_detail(self, ui);
@@ -836,10 +837,7 @@ impl ZodeApp {
         let rect = resp.response.rect;
         ctx.layer_painter(egui::LayerId::background()).line_segment(
             [rect.left_top(), rect.right_top()],
-            egui::Stroke::new(
-                crate::components::tokens::STROKE_DEFAULT,
-                colors::BORDER,
-            ),
+            egui::Stroke::new(crate::components::tokens::STROKE_DEFAULT, colors::BORDER),
         );
     }
 }

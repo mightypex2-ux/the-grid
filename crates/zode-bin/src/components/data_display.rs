@@ -23,7 +23,11 @@ pub(crate) fn kv_row(ui: &mut egui::Ui, key: &str, value: &str) {
 pub(crate) fn kv_row_copyable(ui: &mut egui::Ui, key: &str, value: &str) {
     field_label(ui, key);
     ui.horizontal(|ui| {
-        ui.monospace(value);
+        ui.add(
+            egui::Label::new(egui::RichText::new(value).monospace())
+                .truncate()
+                .wrap_mode(egui::TextWrapMode::Truncate),
+        );
         copy_button(ui, value);
     });
     ui.end_row();

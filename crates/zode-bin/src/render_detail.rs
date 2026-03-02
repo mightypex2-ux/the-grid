@@ -7,63 +7,54 @@ use grid_programs_zid::ZidDescriptor;
 use grid_service::ServiceId;
 
 use crate::app::ZodeApp;
-use crate::components::tokens::{colors, font_size, spacing};
-use crate::components::{info_grid, kv_row};
+use crate::components::section_heading;
+use crate::components::tokens::{self, colors, font_size, spacing};
 use crate::state::DetailSelection;
 
-fn detail_header(ui: &mut egui::Ui, title: &str) -> bool {
-    let mut close = false;
+fn detail_close_button(ui: &mut egui::Ui) -> bool {
+    let btn = ui.add(
+        egui::Button::new(
+            egui::RichText::new(egui_phosphor::regular::X)
+                .size(12.0)
+                .color(colors::TEXT_SECONDARY),
+        )
+        .frame(false),
+    );
+    if btn.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    btn.clicked()
+}
+
+fn detail_label(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .size(font_size::SMALL)
+            .color(colors::TEXT_HEADING),
+    );
+}
+
+fn detail_field(ui: &mut egui::Ui, key: &str, value: &str) {
+    detail_label(ui, key);
+    ui.add(egui::Label::new(value).wrap());
+    ui.add_space(spacing::MD);
+}
+
+fn detail_field_copyable(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal(|ui| {
-        let max_w = ui.available_width() - 20.0;
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(title)
-                    .strong()
-                    .size(font_size::HEADING)
-                    .color(colors::TEXT_HEADING),
-            )
-            .truncate()
-            .wrap_mode(egui::TextWrapMode::Truncate),
-        );
-        ui.add_space(max_w - ui.cursor().left() + ui.min_rect().left());
+        detail_label(ui, key);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let btn = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(egui_phosphor::regular::X)
-                        .size(12.0)
-                        .color(colors::TEXT_SECONDARY),
-                )
-                .frame(false),
-            );
-            if btn.clicked() {
-                close = true;
-            }
-            if btn.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
+            crate::components::copy_button(ui, value);
         });
     });
-    close
+    ui.add(egui::Label::new(egui::RichText::new(value).monospace()).wrap());
+    ui.add_space(spacing::MD);
 }
 
-/// Key-value row with a truncated monospace value and a copy button on hover.
-fn kv_row_truncated(ui: &mut egui::Ui, key: &str, value: &str) {
-    crate::components::field_label(ui, key);
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::Label::new(egui::RichText::new(value).monospace())
-                .truncate()
-                .wrap_mode(egui::TextWrapMode::Truncate),
-        );
-        crate::components::copy_button(ui, value);
-    });
-    ui.end_row();
-}
-
-fn kv_row_colored(ui: &mut egui::Ui, key: &str, value: &str, color: egui::Color32) {
-    crate::components::field_label(ui, key);
+fn detail_field_colored(ui: &mut egui::Ui, key: &str, value: &str, color: egui::Color32) {
+    detail_label(ui, key);
     ui.label(egui::RichText::new(value).color(color));
-    ui.end_row();
+    ui.add_space(spacing::MD);
 }
 
 struct ProgramMeta {
@@ -143,35 +134,74 @@ pub(crate) fn render_detail(app: &mut ZodeApp, ui: &mut egui::Ui) {
     };
 
     let mut close = false;
+    let max = ui.max_rect();
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    let prev_clip = ui.clip_rect();
+    ui.set_clip_rect(prev_clip.intersect(egui::Rect::from_x_y_ranges(
+        max.left()..=max.right(),
+        prev_clip.top()..=prev_clip.bottom(),
+    )));
+
+    let mut prepared = egui::Frame::default()
+        .fill(colors::SURFACE)
+        .corner_radius(0.0)
+        .inner_margin(spacing::XL)
+        .outer_margin(egui::Margin::symmetric(0, 0))
+        .begin(ui);
+
+    {
+        let ui = &mut prepared.content_ui;
         ui.set_width(ui.available_width());
-        match selection {
-            DetailSelection::Service(service_id) => {
-                close = render_service_detail(app, ui, &service_id);
+
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close = detail_close_button(ui);
+            });
+        });
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            match selection {
+                DetailSelection::Service(service_id) => {
+                    render_service_detail(app, ui, &service_id);
+                }
+                DetailSelection::Program(program_id) => {
+                    render_program_detail(app, ui, &program_id);
+                }
             }
-            DetailSelection::Program(program_id) => {
-                close = render_program_detail(app, ui, &program_id);
-            }
-        }
-    });
+        });
+    }
+
+    let resp = prepared.end(ui);
+
+    let border_rect = egui::Rect::from_min_max(
+        egui::pos2(max.left(), resp.rect.top()),
+        egui::pos2(max.right(), resp.rect.bottom()),
+    );
+    ui.painter().rect_stroke(
+        border_rect,
+        0.0,
+        tokens::border_stroke(),
+        egui::StrokeKind::Inside,
+    );
+
+    ui.set_clip_rect(prev_clip);
 
     if close {
         app.detail_selection = None;
     }
 }
 
-/// Returns `true` when the close button was clicked.
-fn render_service_detail(app: &ZodeApp, ui: &mut egui::Ui, service_id: &ServiceId) -> bool {
+fn render_service_detail(app: &ZodeApp, ui: &mut egui::Ui, service_id: &ServiceId) {
     let Some(ref zode) = app.zode else {
         ui.label("Zode not running.");
-        return false;
+        return;
     };
 
     let registry = zode.service_registry();
     let Ok(registry) = registry.try_lock() else {
         ui.label("Loading…");
-        return false;
+        return;
     };
 
     let services = registry.list_services();
@@ -179,7 +209,7 @@ fn render_service_detail(app: &ZodeApp, ui: &mut egui::Ui, service_id: &ServiceI
 
     let Some(svc) = services.iter().find(|s| s.id == *service_id) else {
         ui.label("Service not found.");
-        return false;
+        return;
     };
 
     let known_programs: HashMap<ProgramId, &str> = zode::default_program_ids()
@@ -189,11 +219,11 @@ fn render_service_detail(app: &ZodeApp, ui: &mut egui::Ui, service_id: &ServiceI
 
     let id_hex = svc.id.to_hex();
 
-    let close = detail_header(
+    section_heading(
         ui,
         &format!("{} v{}", svc.descriptor.name, svc.descriptor.version),
     );
-    ui.add_space(spacing::MD);
+    ui.add_space(10.0);
 
     let (status_text, status_color) = if svc.running {
         ("RUNNING", colors::CONNECTED)
@@ -201,16 +231,14 @@ fn render_service_detail(app: &ZodeApp, ui: &mut egui::Ui, service_id: &ServiceI
         ("INACTIVE", colors::ERROR)
     };
 
-    info_grid(ui, "svc_detail", |ui| {
-        kv_row_truncated(ui, "Service ID", &id_hex);
-        kv_row_colored(ui, "Status", status_text, status_color);
+    detail_field_copyable(ui, "Service ID", &id_hex);
+    detail_field_colored(ui, "Status", status_text, status_color);
 
-        if let Ok(topic) = svc.descriptor.topic() {
-            kv_row_truncated(ui, "Topic", &topic);
-        }
+    if let Ok(topic) = svc.descriptor.topic() {
+        detail_field_copyable(ui, "Topic", &topic);
+    }
 
-        kv_row_truncated(ui, "Endpoint", &format!("/services/{}/", &id_hex));
-    });
+    detail_field_copyable(ui, "Endpoint", &format!("/services/{}/", &id_hex));
 
     ui.add_space(spacing::LG);
 
@@ -287,15 +315,12 @@ fn render_service_detail(app: &ZodeApp, ui: &mut egui::Ui, service_id: &ServiceI
             ui.add_space(spacing::SM);
         }
     }
-
-    close
 }
 
-/// Returns `true` when the close button was clicked.
-fn render_program_detail(app: &ZodeApp, ui: &mut egui::Ui, program_id: &ProgramId) -> bool {
+fn render_program_detail(app: &ZodeApp, ui: &mut egui::Ui, program_id: &ProgramId) {
     let Some(ref zode) = app.zode else {
         ui.label("Zode not running.");
-        return false;
+        return;
     };
 
     let meta_map = build_program_meta();
@@ -331,8 +356,8 @@ fn render_program_detail(app: &ZodeApp, ui: &mut egui::Ui, program_id: &ProgramI
         format!("{name} {version_str}")
     };
 
-    let close = detail_header(ui, &heading);
-    ui.add_space(spacing::MD);
+    section_heading(ui, &heading);
+    ui.add_space(10.0);
 
     let (status_text, status_color) = if subscribed {
         ("SUBSCRIBED", colors::CONNECTED)
@@ -340,12 +365,10 @@ fn render_program_detail(app: &ZodeApp, ui: &mut egui::Ui, program_id: &ProgramI
         ("INACTIVE", colors::ERROR)
     };
 
-    info_grid(ui, "prog_detail", |ui| {
-        kv_row_truncated(ui, "Program ID", &id_hex);
-        kv_row_colored(ui, "Status", status_text, status_color);
-        kv_row(ui, "Relation", relation);
-        kv_row_truncated(ui, "Topic", &format!("prog/{id_hex}"));
-    });
+    detail_field_copyable(ui, "Program ID", &id_hex);
+    detail_field_colored(ui, "Status", status_text, status_color);
+    detail_field(ui, "Relation", relation);
+    detail_field_copyable(ui, "Topic", &format!("prog/{id_hex}"));
 
     ui.add_space(spacing::LG);
 
@@ -355,17 +378,15 @@ fn render_program_detail(app: &ZodeApp, ui: &mut egui::Ui, program_id: &ProgramI
             Some(ProofSystem::None) | None => "None",
         };
 
-        info_grid(ui, "prog_proof", |ui| {
-            kv_row(
-                ui,
-                "Proof Required",
-                if meta.proof_required { "Yes" } else { "No" },
-            );
-            kv_row(ui, "Proof System", proof_label);
+        detail_field(
+            ui,
+            "Proof Required",
+            if meta.proof_required { "Yes" } else { "No" },
+        );
+        detail_field(ui, "Proof System", proof_label);
 
-            let hash = meta.field_schema.schema_hash();
-            kv_row_truncated(ui, "Schema Hash", &hex::encode(hash));
-        });
+        let hash = meta.field_schema.schema_hash();
+        detail_field_copyable(ui, "Schema Hash", &hex::encode(hash));
 
         ui.add_space(spacing::LG);
 
@@ -402,8 +423,6 @@ fn render_program_detail(app: &ZodeApp, ui: &mut egui::Ui, program_id: &ProgramI
             ui.add_space(spacing::XS);
         }
     }
-
-    close
 }
 
 fn determine_relation(pid: &ProgramId, services: &[grid_service::ServiceInfo]) -> &'static str {

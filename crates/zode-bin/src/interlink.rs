@@ -825,9 +825,7 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
             ui.set_max_width(content_max);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(format!("[{time}]")).monospace().weak());
-                ui.label(
-                    egui::RichText::new(format!("{name}:")).monospace().strong(),
-                );
+                ui.label(egui::RichText::new(format!("{name}:")).monospace().strong());
                 ui.add(egui::Label::new(&msg.content).wrap());
             });
         });
