@@ -10,6 +10,12 @@ use zode::ZodeStatus;
 
 pub(crate) const MAX_LOG_ENTRIES: usize = 500;
 
+pub(crate) struct LogEntry {
+    pub line: String,
+    pub level: zode::LogLevel,
+    pub service: Option<String>,
+}
+
 pub(crate) enum PeerEvent {
     Connected(String),
     Disconnected(String),
@@ -19,7 +25,7 @@ pub(crate) enum PeerEvent {
 #[derive(Default)]
 pub(crate) struct AppState {
     pub status: Option<ZodeStatus>,
-    pub log_entries: VecDeque<String>,
+    pub log_entries: VecDeque<LogEntry>,
     pub listen_addr: Option<String>,
     pub peer_events: VecDeque<PeerEvent>,
 }
@@ -37,7 +43,7 @@ impl AppState {
 
 pub(crate) struct StateSnapshot {
     pub status: Option<ZodeStatus>,
-    pub log_entries: Vec<String>,
+    pub log_entries: Vec<LogEntry>,
     pub listen_addr: Option<String>,
     pub peer_events: Vec<PeerEvent>,
 }
