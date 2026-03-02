@@ -5,11 +5,11 @@ use axum::response::IntoResponse;
 use axum::Router;
 use grid_core::ProgramId;
 use grid_rpc::SectorDispatch;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use crate::context::{ServiceContext, ServiceEvent};
+use crate::context::{ServiceContext, ServiceEvent, TopicCommand};
 use crate::descriptor::ServiceId;
 use crate::error::ServiceError;
 use crate::gossip::ServiceGossipHandler;
@@ -30,6 +30,8 @@ pub struct ServiceRegistry {
     event_tx: broadcast::Sender<ServiceEvent>,
     shutdown: CancellationToken,
     gossip_handlers: Vec<Arc<dyn ServiceGossipHandler>>,
+    publish_tx: Option<mpsc::Sender<(String, Vec<u8>)>>,
+    topic_tx: Option<mpsc::Sender<TopicCommand>>,
 }
 
 impl Default for ServiceRegistry {
@@ -50,7 +52,22 @@ impl ServiceRegistry {
             event_tx,
             shutdown: CancellationToken::new(),
             gossip_handlers: Vec::new(),
+            publish_tx: None,
+            topic_tx: None,
         }
+    }
+
+    /// Set the GossipSub publish and topic management channels.
+    ///
+    /// Must be called before `start_all` so that each `ServiceContext`
+    /// receives a clone of these senders.
+    pub fn set_channels(
+        &mut self,
+        publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+        topic_tx: mpsc::Sender<TopicCommand>,
+    ) {
+        self.publish_tx = Some(publish_tx);
+        self.topic_tx = Some(topic_tx);
     }
 
     /// Register a service. Does NOT start it yet.
@@ -88,13 +105,16 @@ impl ServiceRegistry {
         self.ephemeral_key = ephemeral_key;
 
         for (&id, service) in &self.services {
-            let ctx = ServiceContext::new(
+            let mut ctx = ServiceContext::new(
                 id,
                 Arc::clone(&sector_dispatch),
                 ephemeral_key,
                 self.event_tx.clone(),
                 self.shutdown.child_token(),
             );
+            if let (Some(ptx), Some(ttx)) = (&self.publish_tx, &self.topic_tx) {
+                ctx.set_channels(ptx.clone(), ttx.clone());
+            }
 
             if let Err(e) = service.on_start(&ctx).await {
                 error!(
@@ -192,13 +212,16 @@ impl ServiceRegistry {
             .get(id)
             .ok_or_else(|| ServiceError::NotFound(id.to_hex()))?;
 
-        let ctx = ServiceContext::new(
+        let mut ctx = ServiceContext::new(
             *id,
             Arc::clone(sector_dispatch),
             self.ephemeral_key,
             self.event_tx.clone(),
             self.shutdown.child_token(),
         );
+        if let (Some(ptx), Some(ttx)) = (&self.publish_tx, &self.topic_tx) {
+            ctx.set_channels(ptx.clone(), ttx.clone());
+        }
 
         service.on_start(&ctx).await?;
 

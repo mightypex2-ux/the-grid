@@ -9,7 +9,7 @@ mod service;
 mod wasm_bindings;
 mod wasm_host;
 
-pub use context::{ProgramStore, ServiceContext, ServiceEvent};
+pub use context::{ProgramStore, ServiceContext, ServiceEvent, TopicCommand};
 pub use descriptor::{ServiceDescriptor, ServiceId};
 pub use error::ServiceError;
 pub use gossip::ServiceGossipHandler;

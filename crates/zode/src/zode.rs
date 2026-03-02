@@ -138,7 +138,10 @@ impl Zode {
             program_proof_config,
         ));
 
+        let (topic_tx, topic_rx) = mpsc::channel(64);
+
         let mut service_registry = ServiceRegistry::new();
+        service_registry.set_channels(publish_tx.clone(), topic_tx);
         Self::register_default_services(&mut service_registry);
         let service_programs = service_registry.required_programs();
         if !service_programs.is_empty() {
@@ -193,6 +196,7 @@ impl Zode {
             Arc::clone(&peer_last_activity),
             shutdown_rx,
             publish_rx,
+            topic_rx,
             sector_request_rx,
         );
 
@@ -280,6 +284,7 @@ impl Zode {
         peer_last_activity: Arc<RwLock<HashMap<String, u64>>>,
         shutdown_rx: mpsc::Receiver<()>,
         publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+        topic_rx: mpsc::Receiver<grid_service::TopicCommand>,
         sector_request_rx: mpsc::Receiver<SectorRequestSubmission>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
@@ -294,6 +299,7 @@ impl Zode {
                 peer_last_activity,
                 shutdown_rx,
                 publish_rx,
+                topic_rx,
                 sector_request_rx,
             )
             .await;
@@ -546,6 +552,7 @@ impl Zode {
         peer_last_activity: Arc<RwLock<HashMap<String, u64>>>,
         mut shutdown_rx: mpsc::Receiver<()>,
         mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+        mut topic_rx: mpsc::Receiver<grid_service::TopicCommand>,
         mut sector_request_rx: mpsc::Receiver<SectorRequestSubmission>,
     ) {
         let mut pending_sector_requests: HashMap<
@@ -596,6 +603,25 @@ impl Zode {
                     Some((peer, request, response_tx)) = sector_request_rx.recv() => {
                         let request_id = net.send_sector_request(&peer, request);
                         pending_sector_requests.insert(request_id, response_tx);
+                        continue;
+                    }
+                    Some(cmd) = topic_rx.recv() => {
+                        match cmd {
+                            grid_service::TopicCommand::Subscribe(topic) => {
+                                if let Err(e) = net.subscribe(&topic) {
+                                    warn!(error = %e, %topic, "dynamic subscribe failed");
+                                } else {
+                                    info!(%topic, "dynamic subscribe");
+                                }
+                            }
+                            grid_service::TopicCommand::Unsubscribe(topic) => {
+                                if let Err(e) = net.unsubscribe(&topic) {
+                                    warn!(error = %e, %topic, "dynamic unsubscribe failed");
+                                } else {
+                                    info!(%topic, "dynamic unsubscribe");
+                                }
+                            }
+                        }
                         continue;
                     }
                 }

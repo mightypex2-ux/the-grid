@@ -9,11 +9,18 @@ use grid_rpc::SectorDispatch;
 use hmac::{Hmac, Mac};
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::descriptor::ServiceId;
 use crate::error::ServiceError;
+
+/// Command to dynamically manage GossipSub subscriptions at runtime.
+#[derive(Debug, Clone)]
+pub enum TopicCommand {
+    Subscribe(String),
+    Unsubscribe(String),
+}
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -43,6 +50,8 @@ pub struct ServiceContext {
     ephemeral_key: [u8; 32],
     pub event_tx: broadcast::Sender<ServiceEvent>,
     pub shutdown: CancellationToken,
+    publish_tx: Option<mpsc::Sender<(String, Vec<u8>)>>,
+    topic_tx: Option<mpsc::Sender<TopicCommand>>,
 }
 
 impl ServiceContext {
@@ -59,7 +68,54 @@ impl ServiceContext {
             ephemeral_key,
             event_tx,
             shutdown,
+            publish_tx: None,
+            topic_tx: None,
         }
+    }
+
+    /// Set the GossipSub publish and topic management channels.
+    ///
+    /// Called by `ServiceRegistry` during startup when the Zode provides
+    /// its channel endpoints.
+    pub fn set_channels(
+        &mut self,
+        publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+        topic_tx: mpsc::Sender<TopicCommand>,
+    ) {
+        self.publish_tx = Some(publish_tx);
+        self.topic_tx = Some(topic_tx);
+    }
+
+    /// Publish a message to a GossipSub topic.
+    ///
+    /// Non-blocking; queues the message for the Zode event loop to send.
+    pub fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), ServiceError> {
+        let tx = self
+            .publish_tx
+            .as_ref()
+            .ok_or_else(|| ServiceError::NotInitialized("publish channel not set".into()))?;
+        tx.try_send((topic.to_owned(), data))
+            .map_err(|e| ServiceError::Other(format!("publish channel: {e}")))
+    }
+
+    /// Subscribe to a GossipSub topic at runtime.
+    pub fn subscribe_topic(&self, topic: &str) -> Result<(), ServiceError> {
+        let tx = self
+            .topic_tx
+            .as_ref()
+            .ok_or_else(|| ServiceError::NotInitialized("topic channel not set".into()))?;
+        tx.try_send(TopicCommand::Subscribe(topic.to_owned()))
+            .map_err(|e| ServiceError::Other(format!("topic channel: {e}")))
+    }
+
+    /// Unsubscribe from a GossipSub topic at runtime.
+    pub fn unsubscribe_topic(&self, topic: &str) -> Result<(), ServiceError> {
+        let tx = self
+            .topic_tx
+            .as_ref()
+            .ok_or_else(|| ServiceError::NotInitialized("topic channel not set".into()))?;
+        tx.try_send(TopicCommand::Unsubscribe(topic.to_owned()))
+            .map_err(|e| ServiceError::Other(format!("topic channel: {e}")))
     }
 
     /// Get a [`ProgramStore`] for key-value operations on a specific program.
@@ -290,6 +346,81 @@ impl ProgramStore {
             other => Err(ServiceError::Storage(format!(
                 "unexpected response: {other:?}"
             ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grid_core::{SectorRequest, SectorResponse};
+
+    struct StubDispatch;
+    impl grid_rpc::SectorDispatch for StubDispatch {
+        fn dispatch(&self, _req: &SectorRequest) -> SectorResponse {
+            unimplemented!("stub")
+        }
+    }
+
+    fn make_context() -> ServiceContext {
+        let (event_tx, _) = broadcast::channel(16);
+        ServiceContext::new(
+            crate::descriptor::ServiceId::from([0u8; 32]),
+            Arc::new(StubDispatch),
+            [0u8; 32],
+            event_tx,
+            CancellationToken::new(),
+        )
+    }
+
+    #[test]
+    fn publish_without_channel_returns_not_initialized() {
+        let ctx = make_context();
+        let err = ctx.publish("topic", b"data".to_vec()).unwrap_err();
+        assert!(matches!(err, ServiceError::NotInitialized(_)));
+    }
+
+    #[test]
+    fn publish_queues_message_on_channel() {
+        let mut ctx = make_context();
+        let (pub_tx, mut pub_rx) = mpsc::channel(8);
+        let (topic_tx, _topic_rx) = mpsc::channel(8);
+        ctx.set_channels(pub_tx, topic_tx);
+
+        ctx.publish("my-topic", b"hello".to_vec()).unwrap();
+
+        let (topic, data) = pub_rx.try_recv().unwrap();
+        assert_eq!(topic, "my-topic");
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn subscribe_topic_sends_command() {
+        let mut ctx = make_context();
+        let (pub_tx, _pub_rx) = mpsc::channel(8);
+        let (topic_tx, mut topic_rx) = mpsc::channel(8);
+        ctx.set_channels(pub_tx, topic_tx);
+
+        ctx.subscribe_topic("consensus/epoch-1").unwrap();
+
+        match topic_rx.try_recv().unwrap() {
+            TopicCommand::Subscribe(t) => assert_eq!(t, "consensus/epoch-1"),
+            other => panic!("expected Subscribe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsubscribe_topic_sends_command() {
+        let mut ctx = make_context();
+        let (pub_tx, _pub_rx) = mpsc::channel(8);
+        let (topic_tx, mut topic_rx) = mpsc::channel(8);
+        ctx.set_channels(pub_tx, topic_tx);
+
+        ctx.unsubscribe_topic("old-topic").unwrap();
+
+        match topic_rx.try_recv().unwrap() {
+            TopicCommand::Unsubscribe(t) => assert_eq!(t, "old-topic"),
+            other => panic!("expected Unsubscribe, got {other:?}"),
         }
     }
 }
