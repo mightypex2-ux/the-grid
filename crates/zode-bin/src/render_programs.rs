@@ -6,12 +6,12 @@ use grid_core::ProgramId;
 use crate::app::ZodeApp;
 use crate::components::tokens::{self, colors, font_size, spacing};
 use crate::components::{loading_state, muted_label, section};
-use crate::state::StateSnapshot;
+use crate::state::{DetailSelection, StateSnapshot};
 
 const CARD_WIDTH: f32 = 260.0;
 const CARD_HEIGHT: f32 = 100.0;
 
-pub(crate) fn render_programs(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
+pub(crate) fn render_programs(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnapshot) {
     let Some(ref status) = state.status else {
         loading_state(ui);
         return;
@@ -73,7 +73,7 @@ pub(crate) fn render_programs(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSna
 
             if !entries.is_empty() {
                 let title = format!("{} v{}", svc.descriptor.name, svc.descriptor.version);
-                render_service_programs(ui, &title, svc.running, &entries);
+                render_service_programs(ui, &title, svc.running, &entries, &mut app.detail_selection);
             }
         }
     }
@@ -97,7 +97,7 @@ pub(crate) fn render_programs(app: &ZodeApp, ui: &mut egui::Ui, state: &StateSna
         .collect();
 
     if !standalone.is_empty() {
-        render_service_programs(ui, "Default Programs", true, &standalone);
+        render_service_programs(ui, "Default Programs", true, &standalone, &mut app.detail_selection);
     }
 
     if subscribed.is_empty() && services.as_ref().is_none_or(|s| s.is_empty()) {
@@ -134,6 +134,7 @@ fn render_service_programs(
     title: &str,
     service_running: bool,
     entries: &[ProgramEntry],
+    detail_selection: &mut Option<DetailSelection>,
 ) {
     section(ui, title, |ui| {
         if !service_running {
@@ -149,7 +150,7 @@ fn render_service_programs(
         for row in entries.chunks(cols) {
             ui.horizontal(|ui| {
                 for entry in row {
-                    program_card(ui, entry);
+                    program_card(ui, entry, detail_selection);
                     ui.add_space(spacing::MD);
                 }
             });
@@ -158,12 +159,16 @@ fn render_service_programs(
     });
 }
 
-fn program_card(ui: &mut egui::Ui, entry: &ProgramEntry) {
+fn program_card(
+    ui: &mut egui::Ui,
+    entry: &ProgramEntry,
+    detail_selection: &mut Option<DetailSelection>,
+) {
     let border_color = colors::BORDER;
 
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(CARD_WIDTH, CARD_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
     let painter = ui.painter_at(rect);
@@ -184,6 +189,7 @@ fn program_card(ui: &mut egui::Ui, entry: &ProgramEntry) {
             egui::Stroke::NONE,
             egui::StrokeKind::Inside,
         );
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
     let pad = spacing::LG;
@@ -252,4 +258,8 @@ fn program_card(ui: &mut egui::Ui, entry: &ProgramEntry) {
         egui::FontId::proportional(font_size::SMALL),
         status_color,
     );
+
+    if resp.clicked() {
+        *detail_selection = Some(DetailSelection::Program(entry.program_id));
+    }
 }

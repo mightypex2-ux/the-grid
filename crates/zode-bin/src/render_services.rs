@@ -7,6 +7,7 @@ use zode::Zode;
 use crate::app::ZodeApp;
 use crate::components::tokens::{self, font_size, spacing};
 use crate::components::{colors, loading_state, muted_label, section};
+use crate::state::DetailSelection;
 
 const CARD_WIDTH: f32 = 260.0;
 const CARD_HEIGHT: f32 = 100.0;
@@ -45,7 +46,7 @@ pub(crate) fn render_services(app: &mut ZodeApp, ui: &mut egui::Ui) {
         for row in services.chunks(cols) {
             ui.horizontal(|ui| {
                 for svc in row {
-                    service_card(ui, svc, &app.rt, &zode);
+                    service_card(ui, svc, &app.rt, &zode, &mut app.detail_selection);
                     ui.add_space(spacing::MD);
                 }
             });
@@ -59,6 +60,7 @@ fn service_card(
     svc: &grid_service::ServiceInfo,
     rt: &Runtime,
     zode: &Arc<Zode>,
+    detail_selection: &mut Option<DetailSelection>,
 ) {
     let id_hex = svc.id.to_hex();
     let short_id = &id_hex[..8.min(id_hex.len())];
@@ -67,7 +69,7 @@ fn service_card(
 
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(CARD_WIDTH, CARD_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
     let painter = ui.painter_at(rect);
@@ -88,6 +90,7 @@ fn service_card(
             egui::Stroke::NONE,
             egui::StrokeKind::Inside,
         );
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
     let pad = spacing::LG;
@@ -135,11 +138,7 @@ fn service_card(
     painter.rect(
         cb_rect,
         0.0,
-        if svc.running {
-            colors::CONNECTED
-        } else {
-            egui::Color32::TRANSPARENT
-        },
+        egui::Color32::BLACK,
         egui::Stroke::new(tokens::STROKE_DEFAULT, cb_border),
         egui::StrokeKind::Inside,
     );
@@ -154,11 +153,11 @@ fn service_card(
         ];
         painter.line_segment(
             [points[0], points[1]],
-            egui::Stroke::new(2.0, colors::SURFACE_DARK),
+            egui::Stroke::new(2.0, colors::CONNECTED),
         );
         painter.line_segment(
             [points[1], points[2]],
-            egui::Stroke::new(2.0, colors::SURFACE_DARK),
+            egui::Stroke::new(2.0, colors::CONNECTED),
         );
     }
 
@@ -210,4 +209,8 @@ fn service_card(
         egui::FontId::proportional(font_size::SMALL),
         status_color,
     );
+
+    if resp.clicked() && !cb_resp.clicked() {
+        *detail_selection = Some(DetailSelection::Service(svc.id));
+    }
 }
