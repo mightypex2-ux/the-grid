@@ -185,6 +185,15 @@ pub(crate) struct RecentTransaction {
     pub timestamp: Instant,
 }
 
+/// A finalized block for the activity feed.
+pub(crate) struct RecentBlock {
+    pub zone_id: u32,
+    pub block_hash_hex: String,
+    pub height: u64,
+    pub timestamp: Instant,
+    pub tx_nullifiers: Vec<String>,
+}
+
 /// Traffic generator statistics.
 #[derive(Default)]
 pub(crate) struct TrafficStats {
@@ -202,6 +211,10 @@ pub(crate) struct AppState {
     pub auto_traffic: bool,
     pub traffic_rate: f32,
     pub traffic_stats: TrafficStats,
+    pub recent_blocks: VecDeque<RecentBlock>,
+    /// Tracks how many blocks we have already consumed from the metrics
+    /// so the poller only appends new ones.
+    pub blocks_seen: usize,
 }
 
 impl Default for AppState {
@@ -215,6 +228,8 @@ impl Default for AppState {
             auto_traffic: false,
             traffic_rate: 1.0,
             traffic_stats: TrafficStats::default(),
+            recent_blocks: VecDeque::new(),
+            blocks_seen: 0,
         }
     }
 }

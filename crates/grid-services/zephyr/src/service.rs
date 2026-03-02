@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -28,6 +28,17 @@ use crate::gossip::ZephyrGossipHandler;
 use crate::mempool::Mempool;
 use crate::storage::zone_head::ZoneHead;
 
+/// Summary of a finalized block for the metrics / dashboard feed.
+struct BlockSummary {
+    zone_id: u32,
+    block_hash_hex: String,
+    height: u64,
+    tx_nullifiers: Vec<String>,
+}
+
+const MAX_RECENT_BLOCKS: usize = 100;
+const MAX_BLOCK_TX_CACHE: usize = 200;
+
 /// Live metrics snapshot shared between the consensus task and HTTP handlers.
 pub(crate) struct ZephyrRuntime {
     pub zone_heads: HashMap<u32, [u8; 32]>,
@@ -37,6 +48,8 @@ pub(crate) struct ZephyrRuntime {
     pub spends_processed: u64,
     pub mempool_sizes: HashMap<u32, usize>,
     pub assigned_zones: Vec<u32>,
+    zone_heights: HashMap<u32, u64>,
+    recent_blocks: VecDeque<BlockSummary>,
 }
 
 /// Shared state handed to HTTP route handlers.
@@ -135,6 +148,8 @@ impl ZephyrService {
                 spends_processed: 0,
                 mempool_sizes: HashMap::new(),
                 assigned_zones: Vec::new(),
+                zone_heights: HashMap::new(),
+                recent_blocks: VecDeque::new(),
             })),
             gossip_handler,
             zone_rx: std::sync::Mutex::new(Some(zone_rx)),
@@ -386,6 +401,14 @@ impl Service for ZephyrService {
             "spends_processed": rt.spends_processed,
             "mempool_sizes": rt.mempool_sizes,
             "assigned_zones": rt.assigned_zones,
+            "recent_blocks": rt.recent_blocks.iter().map(|b| {
+                serde_json::json!({
+                    "zone_id": b.zone_id,
+                    "block_hash": &b.block_hash_hex,
+                    "height": b.height,
+                    "tx_nullifiers": &b.tx_nullifiers,
+                })
+            }).collect::<Vec<_>>(),
         })
     }
 }
@@ -409,6 +432,8 @@ async fn consensus_loop(
     let mut mempools: HashMap<u32, Mempool> = HashMap::new();
     let mut consensus_engines: HashMap<u32, ZoneConsensus> = HashMap::new();
     let mut zone_head_store = ZoneHead::new();
+    // block_hash -> (zone_id, list of nullifier hex strings)
+    let mut block_tx_cache: HashMap<[u8; 32], (u32, Vec<String>)> = HashMap::new();
 
     // Build zone topic lookup (zone_id -> topic string)
     let mut zone_to_topic: HashMap<u32, String> = HashMap::new();
@@ -479,7 +504,7 @@ async fn consensus_loop(
 
                 // Leader proposes for assigned zones
                 for &zone_id in &assigned_zones {
-                    let Some(engine) = consensus_engines.get(&zone_id) else {
+                    let Some(engine) = consensus_engines.get_mut(&zone_id) else {
                         continue;
                     };
                     if !engine.is_leader() {
@@ -491,6 +516,46 @@ async fn consensus_loop(
                     let spends = mp.drain(config.max_block_size);
                     let vid = my_validator_id;
                     if let Some(action) = engine.propose(spends, |data| hmac_sign(&vid, data)) {
+                        if let ConsensusAction::BroadcastProposal(ref block) = action {
+                            cache_block_txs(&mut block_tx_cache, zone_id, block);
+                            // Leader self-votes; without this, quorum is unreachable
+                            // when GossipSub doesn't deliver self-published messages.
+                            let vid2 = my_validator_id;
+                            if let Some(vote_action) =
+                                engine.vote_on_proposal(block, |data| hmac_sign(&vid2, data))
+                            {
+                                publish_action(
+                                    &vote_action,
+                                    &zone_to_topic,
+                                    zone_id,
+                                    &global_topic,
+                                    &publish_tx,
+                                )
+                                .await;
+                                if let ConsensusAction::BroadcastVote(vote) = vote_action {
+                                    if let Some(cert_action) = engine.receive_vote(vote) {
+                                        if let ConsensusAction::BroadcastCertificate(ref cert) =
+                                            cert_action
+                                        {
+                                            apply_certificate_locally(
+                                                cert,
+                                                &mut zone_head_store,
+                                                &mut block_tx_cache,
+                                                &runtime,
+                                            );
+                                        }
+                                        publish_action(
+                                            &cert_action,
+                                            &zone_to_topic,
+                                            zone_id,
+                                            &global_topic,
+                                            &publish_tx,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                        }
                         publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx).await;
                     }
                 }
@@ -519,6 +584,7 @@ async fn consensus_loop(
                         }
                     }
                     ZephyrZoneMessage::Proposal(proposal) => {
+                        cache_block_txs(&mut block_tx_cache, zone_id, &proposal);
                         let Some(engine) = consensus_engines.get(&zone_id) else {
                             continue;
                         };
@@ -536,7 +602,7 @@ async fn consensus_loop(
                                 apply_certificate_locally(
                                     cert,
                                     &mut zone_head_store,
-                                    &mempools,
+                                    &mut block_tx_cache,
                                     &runtime,
                                 );
                             }
@@ -559,18 +625,18 @@ async fn consensus_loop(
                                 apply_certificate_locally(
                                     &cert,
                                     &mut zone_head_store,
-                                    &mempools,
+                                    &mut block_tx_cache,
                                     &runtime,
                                 );
                                 debug!(zone_id = cz, "applied certificate from global topic");
                             }
                         } else {
-                            // Certificate for a zone we don't handle — still track the head
-                            zone_head_store.set(cz, cert.block_hash);
-                            if let Ok(mut rt) = runtime.write() {
-                                rt.zone_heads.insert(cz, cert.block_hash);
-                                rt.certificates_produced += 1;
-                            }
+                            apply_certificate_locally(
+                                &cert,
+                                &mut zone_head_store,
+                                &mut block_tx_cache,
+                                &runtime,
+                            );
                         }
                     }
                     ZephyrGlobalMessage::EpochAnnounce(ann) => {
@@ -582,18 +648,55 @@ async fn consensus_loop(
     }
 }
 
+fn cache_block_txs(
+    cache: &mut HashMap<[u8; 32], (u32, Vec<String>)>,
+    zone_id: u32,
+    block: &grid_programs_zephyr::Block,
+) {
+    if cache.len() >= MAX_BLOCK_TX_CACHE {
+        let keys: Vec<[u8; 32]> = cache.keys().take(MAX_BLOCK_TX_CACHE / 4).copied().collect();
+        for k in keys {
+            cache.remove(&k);
+        }
+    }
+    let nullifiers: Vec<String> = block
+        .transactions
+        .iter()
+        .map(|tx| hex::encode(&tx.nullifier.0[..8]))
+        .collect();
+    cache.insert(block.block_hash, (zone_id, nullifiers));
+}
+
 fn apply_certificate_locally(
     cert: &FinalityCertificate,
     zone_head_store: &mut ZoneHead,
-    _mempools: &HashMap<u32, Mempool>,
+    block_tx_cache: &mut HashMap<[u8; 32], (u32, Vec<String>)>,
     runtime: &Arc<std::sync::RwLock<ZephyrRuntime>>,
 ) {
     zone_head_store.set(cert.zone_id, cert.block_hash);
-    let spend_count = cert.signatures.len() as u64;
+    let tx_nullifiers = block_tx_cache
+        .remove(&cert.block_hash)
+        .map(|(_, n)| n)
+        .unwrap_or_default();
+    let spend_count = tx_nullifiers.len() as u64;
     if let Ok(mut rt) = runtime.write() {
         rt.zone_heads.insert(cert.zone_id, cert.block_hash);
         rt.certificates_produced += 1;
         rt.spends_processed += spend_count;
+
+        let height = rt.zone_heights.entry(cert.zone_id).or_insert(0);
+        *height += 1;
+        let block_height = *height;
+
+        rt.recent_blocks.push_back(BlockSummary {
+            zone_id: cert.zone_id,
+            block_hash_hex: hex::encode(&cert.block_hash[..8]),
+            height: block_height,
+            tx_nullifiers,
+        });
+        if rt.recent_blocks.len() > MAX_RECENT_BLOCKS {
+            rt.recent_blocks.pop_front();
+        }
     }
 }
 

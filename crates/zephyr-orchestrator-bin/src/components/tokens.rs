@@ -55,6 +55,7 @@ pub mod spacing {
 
 #[allow(dead_code)]
 pub mod font_size {
+    pub const TINY: f32 = 8.0;
     pub const SMALL: f32 = 9.0;
     pub const BODY: f32 = 10.0;
     pub const BUTTON: f32 = 10.0;

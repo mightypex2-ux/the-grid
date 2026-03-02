@@ -499,6 +499,18 @@ fn snapshot(state: &AppState) -> AppState {
                 })
                 .collect(),
         },
+        recent_blocks: state
+            .recent_blocks
+            .iter()
+            .map(|b| crate::state::RecentBlock {
+                zone_id: b.zone_id,
+                block_hash_hex: b.block_hash_hex.clone(),
+                height: b.height,
+                timestamp: b.timestamp,
+                tx_nullifiers: b.tx_nullifiers.clone(),
+            })
+            .collect(),
+        blocks_seen: state.blocks_seen,
     }
 }
 

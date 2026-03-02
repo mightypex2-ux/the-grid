@@ -204,24 +204,18 @@ fn render_activity_feed(ui: &mut egui::Ui, state: &AppState) {
 
     section(ui, "Activity Feed", |ui| {
         let avail_w = ui.available_width();
-        let card_w = 200.0_f32;
-        let cols = ((avail_w + spacing::MD) / (card_w + spacing::MD))
-            .floor()
-            .max(1.0) as u32;
-        let tx_row_h = 18.0;
-        let max_visible_txs = 10;
-        let header_h = 40.0;
-        let card_h = header_h + (max_visible_txs as f32 * tx_row_h) + spacing::SM;
+        let col_w =
+            (avail_w / state.network.total_zones.max(1) as f32 - spacing::SM).clamp(180.0, 320.0);
+        let feed_h = 320.0;
 
-        for row_start in (0..state.network.total_zones).step_by(cols as usize) {
-            ui.horizontal(|ui| {
-                for zone_id in row_start..state.network.total_zones.min(row_start + cols) {
-                    render_zone_activity_column(ui, zone_id, state, card_w, card_h, header_h);
-                    ui.add_space(spacing::MD);
+        ui.horizontal(|ui| {
+            for zone_id in 0..state.network.total_zones {
+                render_zone_activity_column(ui, zone_id, state, col_w, feed_h);
+                if zone_id + 1 < state.network.total_zones {
+                    ui.add_space(spacing::SM);
                 }
-            });
-            ui.add_space(spacing::MD);
-        }
+            }
+        });
     });
 }
 
@@ -229,93 +223,123 @@ fn render_zone_activity_column(
     ui: &mut egui::Ui,
     zone_id: u32,
     state: &AppState,
-    card_w: f32,
-    card_h: f32,
-    header_h: f32,
+    col_w: f32,
+    feed_h: f32,
 ) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::hover());
-    let painter = ui.painter_at(rect);
+    let header_h = 22.0;
 
-    painter.rect(
-        rect,
-        0.0,
-        colors::SURFACE_DARK,
-        egui::Stroke::new(tokens::STROKE_DEFAULT, colors::BORDER),
-        egui::StrokeKind::Inside,
-    );
+    ui.vertical(|ui| {
+        ui.set_width(col_w);
 
-    let pad = spacing::SM;
-    let inner = rect.shrink(pad);
-
-    painter.text(
-        inner.left_top(),
-        egui::Align2::LEFT_TOP,
-        format!("Zone {zone_id}"),
-        egui::FontId::proportional(font_size::SUBTITLE),
-        colors::TEXT_HEADING,
-    );
-
-    if let Some(head) = state.network.zone_heads.get(&zone_id) {
-        let hex = hex::encode(&head[..4]);
-        painter.text(
-            egui::pos2(inner.left(), inner.top() + 18.0),
-            egui::Align2::LEFT_TOP,
-            format!("head: {hex}..."),
-            egui::FontId::proportional(font_size::SMALL),
-            colors::TEXT_MUTED,
+        ui.label(
+            egui::RichText::new(format!("Zone {zone_id}"))
+                .size(font_size::SUBTITLE)
+                .color(colors::TEXT_HEADING),
         );
-    }
 
-    let separator_y = rect.top() + pad + header_h;
-    painter.line_segment(
-        [
-            egui::pos2(rect.left() + pad, separator_y),
-            egui::pos2(rect.right() - pad, separator_y),
-        ],
-        egui::Stroke::new(0.5, colors::BORDER),
-    );
+        ui.add_space(spacing::XS);
 
-    let tx_area = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + pad, separator_y + 2.0),
-        egui::pos2(rect.right() - pad, rect.bottom() - pad),
-    );
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(col_w, feed_h - header_h), egui::Sense::hover());
 
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tx_area));
-    egui::ScrollArea::vertical()
-        .id_salt(format!("zone_activity_{zone_id}"))
-        .max_height(tx_area.height())
-        .show(&mut child, |ui| {
-            let zone_txs: Vec<_> = state
-                .traffic_stats
-                .recent
-                .iter()
-                .filter(|e| e.zone_id == zone_id)
-                .collect();
+        let painter = ui.painter_at(rect);
+        painter.rect(
+            rect,
+            4.0,
+            colors::SURFACE_DARK,
+            egui::Stroke::new(tokens::STROKE_DEFAULT, colors::BORDER),
+            egui::StrokeKind::Inside,
+        );
 
-            if zone_txs.is_empty() {
+        let inner = rect.shrink(spacing::SM);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        egui::ScrollArea::vertical()
+            .id_salt(format!("zone_blocks_{zone_id}"))
+            .max_height(inner.height())
+            .stick_to_bottom(true)
+            .show(&mut child, |ui| {
+                let zone_blocks: Vec<_> = state
+                    .recent_blocks
+                    .iter()
+                    .filter(|b| b.zone_id == zone_id)
+                    .collect();
+
+                if zone_blocks.is_empty() {
+                    ui.add_space(spacing::MD);
+                    ui.label(
+                        egui::RichText::new("awaiting blocks...")
+                            .size(font_size::SMALL)
+                            .color(colors::TEXT_MUTED)
+                            .italics(),
+                    );
+                } else {
+                    for block in zone_blocks.iter().rev().take(20) {
+                        render_block_entry(ui, block);
+                        ui.add_space(spacing::XS);
+                    }
+                }
+            });
+    });
+}
+
+fn render_block_entry(ui: &mut egui::Ui, block: &crate::state::RecentBlock) {
+    let age = block.timestamp.elapsed();
+    let age_str = if age.as_secs() < 60 {
+        format!("{}s ago", age.as_secs())
+    } else {
+        format!("{}m ago", age.as_secs() / 60)
+    };
+
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::same(spacing::SM as i8))
+        .fill(colors::SURFACE_RAISED)
+        .corner_radius(3.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("no transactions")
+                    egui::RichText::new(format!("Block #{}", block.height))
                         .size(font_size::SMALL)
+                        .color(colors::ACCENT)
+                        .strong(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(&age_str)
+                            .size(font_size::TINY)
+                            .color(colors::TEXT_MUTED),
+                    );
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("{:.16}...", &block.block_hash_hex))
+                        .size(font_size::TINY)
                         .color(colors::TEXT_MUTED),
                 );
+            });
+
+            if block.tx_nullifiers.is_empty() {
+                ui.label(
+                    egui::RichText::new("  (empty block)")
+                        .size(font_size::TINY)
+                        .color(colors::TEXT_MUTED)
+                        .italics(),
+                );
             } else {
-                for entry in zone_txs.iter().rev() {
-                    let age = entry.timestamp.elapsed();
-                    let age_str = if age.as_secs() < 60 {
-                        format!("{}s", age.as_secs())
-                    } else {
-                        format!("{}m", age.as_secs() / 60)
-                    };
+                for nf in &block.tx_nullifiers {
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new(&entry.nullifier_hex)
-                                .size(font_size::SMALL)
-                                .color(colors::TEXT_SECONDARY),
+                            egui::RichText::new("  tx ")
+                                .size(font_size::TINY)
+                                .color(colors::TEXT_MUTED),
                         );
                         ui.label(
-                            egui::RichText::new(age_str)
-                                .size(font_size::SMALL)
-                                .color(colors::TEXT_MUTED),
+                            egui::RichText::new(nf)
+                                .size(font_size::TINY)
+                                .color(colors::TEXT_SECONDARY),
                         );
                     });
                 }

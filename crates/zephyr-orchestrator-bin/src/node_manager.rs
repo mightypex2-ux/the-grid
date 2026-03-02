@@ -294,6 +294,48 @@ pub(crate) fn spawn_status_pollers(
                                     }
                                 }
                             }
+
+                            if let Some(blocks) =
+                                zephyr.get("recent_blocks").and_then(|v| v.as_array())
+                            {
+                                let new_count = blocks.len();
+                                if new_count > state.blocks_seen {
+                                    for b in &blocks[state.blocks_seen..] {
+                                        let zone_id =
+                                            b.get("zone_id").and_then(|v| v.as_u64()).unwrap_or(0)
+                                                as u32;
+                                        let block_hash_hex = b
+                                            .get("block_hash")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_owned();
+                                        let height =
+                                            b.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        let tx_nullifiers = b
+                                            .get("tx_nullifiers")
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| {
+                                                arr.iter()
+                                                    .filter_map(|v| {
+                                                        v.as_str().map(|s| s.to_owned())
+                                                    })
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default();
+                                        state.recent_blocks.push_back(crate::state::RecentBlock {
+                                            zone_id,
+                                            block_hash_hex,
+                                            height,
+                                            timestamp: std::time::Instant::now(),
+                                            tx_nullifiers,
+                                        });
+                                    }
+                                    state.blocks_seen = new_count;
+                                    while state.recent_blocks.len() > 200 {
+                                        state.recent_blocks.pop_front();
+                                    }
+                                }
+                            }
                         }
                     }
 
