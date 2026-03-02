@@ -373,7 +373,18 @@ pub(crate) fn render_status(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateS
 
     ui.add_space(spacing::MD);
     let sections_top = ui.cursor().top();
-    render_zode_status(ui, status, state);
+    let service_count = app
+        .zode
+        .as_ref()
+        .and_then(|z| z.service_registry().try_lock().ok())
+        .map(|reg| {
+            let count = reg.list_services().len();
+            drop(reg);
+            count
+        })
+        .unwrap_or(0);
+
+    render_zode_status(ui, status, state, service_count);
     render_storage_status(ui, status);
     render_metrics_status(ui, &status.metrics);
     render_rpc_status(ui, status);
@@ -397,7 +408,12 @@ pub(crate) fn render_status(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateS
     }
 }
 
-fn render_zode_status(ui: &mut egui::Ui, status: &zode::ZodeStatus, state: &StateSnapshot) {
+fn render_zode_status(
+    ui: &mut egui::Ui,
+    status: &zode::ZodeStatus,
+    state: &StateSnapshot,
+    service_count: usize,
+) {
     let full_addr = state
         .listen_addr
         .as_ref()
@@ -425,6 +441,7 @@ fn render_zode_status(ui: &mut egui::Ui, status: &zode::ZodeStatus, state: &Stat
                 &format!("{}", status.peer_count),
             );
             kv_row(ui, "Programs", &format!("{}", status.topics.len()));
+            kv_row(ui, "Services", &format!("{}", service_count));
         });
     });
 }

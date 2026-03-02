@@ -280,5 +280,6 @@ fn program_card(
 
     if resp.clicked() {
         *detail_selection = Some(DetailSelection::Program(entry.program_id));
+        *detail_closing = false;
     }
 }
