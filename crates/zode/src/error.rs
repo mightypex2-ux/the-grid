@@ -15,6 +15,9 @@ pub enum ZodeError {
     #[error("service error: {0}")]
     Service(#[from] grid_service::ServiceError),
 
+    #[error("proof setup error: {0}")]
+    ProofSetup(#[from] grid_proof_groth16::Groth16Error),
+
     #[error("policy reject: {0}")]
     PolicyReject(String),
 

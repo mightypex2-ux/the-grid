@@ -73,44 +73,49 @@ pub fn generate_keys_for_bucket(
 /// Generates missing keys on a thread with an 8 MB stack (required by the
 /// arkworks constraint system). Returns immediately when all files are
 /// already present.
-pub fn ensure_keys(key_dir: &Path) {
+pub fn ensure_keys(key_dir: &Path) -> Result<(), Groth16Error> {
     let ver = KEY_VERSION;
-    std::fs::create_dir_all(key_dir).ok();
+    std::fs::create_dir_all(key_dir)
+        .map_err(|e| Groth16Error::SetupFailed(format!("create key dir: {e}")))?;
 
     let all_exist = PROOF_BUCKETS.iter().all(|b| {
         key_dir.join(format!("shape_pk_{b}_{ver}.bin")).exists()
             && key_dir.join(format!("shape_vk_{b}_{ver}.bin")).exists()
     });
     if all_exist {
-        return;
+        return Ok(());
     }
 
     let dir = key_dir.to_path_buf();
-    std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name("groth16-keygen".into())
         .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
+        .spawn(move || -> Result<(), Groth16Error> {
             for &bucket in PROOF_BUCKETS {
                 let pk_path = dir.join(format!("shape_pk_{bucket}_{ver}.bin"));
                 let vk_path = dir.join(format!("shape_vk_{bucket}_{ver}.bin"));
                 if pk_path.exists() && vk_path.exists() {
                     continue;
                 }
-                let (pk, vk) =
-                    generate_keys_for_bucket(bucket).expect("Groth16 key generation failed");
+                let (pk, vk) = generate_keys_for_bucket(bucket)?;
 
                 let mut pk_bytes = Vec::new();
                 pk.serialize_compressed(&mut pk_bytes)
-                    .expect("PK serialization failed");
-                std::fs::write(&pk_path, &pk_bytes).expect("failed to write proving key");
+                    .map_err(|e| Groth16Error::SerializationError(format!("PK: {e}")))?;
+                std::fs::write(&pk_path, &pk_bytes)
+                    .map_err(|e| Groth16Error::SetupFailed(format!("write PK: {e}")))?;
 
                 let mut vk_bytes = Vec::new();
                 vk.serialize_compressed(&mut vk_bytes)
-                    .expect("VK serialization failed");
-                std::fs::write(&vk_path, &vk_bytes).expect("failed to write verifying key");
+                    .map_err(|e| Groth16Error::SerializationError(format!("VK: {e}")))?;
+                std::fs::write(&vk_path, &vk_bytes)
+                    .map_err(|e| Groth16Error::SetupFailed(format!("write VK: {e}")))?;
             }
+            Ok(())
         })
-        .expect("failed to spawn keygen thread")
+        .map_err(|e| Groth16Error::SetupFailed(format!("spawn keygen thread: {e}")))?;
+
+    handle
         .join()
-        .expect("keygen thread panicked");
+        .map_err(|_| Groth16Error::SetupFailed("keygen thread panicked".into()))?
 }

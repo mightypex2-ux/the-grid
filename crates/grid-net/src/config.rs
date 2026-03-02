@@ -116,6 +116,7 @@ impl NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
+            // INVARIANT: static multiaddr literal is always valid.
             listen_addr: "/ip4/0.0.0.0/udp/3690/quic-v1"
                 .parse()
                 .expect("well-known constant multiaddr"),

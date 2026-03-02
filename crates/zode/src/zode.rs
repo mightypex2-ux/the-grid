@@ -85,7 +85,7 @@ impl Zode {
         let data_dir = config.storage.path.clone();
 
         let vk_dir = data_dir.join("proof_keys");
-        grid_proof_groth16::ensure_keys(&vk_dir);
+        grid_proof_groth16::ensure_keys(&vk_dir)?;
 
         let storage =
             Arc::new(RocksStorage::open(config.storage.clone()).map_err(ZodeError::Storage)?);

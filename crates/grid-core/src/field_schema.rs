@@ -40,6 +40,8 @@ impl FieldSchema {
     /// `SHA-256(canonical_cbor(self))` — deterministic because canonical
     /// CBOR has a single valid encoding for any value.
     pub fn schema_hash(&self) -> [u8; 32] {
+        // INVARIANT: FieldSchema fields are all CBOR-serializable primitives;
+        // canonical encoding to a Vec cannot fail.
         let bytes = crate::encode_canonical(self).expect("FieldSchema is always serializable");
         Sha256::digest(&bytes).into()
     }

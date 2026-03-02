@@ -209,6 +209,7 @@ impl Settings {
         }
         let mut relay = self.parse_relay_peers()?;
 
+        // INVARIANT: DEFAULT_RELAY_PEER is a well-formed static multiaddr.
         let default_relay: grid_net::Multiaddr = grid_net::DEFAULT_RELAY_PEER
             .parse()
             .expect("DEFAULT_RELAY_PEER is a valid multiaddr");

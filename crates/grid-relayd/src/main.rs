@@ -102,6 +102,7 @@ async fn main() -> Result<()> {
         .with_quic()
         .with_behaviour(|key| {
             let peer_id = key.public().to_peer_id();
+            // INVARIANT: GRID_KAD_PROTOCOL is a well-formed static protocol string.
             let mut kad_config = kad::Config::new(
                 StreamProtocol::try_from_owned(GRID_KAD_PROTOCOL.to_string())
                     .expect("valid protocol name"),

@@ -160,9 +160,10 @@ fn read_entries_indexed(
         if key.len() != prefix.len() + IDX_LEN {
             continue;
         }
+        // INVARIANT: key length == prefix.len() + IDX_LEN validated above.
         let idx: [u8; IDX_LEN] = key[prefix.len()..]
             .try_into()
-            .expect("slice is exactly IDX_LEN bytes");
+            .map_err(|_| StorageError::Decode("unexpected index length".into()))?;
         let index = u64::from_be_bytes(idx);
         entries.push((index, value.to_vec()));
     }
@@ -212,10 +213,9 @@ fn scan_max_index(
                     "unexpected key length in sector log".into(),
                 ));
             }
-            // slice length validated above
             let idx: [u8; IDX_LEN] = key[prefix.len()..]
                 .try_into()
-                .expect("slice is exactly IDX_LEN bytes");
+                .map_err(|_| StorageError::Decode("unexpected index length".into()))?;
             Ok(u64::from_be_bytes(idx) + 1)
         }
         Some(Err(e)) => Err(StorageError::RocksDb(e)),
@@ -293,10 +293,9 @@ fn collect_programs(
         if key.len() < PID_LEN {
             continue;
         }
-        // length validated above
         let pid: [u8; PID_LEN] = key[..PID_LEN]
             .try_into()
-            .expect("slice is exactly PID_LEN bytes");
+            .map_err(|_| StorageError::Decode("unexpected program id length".into()))?;
         if last_pid.as_ref() != Some(&pid) {
             programs.push(ProgramId::from(pid));
             last_pid = Some(pid);
@@ -319,10 +318,9 @@ fn collect_sectors(
         if key.len() < PREFIX_LEN || &key[..PID_LEN] != prefix {
             break;
         }
-        // length validated above
         let sid: [u8; SID_LEN] = key[PID_LEN..PREFIX_LEN]
             .try_into()
-            .expect("slice is exactly SID_LEN bytes");
+            .map_err(|_| StorageError::Decode("unexpected sector id length".into()))?;
         if last_sid.as_ref() != Some(&sid) {
             sectors.push(SectorId::from_bytes(sid.to_vec()));
             last_sid = Some(sid);

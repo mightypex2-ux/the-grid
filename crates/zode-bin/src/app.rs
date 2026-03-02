@@ -160,6 +160,7 @@ impl ZodeApp {
         self.icon_texture
             .get_or_insert_with(|| {
                 let png = include_bytes!("../assets/icon.png");
+                // INVARIANT: icon.png is a compile-time embedded valid PNG asset.
                 let img = image::load_from_memory(png).expect("bad icon png");
                 let rgba = img.to_rgba8();
                 let pixels = rgba.as_flat_samples();
@@ -214,11 +215,18 @@ impl ZodeApp {
                             )
                         }
                     })
-                    .expect("spawn derive thread")
-                    .join()
-                    .expect("derive thread panicked");
+                    .map_err(|e| format!("spawn derive thread: {e}"))
+                    .and_then(|h| h.join().map_err(|_| "derive thread panicked".to_string()));
 
-                if let Ok(kp) = mk_result {
+                let mk_result = match mk_result {
+                    Ok(inner) => inner.ok(),
+                    Err(e) => {
+                        tracing::warn!("vault key derivation thread failed: {e}");
+                        None
+                    }
+                };
+
+                if let Some(kp) = mk_result {
                     let pk = kp.public_key();
                     let did = zid::ed25519_to_did_key(&pk.ed25519_bytes());
                     self.identity_state.did = Some(did.clone());

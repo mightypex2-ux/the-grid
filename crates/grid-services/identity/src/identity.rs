@@ -40,6 +40,7 @@ impl IdentityService {
 
 impl Default for IdentityService {
     fn default() -> Self {
+        // INVARIANT: ZID descriptor program_id uses compile-time constants.
         Self::new().expect("identity service descriptor should be valid")
     }
 }

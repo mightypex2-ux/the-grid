@@ -133,6 +133,7 @@ fn build_config(cli: &Cli) -> Result<ZodeConfig> {
         .collect::<Result<_>>()?;
 
     if relay_peers.is_empty() {
+        // INVARIANT: DEFAULT_RELAY_PEER is a well-formed static multiaddr.
         let default_relay: grid_net::Multiaddr = grid_net::DEFAULT_RELAY_PEER
             .parse()
             .expect("well-known constant multiaddr");

@@ -69,16 +69,26 @@ pub(crate) fn generate_new_identity(app: &mut ZodeApp) {
     let mut identity_id = [0u8; 16];
     rand::RngCore::fill_bytes(&mut rng, &mut identity_id);
 
-    let result = std::thread::Builder::new()
+    let handle = match std::thread::Builder::new()
         .name("neural-keygen".into())
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             let mut rng = rand::thread_rng();
             generate_identity(3, 5, IdentityId::new(identity_id), &mut rng)
-        })
-        .expect("failed to spawn keygen thread")
-        .join()
-        .expect("keygen thread panicked");
+        }) {
+        Ok(h) => h,
+        Err(e) => {
+            app.identity_state.error = Some(format!("Failed to spawn keygen thread: {e}"));
+            return;
+        }
+    };
+    let result = match handle.join() {
+        Ok(r) => r,
+        Err(_) => {
+            app.identity_state.error = Some("Keygen thread panicked".into());
+            return;
+        }
+    };
 
     match result {
         Ok(bundle) => {
@@ -220,13 +230,24 @@ pub(crate) fn attempt_recovery(app: &mut ZodeApp) {
         rand::RngCore::fill_bytes(&mut rng, &mut identity_id);
     }
 
-    let result = std::thread::Builder::new()
+    let handle = match std::thread::Builder::new()
         .name("neural-recover".into())
         .stack_size(8 * 1024 * 1024)
         .spawn(move || verify_shares(&shares, IdentityId::new(identity_id)))
-        .expect("failed to spawn recovery thread")
-        .join()
-        .expect("recovery thread panicked");
+    {
+        Ok(h) => h,
+        Err(e) => {
+            app.identity_state.error = Some(format!("Failed to spawn recovery thread: {e}"));
+            return;
+        }
+    };
+    let result = match handle.join() {
+        Ok(r) => r,
+        Err(_) => {
+            app.identity_state.error = Some("Recovery thread panicked".into());
+            return;
+        }
+    };
 
     match result {
         Ok(info) => {
@@ -290,7 +311,7 @@ fn auto_derive_machine_key(app: &mut ZodeApp) {
     let shares = app.identity_state.shares.clone();
     let identity_id = app.identity_state.identity_id;
 
-    let result = std::thread::Builder::new()
+    let handle = match std::thread::Builder::new()
         .name("neural-derive".into())
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
@@ -301,10 +322,20 @@ fn auto_derive_machine_key(app: &mut ZodeApp) {
                 epoch,
                 caps,
             )
-        })
-        .expect("failed to spawn derivation thread")
-        .join()
-        .expect("derivation thread panicked");
+        }) {
+        Ok(h) => h,
+        Err(e) => {
+            app.identity_state.error = Some(format!("Failed to spawn derivation thread: {e}"));
+            return;
+        }
+    };
+    let result = match handle.join() {
+        Ok(r) => r,
+        Err(_) => {
+            app.identity_state.error = Some("Derivation thread panicked".into());
+            return;
+        }
+    };
 
     match result {
         Ok(kp) => {

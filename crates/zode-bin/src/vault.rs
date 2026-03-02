@@ -28,45 +28,50 @@ pub(crate) struct VaultFile {
     pub ciphertext: Vec<u8>,
 }
 
-fn derive_key(password: &[u8], salt: &[u8; ARGON2_SALT_LEN]) -> [u8; XCHACHA_KEY_LEN] {
+fn derive_key(password: &[u8], salt: &[u8; ARGON2_SALT_LEN]) -> Result<[u8; XCHACHA_KEY_LEN], VaultError> {
     let argon2 = Argon2::default();
     let mut key = [0u8; XCHACHA_KEY_LEN];
     argon2
         .hash_password_into(password, salt, &mut key)
-        .expect("Argon2 output length is valid");
-    key
+        .map_err(|e| VaultError::KeyDerivation(e.to_string()))?;
+    Ok(key)
 }
 
-pub(crate) fn encrypt_vault(plaintext: &VaultPlaintext, password: &str) -> VaultFile {
+pub(crate) fn encrypt_vault(
+    plaintext: &VaultPlaintext,
+    password: &str,
+) -> Result<VaultFile, VaultError> {
     use rand::RngCore;
     let mut salt = [0u8; ARGON2_SALT_LEN];
     OsRng.fill_bytes(&mut salt);
     let mut nonce_bytes = [0u8; XCHACHA_NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
 
-    let key = derive_key(password.as_bytes(), &salt);
-    let cipher = XChaCha20Poly1305::new_from_slice(&key).expect("key length is valid");
+    let key = derive_key(password.as_bytes(), &salt)?;
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(&key).map_err(|_| VaultError::InvalidKeyLength)?;
     let nonce = XNonce::from_slice(&nonce_bytes);
 
     let mut cbor_buf = Vec::new();
-    ciborium::into_writer(plaintext, &mut cbor_buf).expect("CBOR serialization cannot fail");
+    ciborium::into_writer(plaintext, &mut cbor_buf)
+        .map_err(|e| VaultError::Io(format!("CBOR serialization: {e}")))?;
 
     let ciphertext = cipher
         .encrypt(nonce, cbor_buf.as_slice())
-        .expect("encryption with random nonce cannot fail");
+        .map_err(|_| VaultError::EncryptionFailed)?;
 
-    VaultFile {
+    Ok(VaultFile {
         argon2_salt: salt,
         nonce: nonce_bytes,
         ciphertext,
-    }
+    })
 }
 
 pub(crate) fn decrypt_vault(
     vault: &VaultFile,
     password: &str,
 ) -> Result<VaultPlaintext, VaultError> {
-    let key = derive_key(password.as_bytes(), &vault.argon2_salt);
+    let key = derive_key(password.as_bytes(), &vault.argon2_salt)?;
     let cipher =
         XChaCha20Poly1305::new_from_slice(&key).map_err(|_| VaultError::InvalidKeyLength)?;
     let nonce = XNonce::from_slice(&vault.nonce);
@@ -95,6 +100,8 @@ pub(crate) fn load_vault(path: &Path) -> Result<VaultFile, VaultError> {
 #[derive(Debug)]
 pub(crate) enum VaultError {
     InvalidKeyLength,
+    KeyDerivation(String),
+    EncryptionFailed,
     DecryptionFailed,
     DeserializeFailed(String),
     Io(String),
@@ -104,6 +111,8 @@ impl std::fmt::Display for VaultError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VaultError::InvalidKeyLength => write!(f, "invalid key length"),
+            VaultError::KeyDerivation(e) => write!(f, "key derivation failed: {e}"),
+            VaultError::EncryptionFailed => write!(f, "encryption failed"),
             VaultError::DecryptionFailed => write!(f, "wrong password or corrupted vault"),
             VaultError::DeserializeFailed(e) => write!(f, "vault data corrupted: {e}"),
             VaultError::Io(e) => write!(f, "I/O error: {e}"),

@@ -97,7 +97,8 @@ pub(crate) fn create_profile(
     std::fs::create_dir_all(data_dir_for_profile(base, &id))
         .map_err(|e| ProfileError::Io(e.to_string()))?;
 
-    let vault = vault::encrypt_vault(&params.plaintext, &params.password);
+    let vault = vault::encrypt_vault(&params.plaintext, &params.password)
+        .map_err(|e| ProfileError::Vault(e.to_string()))?;
     vault::save_vault(&vault_path(base, &id), &vault)
         .map_err(|e| ProfileError::Vault(e.to_string()))?;
 
@@ -137,7 +138,8 @@ pub(crate) fn update_vault(
     plaintext: &VaultPlaintext,
     password: &str,
 ) -> Result<(), ProfileError> {
-    let vault = vault::encrypt_vault(plaintext, password);
+    let vault = vault::encrypt_vault(plaintext, password)
+        .map_err(|e| ProfileError::Vault(e.to_string()))?;
     vault::save_vault(&vault_path(base, profile_id), &vault)
         .map_err(|e| ProfileError::Vault(e.to_string()))
 }

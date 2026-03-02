@@ -77,6 +77,7 @@ fn configure_fonts(ctx: &egui::Context) {
 }
 
 fn load_icon() -> egui::IconData {
+    // INVARIANT: icon.png is a compile-time embedded valid PNG asset.
     let src = image::load_from_memory(include_bytes!("../assets/icon.png"))
         .expect("bad icon png")
         .to_rgba8();

@@ -217,6 +217,7 @@ impl NetworkService {
 
     /// The libp2p keypair as protobuf-encoded bytes for vault persistence.
     pub fn keypair_to_protobuf(&self) -> Vec<u8> {
+        // INVARIANT: ed25519 keypairs always have a valid protobuf encoding.
         self.keypair
             .to_protobuf_encoding()
             .expect("ed25519 keypair protobuf encoding cannot fail")

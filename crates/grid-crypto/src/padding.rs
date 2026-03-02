@@ -43,6 +43,7 @@ fn select_bucket(total_needed: usize) -> usize {
             return bucket;
         }
     }
+    // INVARIANT: BUCKET_SIZES is a non-empty compile-time constant.
     let largest = *BUCKET_SIZES.last().expect("non-empty bucket list");
     total_needed.div_ceil(largest) * largest
 }

@@ -35,6 +35,7 @@ impl InterlinkService {
 
 impl Default for InterlinkService {
     fn default() -> Self {
+        // INVARIANT: Interlink descriptor program_id uses compile-time constants.
         Self::new().expect("interlink service descriptor should be valid")
     }
 }

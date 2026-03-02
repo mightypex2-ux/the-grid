@@ -28,6 +28,8 @@ use crate::state::{DisplayMessage, InterlinkState, InterlinkUpdate, SignatureSta
 fn derive_test_sector_key() -> SectorKey {
     let hk = Hkdf::<Sha256>::new(None, b"interlink-main-channel-v1");
     let mut key_bytes = [0u8; 32];
+    // INVARIANT: HKDF-SHA256 expand to 32 bytes is always within the valid
+    // output length (255 * HashLen = 8160 bytes).
     hk.expand(b"grid:test-channel-key:v1", &mut key_bytes)
         .expect("32-byte expand cannot fail");
     SectorKey::from_bytes(key_bytes)
@@ -59,9 +61,15 @@ impl ZodeApp {
 
         let data_dir = self.settings.data_dir.clone();
         let channel_id = ChannelId::from_str_id(TEST_CHANNEL_ID);
-        let program_id = InterlinkDescriptor::v2()
-            .program_id()
-            .expect("Interlink descriptor is valid");
+        let program_id = match InterlinkDescriptor::v2().program_id() {
+            Ok(pid) => pid,
+            Err(e) => {
+                self.interlink_state = Some(InterlinkState::error_only(
+                    &format!("Interlink descriptor invalid: {e}"),
+                ));
+                return;
+            }
+        };
         let sector_id = channel_id.sector_id();
 
         let (update_tx, update_rx) = tokio::sync::mpsc::channel::<InterlinkUpdate>(16);
@@ -99,10 +107,11 @@ impl ZodeApp {
             );
         }
 
-        let (prover_tx, prover_rx) = tokio::sync::mpsc::channel::<Box<Groth16ShapeProver>>(1);
+        let (prover_tx, prover_rx) =
+            tokio::sync::mpsc::channel::<Result<Box<Groth16ShapeProver>, String>>(1);
         std::thread::spawn(move || {
-            let prover = load_or_generate_prover(&data_dir);
-            let _ = prover_tx.blocking_send(prover);
+            let result = load_or_generate_prover(&data_dir);
+            let _ = prover_tx.blocking_send(result);
         });
 
         self.interlink_state = Some(InterlinkState {
@@ -223,7 +232,9 @@ impl ZodeApp {
             return;
         };
         let storage = Arc::clone(zode.storage());
-        let il = self.interlink_state.as_mut().unwrap();
+        let Some(il) = self.interlink_state.as_mut() else {
+            return;
+        };
         let text = il.compose.trim().to_string();
         if text.is_empty() {
             return;
@@ -392,7 +403,8 @@ fn read_and_decrypt_range(
         if indexed.is_empty() {
             break;
         }
-        let next = indexed.last().unwrap().0 + 1;
+        // INVARIANT: `indexed` is non-empty (checked above).
+        let next = indexed.last().expect("non-empty").0 + 1;
         for (_, ct) in &indexed {
             if let Ok(msg) = decrypt_one(ct, sector_key, program_id, sector_id) {
                 let h = msg.dedup_hash();
@@ -432,7 +444,8 @@ async fn poll_new_entries(
     if indexed.is_empty() {
         return current_len;
     }
-    let new_len = indexed.last().unwrap().0 + 1;
+    // INVARIANT: `indexed` is non-empty (checked above).
+    let new_len = indexed.last().expect("non-empty").0 + 1;
     let entries: Vec<Vec<u8>> = indexed.into_iter().map(|(_, v)| v).collect();
     let upd = decrypt_entries(entries, sector_key, program_id, sector_id);
     if update_tx.send(upd).await.is_err() {
@@ -601,17 +614,18 @@ fn broadcast_gossip(
 // ---------------------------------------------------------------------------
 
 /// Ensure the Groth16 proving and verifying key files exist on disk.
-fn ensure_proof_keys(data_dir: &str) {
+fn ensure_proof_keys(data_dir: &str) -> Result<(), grid_proof_groth16::Groth16Error> {
     let key_dir = PathBuf::from(data_dir).join("proof_keys");
-    grid_proof_groth16::ensure_keys(&key_dir);
+    grid_proof_groth16::ensure_keys(&key_dir)
 }
 
-fn load_or_generate_prover(data_dir: &str) -> Box<Groth16ShapeProver> {
-    ensure_proof_keys(data_dir);
+fn load_or_generate_prover(data_dir: &str) -> Result<Box<Groth16ShapeProver>, String> {
+    ensure_proof_keys(data_dir).map_err(|e| format!("proof key setup: {e}"))?;
     let key_dir = PathBuf::from(data_dir).join("proof_keys");
-    let prover = Groth16ShapeProver::load(&key_dir).expect("failed to load proving keys");
+    let prover = Groth16ShapeProver::load(&key_dir)
+        .map_err(|e| format!("failed to load proving keys: {e}"))?;
     info!("loaded Groth16 proving keys");
-    Box::new(prover)
+    Ok(Box::new(prover))
 }
 
 fn encode_proof_cbor(proof: &ShapeProof) -> Result<Vec<u8>, String> {
@@ -625,7 +639,11 @@ fn encode_proof_cbor(proof: &ShapeProof) -> Result<Vec<u8>, String> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn render_interlink(app: &mut ZodeApp, ui: &mut egui::Ui) {
-    if app.interlink_state.is_none() || !app.interlink_state.as_ref().unwrap().initialized {
+    if app
+        .interlink_state
+        .as_ref()
+        .is_none_or(|il| !il.initialized)
+    {
         app.init_interlink();
     }
     render_interlink_header(app, ui);
@@ -635,7 +653,9 @@ pub(crate) fn render_interlink(app: &mut ZodeApp, ui: &mut egui::Ui) {
 }
 
 fn render_interlink_header(app: &ZodeApp, ui: &mut egui::Ui) {
-    let il = app.interlink_state.as_ref().unwrap();
+    let Some(il) = app.interlink_state.as_ref() else {
+        return;
+    };
 
     section(ui, "INTERLINK", |ui| {
         if let (Some(ref sector_key), Some(ref channel_id)) = (&il.sector_key, &il.channel_id) {
@@ -668,12 +688,17 @@ fn render_interlink_header(app: &ZodeApp, ui: &mut egui::Ui) {
 }
 
 fn drain_interlink_updates(app: &mut ZodeApp) {
-    let il = app.interlink_state.as_mut().unwrap();
+    let Some(il) = app.interlink_state.as_mut() else {
+        return;
+    };
 
     if il.prover.is_none() {
         if let Some(ref mut rx) = il.prover_rx {
-            if let Ok(prover) = rx.try_recv() {
-                il.prover = Some(prover);
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(prover) => il.prover = Some(prover),
+                    Err(e) => il.error = Some(e),
+                }
                 il.prover_rx = None;
             }
         }
@@ -716,7 +741,9 @@ fn drain_interlink_updates(app: &mut ZodeApp) {
 }
 
 fn render_interlink_messages(app: &mut ZodeApp, ui: &mut egui::Ui) {
-    let il = app.interlink_state.as_mut().unwrap();
+    let Some(il) = app.interlink_state.as_mut() else {
+        return;
+    };
     let should_scroll = il.scroll_to_bottom;
     il.scroll_to_bottom = false;
     let has_more_history = il.earliest_loaded_index > 0;
@@ -730,7 +757,9 @@ fn render_interlink_messages(app: &mut ZodeApp, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .stick_to_bottom(true)
         .show(ui, |ui| {
-            let il = app.interlink_state.as_ref().unwrap();
+            let Some(il) = app.interlink_state.as_ref() else {
+                return;
+            };
 
             if history_loading {
                 ui.vertical_centered(|ui| {
@@ -780,7 +809,9 @@ fn do_load_history(app: &mut ZodeApp) {
         Some(ref z) => Arc::clone(z.storage()),
         None => return,
     };
-    let il = app.interlink_state.as_mut().unwrap();
+    let Some(il) = app.interlink_state.as_mut() else {
+        return;
+    };
     let (Some(ref sector_key), Some(ref program_id), Some(ref sector_id)) =
         (&il.sector_key, &il.program_id, &il.sector_id)
     else {
@@ -844,7 +875,9 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
 fn render_interlink_compose(app: &mut ZodeApp, ui: &mut egui::Ui) {
     let mut do_send = false;
     ui.horizontal(|ui| {
-        let il = app.interlink_state.as_mut().unwrap();
+        let Some(il) = app.interlink_state.as_mut() else {
+            return;
+        };
         let should_focus = il.focus_compose;
         il.focus_compose = false;
         let resp = ui.add(
