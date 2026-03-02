@@ -2724,6 +2724,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "grid-programs-zephyr"
+version = "0.2.0"
+dependencies = [
+ "grid-core",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
 name = "grid-programs-zfs"
 version = "0.2.0"
 dependencies = [

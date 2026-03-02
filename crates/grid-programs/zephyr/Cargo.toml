@@ -1,0 +1,11 @@
+[package]
+name = "grid-programs-zephyr"
+version = "0.2.0"
+edition = "2021"
+description = "Zephyr currency program descriptors, data types, and wire messages"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+grid-core = { path = "../../grid-core" }
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"

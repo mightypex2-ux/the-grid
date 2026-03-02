@@ -19,4 +19,5 @@ members = [
   "crates/grid-programs/zid",
   "crates/grid-programs/interlink",
   "crates/grid-programs/zfs",
+  "crates/grid-programs/zephyr",
 ]
