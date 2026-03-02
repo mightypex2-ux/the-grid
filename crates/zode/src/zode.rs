@@ -40,6 +40,8 @@ pub struct Zode {
     data_dir: std::path::PathBuf,
     topics: Arc<RwLock<Vec<String>>>,
     connected_peers: Arc<RwLock<Vec<String>>>,
+    /// Zode ID -> IP address for connected peers, updated by the event loop.
+    peer_ips: Arc<RwLock<HashMap<String, String>>>,
     event_tx: broadcast::Sender<LogEvent>,
     shutdown_tx: mpsc::Sender<()>,
     publish_tx: mpsc::Sender<(String, Vec<u8>)>,
@@ -92,6 +94,7 @@ impl Zode {
         let (sector_request_tx, sector_request_rx) = mpsc::channel(16);
         let metrics = Arc::new(ZodeMetrics::default());
         let connected_peers: Arc<RwLock<Vec<String>>> = Arc::default();
+        let peer_ips: Arc<RwLock<HashMap<String, String>>> = Arc::default();
 
         let mut proof_registry = ProofVerifierRegistry::new();
         proof_registry.register(ProofSystem::None, Arc::new(NoopVerifier));
@@ -173,6 +176,7 @@ impl Zode {
             event_tx.clone(),
             Arc::clone(&metrics),
             Arc::clone(&connected_peers),
+            Arc::clone(&peer_ips),
             shutdown_rx,
             publish_rx,
             sector_request_rx,
@@ -187,6 +191,7 @@ impl Zode {
             data_dir,
             topics: Arc::new(RwLock::new(topic_strings)),
             connected_peers,
+            peer_ips,
             event_tx,
             shutdown_tx,
             publish_tx,
@@ -255,6 +260,7 @@ impl Zode {
         event_tx: broadcast::Sender<LogEvent>,
         metrics: Arc<ZodeMetrics>,
         connected_peers: Arc<RwLock<Vec<String>>>,
+        peer_ips: Arc<RwLock<HashMap<String, String>>>,
         shutdown_rx: mpsc::Receiver<()>,
         publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
         sector_request_rx: mpsc::Receiver<SectorRequestSubmission>,
@@ -266,6 +272,7 @@ impl Zode {
                 event_tx,
                 metrics,
                 connected_peers,
+                peer_ips,
                 shutdown_rx,
                 publish_rx,
                 sector_request_rx,
@@ -303,18 +310,11 @@ impl Zode {
             )
         };
 
-        let peer_ips = if let Ok(net) = self.network.try_lock() {
-            net.connected_peers_with_addrs()
-                .into_iter()
-                .filter_map(|(peer_id, addrs)| {
-                    let zid = format_zode_id(&peer_id);
-                    let ip = addrs.iter().find_map(grid_net::addr::extract_ip)?;
-                    Some((zid, ip))
-                })
-                .collect()
-        } else {
-            HashMap::new()
-        };
+        let peer_ips = self
+            .peer_ips
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default();
 
         let topics = self.topics.read().map(|t| t.clone()).unwrap_or_default();
 
@@ -512,6 +512,7 @@ impl Zode {
         event_tx: broadcast::Sender<LogEvent>,
         metrics: Arc<ZodeMetrics>,
         connected_peers: Arc<RwLock<Vec<String>>>,
+        peer_ips: Arc<RwLock<HashMap<String, String>>>,
         mut shutdown_rx: mpsc::Receiver<()>,
         mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
         mut sector_request_rx: mpsc::Receiver<SectorRequestSubmission>,
@@ -525,7 +526,23 @@ impl Zode {
             let event = {
                 let mut net = network.lock().await;
                 tokio::select! {
-                    event = net.next_event() => event,
+                    event = net.next_event() => {
+                        // Snapshot peer IPs while we hold the network lock,
+                        // since `status()` cannot acquire it during `next_event`.
+                        let fresh: HashMap<String, String> = net
+                            .connected_peers_with_addrs()
+                            .into_iter()
+                            .filter_map(|(pid, addrs)| {
+                                let zid = format_zode_id(&pid);
+                                let ip = addrs.iter().find_map(grid_net::addr::extract_ip)?;
+                                Some((zid, ip))
+                            })
+                            .collect();
+                        if let Ok(mut map) = peer_ips.write() {
+                            *map = fresh;
+                        }
+                        event
+                    },
                     _ = shutdown_rx.recv() => {
                         info!("event loop shutting down");
                         return;
