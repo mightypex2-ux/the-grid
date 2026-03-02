@@ -477,7 +477,7 @@ impl ZodeApp {
                                     LogEvent::SectorAppendProcessed { program_id, .. }
                                     | LogEvent::SectorReadLogProcessed { program_id, .. }
                                     | LogEvent::GossipSectorReceived { program_id, .. } => {
-                                        service_for_program_id(program_id, &program_to_service)
+                                        program_to_service.get(program_id).cloned()
                                     }
                                     _ => None,
                                 };

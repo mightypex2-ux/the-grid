@@ -10,6 +10,7 @@ use zode::ZodeStatus;
 
 pub(crate) const MAX_LOG_ENTRIES: usize = 500;
 
+#[derive(Clone)]
 pub(crate) struct LogEntry {
     pub line: String,
     pub level: zode::LogLevel,
