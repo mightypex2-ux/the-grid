@@ -253,6 +253,7 @@ impl ServiceRegistry {
                     id,
                     descriptor: svc.descriptor().clone(),
                     running,
+                    routes: svc.route_info(),
                 }
             })
             .collect();
@@ -295,6 +296,7 @@ pub struct ServiceInfo {
     pub id: ServiceId,
     pub descriptor: crate::descriptor::ServiceDescriptor,
     pub running: bool,
+    pub routes: Vec<crate::service::RouteInfo>,
 }
 
 /// Per-service middleware: returns 503 when the service is not in the active set.
