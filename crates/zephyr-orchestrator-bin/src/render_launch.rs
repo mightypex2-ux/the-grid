@@ -2,7 +2,7 @@ use eframe::egui;
 
 use crate::app::OrchestratorApp;
 use crate::components::tokens::{self, colors, font_size, spacing};
-use crate::components::{action_button, section_heading};
+use crate::components::action_button;
 use crate::state::NetworkPreset;
 
 const CARD_WIDTH: f32 = 260.0;
@@ -40,13 +40,15 @@ pub(crate) fn render_launch_screen(app: &mut OrchestratorApp, ui: &mut egui::Ui)
             );
             ui.add_space(spacing::XXXL);
 
-            section_heading(ui, "SELECT NETWORK PRESET");
-            ui.add_space(spacing::LG);
-
             let presets = [
                 NetworkPreset::Minimal,
                 NetworkPreset::Standard,
                 NetworkPreset::Large,
+                NetworkPreset::Custom {
+                    validators: 4,
+                    zones: 3,
+                    committee_size: 3,
+                },
             ];
 
             ui.horizontal_wrapped(|ui| {
@@ -64,8 +66,6 @@ pub(crate) fn render_launch_screen(app: &mut OrchestratorApp, ui: &mut egui::Ui)
                 render_custom_inputs(ui, &mut app.selected_preset);
                 ui.add_space(spacing::MD);
             }
-
-            render_preset_selector(ui, &mut app.selected_preset);
 
             ui.add_space(spacing::XXL);
 
@@ -155,28 +155,6 @@ fn preset_card(ui: &mut egui::Ui, preset: &NetworkPreset, selected: &NetworkPres
     );
 
     resp.clicked()
-}
-
-fn render_preset_selector(ui: &mut egui::Ui, selected: &mut NetworkPreset) {
-    ui.horizontal(|ui| {
-        for preset in &[
-            NetworkPreset::Minimal,
-            NetworkPreset::Standard,
-            NetworkPreset::Large,
-            NetworkPreset::Custom {
-                validators: 4,
-                zones: 3,
-                committee_size: 3,
-            },
-        ] {
-            let is_selected = std::mem::discriminant(preset) == std::mem::discriminant(selected);
-            let label = preset.label();
-            let resp = ui.selectable_label(is_selected, label);
-            if resp.clicked() && !is_selected {
-                *selected = preset.clone();
-            }
-        }
-    });
 }
 
 fn render_custom_inputs(ui: &mut egui::Ui, preset: &mut NetworkPreset) {
