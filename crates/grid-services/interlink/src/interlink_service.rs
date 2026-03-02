@@ -137,3 +137,38 @@ async fn get_messages(
 async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grid_service::Service;
+
+    #[test]
+    fn new_succeeds() {
+        let svc = InterlinkService::new().expect("InterlinkService::new() should succeed");
+        assert_eq!(svc.descriptor.name, "INTERLINK");
+    }
+
+    #[test]
+    fn descriptor_has_expected_name_and_version() {
+        let svc = InterlinkService::default();
+        let desc = svc.descriptor();
+        assert_eq!(desc.name, "INTERLINK");
+        assert_eq!(desc.version, "1.0.0");
+        assert!(!desc.required_programs.is_empty(), "should require at least one program");
+    }
+
+    #[test]
+    fn route_info_contains_expected_paths() {
+        let svc = InterlinkService::default();
+        let routes = svc.route_info();
+
+        assert_eq!(routes.len(), 2);
+
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[0].path, "/messages");
+
+        assert_eq!(routes[1].method, "GET");
+        assert_eq!(routes[1].path, "/health");
+    }
+}

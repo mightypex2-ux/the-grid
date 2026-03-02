@@ -137,3 +137,38 @@ async fn resolve_handler(
 async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grid_service::Service;
+
+    #[test]
+    fn new_succeeds() {
+        let svc = IdentityService::new().expect("IdentityService::new() should succeed");
+        assert_eq!(svc.descriptor.name, "IDENTITY");
+    }
+
+    #[test]
+    fn descriptor_has_expected_name_and_version() {
+        let svc = IdentityService::default();
+        let desc = svc.descriptor();
+        assert_eq!(desc.name, "IDENTITY");
+        assert_eq!(desc.version, "1.0.0");
+        assert!(!desc.required_programs.is_empty(), "should require at least one program");
+    }
+
+    #[test]
+    fn route_info_contains_expected_paths() {
+        let svc = IdentityService::default();
+        let routes = svc.route_info();
+
+        assert_eq!(routes.len(), 2);
+
+        assert_eq!(routes[0].method, "POST");
+        assert_eq!(routes[0].path, "/resolve");
+
+        assert_eq!(routes[1].method, "GET");
+        assert_eq!(routes[1].path, "/health");
+    }
+}

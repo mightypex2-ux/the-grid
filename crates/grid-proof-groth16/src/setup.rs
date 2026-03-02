@@ -123,3 +123,19 @@ pub fn ensure_keys(key_dir: &Path) -> Result<(), Groth16Error> {
         .join()
         .map_err(|_| Groth16Error::SetupFailed("keygen thread panicked".into()))?
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_keys_invalid_bucket_size() {
+        let result = generate_keys_for_bucket(2048);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Groth16Error::InvalidBucketSize { size: 2048 }),
+            "expected InvalidBucketSize(2048), got: {err}"
+        );
+    }
+}

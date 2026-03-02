@@ -11,7 +11,7 @@ const ARGON2_SALT_LEN: usize = 16;
 const XCHACHA_NONCE_LEN: usize = 24;
 const XCHACHA_KEY_LEN: usize = 32;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct VaultPlaintext {
     pub shares: Vec<String>,
     pub identity_id: [u8; 16],
@@ -121,3 +121,60 @@ impl std::fmt::Display for VaultError {
 }
 
 impl std::error::Error for VaultError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_plaintext() -> VaultPlaintext {
+        VaultPlaintext {
+            shares: vec!["share1".into(), "share2".into()],
+            identity_id: [1u8; 16],
+            machine_id: [2u8; 16],
+            epoch: 42,
+            capabilities: 0xff,
+            libp2p_keypair: vec![3u8; 32],
+        }
+    }
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let pt = sample_plaintext();
+        let password = "hunter2";
+        let vault_file = encrypt_vault(&pt, password).unwrap();
+        let recovered = decrypt_vault(&vault_file, password).unwrap();
+
+        assert_eq!(recovered.shares, pt.shares);
+        assert_eq!(recovered.identity_id, pt.identity_id);
+        assert_eq!(recovered.machine_id, pt.machine_id);
+        assert_eq!(recovered.epoch, pt.epoch);
+        assert_eq!(recovered.capabilities, pt.capabilities);
+        assert_eq!(recovered.libp2p_keypair, pt.libp2p_keypair);
+    }
+
+    #[test]
+    fn decrypt_with_wrong_password_fails() {
+        let pt = sample_plaintext();
+        let vault_file = encrypt_vault(&pt, "correct-password").unwrap();
+        let result = decrypt_vault(&vault_file, "wrong-password");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), VaultError::DecryptionFailed));
+    }
+
+    #[test]
+    fn encrypt_vault_returns_valid_vault_file() {
+        let pt = sample_plaintext();
+        let vault_file = encrypt_vault(&pt, "password").unwrap();
+
+        assert!(
+            vault_file.argon2_salt.iter().any(|&b| b != 0),
+            "salt should be random, not all zeros"
+        );
+        assert!(
+            vault_file.nonce.iter().any(|&b| b != 0),
+            "nonce should be random, not all zeros"
+        );
+        assert!(!vault_file.ciphertext.is_empty());
+    }
+}

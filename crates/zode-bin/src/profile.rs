@@ -186,3 +186,59 @@ impl std::fmt::Display for ProfileError {
 }
 
 impl std::error::Error for ProfileError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_profile_id_rejects_path_traversal() {
+        assert!(validate_profile_id("../escape").is_err());
+    }
+
+    #[test]
+    fn validate_profile_id_rejects_slash() {
+        assert!(validate_profile_id("foo/bar").is_err());
+    }
+
+    #[test]
+    fn validate_profile_id_rejects_empty() {
+        assert!(validate_profile_id("").is_err());
+    }
+
+    #[test]
+    fn validate_profile_id_accepts_valid_hex() {
+        assert!(validate_profile_id("0000000000000001").is_ok());
+    }
+
+    #[test]
+    fn create_and_list_profiles_round_trip() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let base = tmp.path();
+
+        assert!(list_profiles(base).is_empty());
+
+        let params = CreateProfileParams {
+            name: "Alice".into(),
+            peer_id: "12D3KooWTest".into(),
+            did: "did:grid:test".into(),
+            plaintext: VaultPlaintext {
+                shares: vec!["s1".into()],
+                identity_id: [0u8; 16],
+                machine_id: [0u8; 16],
+                epoch: 1,
+                capabilities: 0,
+                libp2p_keypair: vec![0u8; 32],
+            },
+            password: "pass".into(),
+        };
+
+        let meta = create_profile(base, params).unwrap();
+        assert_eq!(meta.name, "Alice");
+
+        let profiles = list_profiles(base);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "Alice");
+        assert_eq!(profiles[0].id, meta.id);
+    }
+}

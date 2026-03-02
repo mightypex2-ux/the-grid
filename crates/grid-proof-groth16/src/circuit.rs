@@ -194,3 +194,50 @@ pub fn bytes_to_field_elements(data: &[u8]) -> Vec<Fr> {
 pub fn max_elements_for_bucket(bucket: u32) -> usize {
     (bucket as usize).div_ceil(BYTES_PER_ELEMENT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_ff::Zero;
+
+    #[test]
+    fn bytes_to_field_elements_empty_returns_single_zero() {
+        let elems = bytes_to_field_elements(&[]);
+        assert_eq!(elems.len(), 1);
+        assert!(elems[0].is_zero());
+    }
+
+    #[test]
+    fn bytes_to_field_elements_small_input() {
+        let elems = bytes_to_field_elements(b"hello");
+        assert_eq!(elems.len(), 1, "5 bytes fits in a single field element");
+
+        let mut expected_repr = [0u8; 32];
+        expected_repr[0] = 5; // length prefix
+        expected_repr[1..6].copy_from_slice(b"hello");
+        let expected = Fr::from_le_bytes_mod_order(&expected_repr);
+        assert_eq!(elems[0], expected);
+    }
+
+    #[test]
+    fn bytes_to_field_elements_spans_two_elements() {
+        let data = [0xABu8; BYTES_PER_ELEMENT + 1];
+        let elems = bytes_to_field_elements(&data);
+        assert_eq!(elems.len(), 2, "31 bytes should span two field elements");
+    }
+
+    #[test]
+    fn max_elements_for_bucket_known_values() {
+        assert_eq!(max_elements_for_bucket(BUCKET_1K), 1024_usize.div_ceil(BYTES_PER_ELEMENT));
+        assert_eq!(max_elements_for_bucket(BUCKET_4K), 4096_usize.div_ceil(BYTES_PER_ELEMENT));
+        assert_eq!(max_elements_for_bucket(BUCKET_1K), 35);
+        assert_eq!(max_elements_for_bucket(BUCKET_4K), 137);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds max")]
+    fn bytes_to_field_elements_panics_on_oversized_input() {
+        let oversized = vec![0u8; BUCKET_4K as usize + 1];
+        bytes_to_field_elements(&oversized);
+    }
+}

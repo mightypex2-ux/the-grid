@@ -121,3 +121,88 @@ fn error_response(id: Value, code: i32, message: &str) -> JsonRpcResponse {
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grid_core::{SectorLogLengthResponse, SectorRequest, SectorResponse};
+
+    struct MockHandler;
+
+    impl SectorDispatch for MockHandler {
+        fn dispatch(&self, req: &SectorRequest) -> SectorResponse {
+            match req {
+                SectorRequest::LogLength(_) => SectorResponse::LogLength(SectorLogLengthResponse {
+                    length: 42,
+                    error_code: None,
+                }),
+                _ => unimplemented!("MockHandler only supports LogLength"),
+            }
+        }
+    }
+
+    fn make_request(jsonrpc: &str, method: &str, params: Value) -> JsonRpcRequest {
+        JsonRpcRequest {
+            jsonrpc: jsonrpc.to_string(),
+            id: Value::Number(1.into()),
+            method: method.to_string(),
+            params,
+        }
+    }
+
+    #[test]
+    fn parse_error_on_invalid_json() {
+        let resp = parse_error("unexpected token");
+        assert_eq!(resp.id, Value::Null);
+        assert!(resp.result.is_none());
+        let err = resp.error.as_ref().unwrap();
+        assert_eq!(err.code, PARSE_ERROR);
+        assert!(err.message.contains("unexpected token"));
+    }
+
+    #[test]
+    fn invalid_jsonrpc_version_returns_error() {
+        let req = make_request("1.0", "sector.logLength", Value::Null);
+        let resp = dispatch(&MockHandler, &req);
+        assert!(resp.result.is_none());
+        let err = resp.error.as_ref().unwrap();
+        assert_eq!(err.code, INVALID_REQUEST);
+        assert!(err.message.contains("version"));
+    }
+
+    #[test]
+    fn unknown_method_returns_method_not_found() {
+        let req = make_request("2.0", "sector.doesNotExist", Value::Null);
+        let resp = dispatch(&MockHandler, &req);
+        assert!(resp.result.is_none());
+        let err = resp.error.as_ref().unwrap();
+        assert_eq!(err.code, METHOD_NOT_FOUND);
+        assert!(err.message.contains("sector.doesNotExist"));
+    }
+
+    #[test]
+    fn log_length_dispatch_returns_result() {
+        let program_id_bytes: Vec<u8> = vec![1; 32];
+        let params = serde_json::json!({
+            "program_id": program_id_bytes,
+            "sector_id": [2, 3, 4],
+        });
+        let req = make_request("2.0", "sector.logLength", params);
+        let resp = dispatch(&MockHandler, &req);
+
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.as_ref().unwrap();
+        assert_eq!(result["LogLength"]["length"], 42);
+    }
+
+    #[test]
+    fn invalid_params_returns_error() {
+        let params = serde_json::json!({"wrong_field": true});
+        let req = make_request("2.0", "sector.logLength", params);
+        let resp = dispatch(&MockHandler, &req);
+
+        assert!(resp.result.is_none());
+        let err = resp.error.as_ref().unwrap();
+        assert_eq!(err.code, INVALID_PARAMS);
+    }
+}
