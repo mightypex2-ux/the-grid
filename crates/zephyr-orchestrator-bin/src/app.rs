@@ -89,6 +89,18 @@ impl OrchestratorApp {
         self.launch_instant = Some(Instant::now());
     }
 
+    /// Push local traffic control values into the shared AppState.
+    pub fn sync_traffic_to_shared(&self) {
+        let shared = Arc::clone(&self.shared);
+        let auto_traffic = self.auto_traffic;
+        let traffic_rate = self.traffic_rate;
+        self.rt.spawn(async move {
+            let mut state = shared.lock().await;
+            state.auto_traffic = auto_traffic;
+            state.traffic_rate = traffic_rate;
+        });
+    }
+
     fn do_shutdown(&mut self) {
         self.phase = AppPhase::ShuttingDown;
         for h in self.poller_handles.drain(..) {

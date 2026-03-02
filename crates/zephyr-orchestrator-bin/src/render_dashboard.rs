@@ -8,15 +8,19 @@ use crate::components::{info_grid, kv_row, section};
 use crate::helpers::{format_uptime, node_color};
 use crate::state::AppState;
 
-pub(crate) fn render_dashboard(app: &OrchestratorApp, ui: &mut egui::Ui, state: &AppState) {
+pub(crate) fn render_dashboard(app: &mut OrchestratorApp, ui: &mut egui::Ui, state: &AppState) {
     egui::ScrollArea::vertical()
         .id_salt("dashboard_scroll")
         .show(ui, |ui| {
             render_stats_bar(ui, state, app.launch_instant);
             ui.add_space(spacing::MD);
+            render_traffic_controls(app, ui, state);
+            ui.add_space(spacing::MD);
             render_zone_grid(ui, state);
             ui.add_space(spacing::MD);
             render_epoch_timeline(ui, state);
+            ui.add_space(spacing::MD);
+            render_activity_feed(ui, state);
         });
 }
 
@@ -41,8 +45,42 @@ fn render_stats_bar(ui: &mut egui::Ui, state: &AppState, launch_instant: Option<
                 "Spends Processed",
                 &format!("{}", state.network.spends_processed),
             );
+            kv_row(
+                ui,
+                "Tx Submitted",
+                &format!("{}", state.traffic_stats.total_submitted),
+            );
             if let Some(started) = launch_instant {
                 kv_row(ui, "Uptime", &format_uptime(started.elapsed().as_secs()));
+            }
+        });
+    });
+}
+
+fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state: &AppState) {
+    section(ui, "Traffic Generator", |ui| {
+        ui.horizontal(|ui| {
+            let mut enabled = app.auto_traffic;
+            if ui.checkbox(&mut enabled, "Auto-traffic").changed() {
+                app.auto_traffic = enabled;
+                app.sync_traffic_to_shared();
+            }
+
+            ui.add_space(spacing::LG);
+
+            ui.label(
+                egui::RichText::new("Rate (tx/s):")
+                    .size(font_size::SMALL)
+                    .color(colors::TEXT_SECONDARY),
+            );
+
+            let mut rate = app.traffic_rate;
+            let slider = egui::Slider::new(&mut rate, 0.1..=50.0)
+                .logarithmic(true)
+                .text("tx/s");
+            if ui.add(slider).changed() {
+                app.traffic_rate = rate;
+                app.sync_traffic_to_shared();
             }
         });
     });
@@ -156,5 +194,48 @@ fn render_epoch_timeline(ui: &mut egui::Ui, state: &AppState) {
             egui::FontId::proportional(font_size::SMALL),
             egui::Color32::WHITE,
         );
+    });
+}
+
+fn render_activity_feed(ui: &mut egui::Ui, state: &AppState) {
+    if state.traffic_stats.recent.is_empty() {
+        return;
+    }
+
+    section(ui, "Activity Feed", |ui| {
+        let max_entries = 20;
+        let start = state
+            .traffic_stats
+            .recent
+            .len()
+            .saturating_sub(max_entries);
+        for entry in state.traffic_stats.recent.iter().skip(start).rev() {
+            let age = entry.timestamp.elapsed();
+            let age_str = if age.as_secs() < 60 {
+                format!("{}s ago", age.as_secs())
+            } else {
+                format!("{}m ago", age.as_secs() / 60)
+            };
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(egui_phosphor::regular::ARROW_RIGHT)
+                        .size(font_size::SMALL)
+                        .color(colors::ACCENT),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Zone {} — {}",
+                        entry.zone_id, entry.nullifier_hex
+                    ))
+                    .size(font_size::SMALL)
+                    .color(colors::TEXT_SECONDARY),
+                );
+                ui.label(
+                    egui::RichText::new(age_str)
+                        .size(font_size::SMALL)
+                        .color(colors::TEXT_MUTED),
+                );
+            });
+        }
     });
 }
