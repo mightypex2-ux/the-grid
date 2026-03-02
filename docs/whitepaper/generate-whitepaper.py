@@ -13,7 +13,7 @@ import tempfile
 import time
 import urllib.request
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
@@ -238,9 +238,9 @@ for stateless servers that run on ZODES, use Programs for persistent state via a
 abstraction over sector logs, and expose HTTP endpoints. Services are pluggable, discoverable,
 and support both native (compiled Rust) and sandboxed WASM runtimes via the WebAssembly
 Component Model.
-This document specifies the serialization, cryptography, storage model, wire protocol,
-gossip replication, proof system, services framework, and standard programs (ZID identity
-and Interlink messaging) in sufficient detail for independent, interoperable implementations.
+This document specifies the identity, program, storage, encryption, proof, networking,
+services, and node-behavior layers in sufficient detail for independent, interoperable
+implementations.
 </p>
 
 <h2>1 &ensp;Introduction</h2>
@@ -255,6 +255,7 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 
 <table>
 <tr><th>Term</th><th>Definition</th></tr>
+<tr><td><strong>NeuralKey</strong></td><td>A 256-bit root secret from which all identity and machine keys are deterministically derived.</td></tr>
 <tr><td><strong>ZODE</strong></td><td>A storage node that participates in the Grid network. Identified by a libp2p PeerId, displayed with a <code>Zx</code> prefix. The prefix is display-only; wire and storage formats use the raw PeerId.</td></tr>
 <tr><td><strong>Client</strong></td><td>Any participant that connects to ZODES to store or retrieve data. A client does not serve requests.</td></tr>
 <tr><td><strong>Program</strong></td><td>A named, versioned application scope. All storage, subscriptions, and topic routing are scoped by program.</td></tr>
@@ -262,8 +263,7 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 <tr><td><strong>Sector</strong></td><td>An append-only log of encrypted entries identified by a <code>(ProgramId, SectorId)</code> pair.</td></tr>
 <tr><td><strong>SectorId</strong></td><td>An opaque 32-byte identifier. In the sector protocol, sector IDs MUST be exactly 32&nbsp;bytes.</td></tr>
 <tr><td><strong>Entry</strong></td><td>A single encrypted blob appended to a sector log. Entries are indexed 0, 1, 2, &hellip;</td></tr>
-<tr><td><strong>NeuralKey</strong></td><td>A 256-bit root secret from which all identity and machine keys are deterministically derived.</td></tr>
-<tr><td><strong>SectorKey</strong></td><td>A random 256-bit symmetric key used to encrypt sector entries (&sect;6).</td></tr>
+<tr><td><strong>SectorKey</strong></td><td>A random 256-bit symmetric key used to encrypt sector entries (&sect;7).</td></tr>
 <tr><td><strong>Topic</strong></td><td>A GossipSub topic string of the form <code>prog/&lt;program_id_hex&gt;</code> (programs) or <code>svc/&lt;service_id_hex&gt;</code> (services).</td></tr>
 <tr><td><strong>Service</strong></td><td>An active, stateless process that runs on a ZODE, uses Programs for persistent state, and exposes HTTP endpoints. Contrast with Programs, which are passive descriptors.</td></tr>
 <tr><td><strong>ServiceId</strong></td><td>A 32-byte identifier derived as <code>SHA-256(CBOR(ServiceDescriptor))</code>.</td></tr>
@@ -277,51 +277,9 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 
 <p>Implementations MUST produce identical byte sequences for identical logical values. Field ordering within CBOR maps MUST be consistent. The canonical CBOR bytes are the input to all hash operations (ProgramId derivation, CID computation, etc.). Binary fields (payloads, keys, ciphertexts) are encoded as CBOR byte strings.</p>
 
-<h2>4 &ensp;Identifiers</h2>
+<h2>4 &ensp;Cryptographic Identity</h2>
 
-<h3>4.1 &ensp;ProgramId</h3>
-
-<p>A 32-byte value:</p>
-<pre><code>ProgramId = SHA-256(CBOR(ProgramDescriptor))</code></pre>
-<p>Displayed as 64 lowercase hex characters.</p>
-
-<h3>4.2 &ensp;ProgramDescriptor</h3>
-
-<p>A CBOR map with at minimum:</p>
-
-<table>
-<tr><th>Field</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>name</code></td><td>text string</td><td>Short program name</td></tr>
-<tr><td><code>version</code></td><td>unsigned integer (u32)</td><td>Program version number</td></tr>
-<tr><td><code>proof_required</code></td><td>boolean</td><td>Whether Valid-Sector proofs are required</td></tr>
-<tr><td><code>proof_system</code></td><td>optional ProofSystem</td><td><code>None</code> &rarr; XChaCha20-Poly1305; <code>Groth16</code> &rarr; Poseidon sponge + shape proofs (&sect;6, &sect;13)</td></tr>
-</table>
-
-<p>Program-specific descriptors MAY add additional fields. Two implementations that serialize the same descriptor fields to CBOR MUST produce the same ProgramId.</p>
-
-<h3>4.3 &ensp;SectorId</h3>
-
-<p>A variable-length byte string. In the sector protocol, sector IDs MUST be exactly 32 bytes. ZODES MUST reject requests with non-32-byte sector IDs. Displayed as lowercase hex.</p>
-
-<h3>4.4 &ensp;Cid (Content Identifier)</h3>
-
-<pre><code>Cid = SHA-256(ciphertext)</code></pre>
-
-<p>A 32-byte content-addressed identifier derived from the stored ciphertext. Displayed as 64 lowercase hex characters.</p>
-
-<h3>4.5 &ensp;ServiceId</h3>
-
-<p>A 32-byte value:</p>
-<pre><code>ServiceId = SHA-256(CBOR(ServiceDescriptor))</code></pre>
-<p>Displayed as 64 lowercase hex characters. Mirrors the ProgramId derivation pattern: a canonical CBOR-serialized descriptor hashed to produce a deterministic, content-addressed identifier.</p>
-
-<h3>4.6 &ensp;ZODE ID</h3>
-
-<p>A libp2p PeerId. On the wire and in storage, the raw PeerId bytes are used. For human display, the canonical format is <code>Zx&lt;PeerId_string&gt;</code>. The <code>Zx</code> prefix MUST NOT appear in wire formats.</p>
-
-<h2>5 &ensp;Cryptographic Primitives</h2>
-
-<h3>5.1 &ensp;Key Hierarchy</h3>
+<h3>4.1 &ensp;Key Hierarchy</h3>
 
 <p>All keys derive from a <strong>NeuralKey</strong>&mdash;a 256-bit secret generated by CSPRNG.</p>
 
@@ -340,7 +298,7 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 
 <p>All four key types are always present in every MachineKeyPair. There is no classical-only mode.</p>
 
-<h3>5.2 &ensp;Key Derivation</h3>
+<h3>4.2 &ensp;Key Derivation</h3>
 
 <p>All derivation uses <strong>HKDF-SHA256</strong> with <code>salt = None</code> unless otherwise specified.</p>
 
@@ -377,7 +335,7 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 
 <p>ML-KEM-768 keys are generated deterministically: the PQ encrypt seed is expanded via HKDF into <code>d</code> (<code>"mlkem768:d"</code>) and <code>z</code> (<code>"mlkem768:z"</code>) parameters, which are passed to ML-KEM-768 deterministic key generation.</p>
 
-<h3>5.3 &ensp;Machine Key Capabilities</h3>
+<h3>4.3 &ensp;Machine Key Capabilities</h3>
 
 <p>Machine keys carry a bitflag:</p>
 
@@ -391,7 +349,7 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 
 <p>Capabilities are metadata; enforcement is at the application/policy layer.</p>
 
-<h3>5.4 &ensp;Hybrid Signatures</h3>
+<h3>4.4 &ensp;Hybrid Signatures</h3>
 
 <p>A <strong>HybridSignature</strong> always contains both components:</p>
 
@@ -405,7 +363,7 @@ and Interlink messaging) in sufficient detail for independent, interoperable imp
 
 <p>Both components sign the same message. <strong>Both MUST verify</strong> for the signature to be considered valid.</p>
 
-<h3>5.5 &ensp;Hybrid Key Encapsulation</h3>
+<h3>4.5 &ensp;Hybrid Key Encapsulation</h3>
 
 <p>Key agreement combines X25519 and ML-KEM-768:</p>
 
@@ -430,31 +388,133 @@ shared_secret = HKDF-SHA256(
 
 <p>An attacker must break <strong>both</strong> X25519 and ML-KEM-768 to recover the shared secret.</p>
 
-<h3>5.6 &ensp;DID Encoding</h3>
+<h3>4.6 &ensp;DID Encoding</h3>
 
 <p>Ed25519 public keys are encoded as <code>did:key</code> identifiers: <code>did:key:z</code> + <code>base58btc(0xed01 || ed25519_public_key_bytes)</code>. The multicodec prefix <code>0xed01</code> identifies Ed25519 public keys.</p>
 
-<h3>5.7 &ensp;Shamir Secret Sharing</h3>
+<h3>4.7 &ensp;Shamir Secret Sharing</h3>
 
 <p>The NeuralKey MAY be split into Shamir shares for backup and recovery. <strong>Split</strong>: <code>split(secret[32], total, threshold, rng)</code>. <strong>Combine</strong>: <code>combine(shares[&ge; threshold])</code>. Each share is serialized as hex: <code>hex(index_byte || share_data)</code>.</p>
 
 <p>Identity generation, signing, and machine key derivation can all operate by <strong>ephemerally reconstructing</strong> the NeuralKey from shares, performing the operation, and immediately zeroizing the secret.</p>
 
-<h2>6 &ensp;Sector Encryption</h2>
+<h2>5 &ensp;Programs</h2>
 
-<p>Sector encryption supports two algorithms. The choice is per-program via <code>proof_system</code> in the ProgramDescriptor (&sect;4.2): <code>None</code> uses XChaCha20-Poly1305; <code>Groth16</code> uses Poseidon sponge (required for shape proofs, &sect;13).</p>
+<p>A <strong>Program</strong> is the fundamental organizational unit of the Grid. It defines a named, versioned data scope: all storage, subscriptions, topic routing, and encryption policy are scoped by program. Programs are passive descriptors&mdash;they specify <em>what</em> data looks like, not how to process it.</p>
 
-<h3>6.1 &ensp;SectorKey</h3>
+<h3>5.1 &ensp;ProgramDescriptor</h3>
 
-<p>A SectorKey is a random 256-bit symmetric key generated via CSPRNG. Key wrapping (&sect;6.5) is unchanged regardless of encryption algorithm.</p>
+<p>A CBOR map with at minimum:</p>
 
-<h3>6.2 &ensp;XChaCha20-Poly1305</h3>
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>text string</td><td>Short program name</td></tr>
+<tr><td><code>version</code></td><td>unsigned integer (u32)</td><td>Program version number</td></tr>
+<tr><td><code>proof_required</code></td><td>boolean</td><td>Whether Valid-Sector proofs are required</td></tr>
+<tr><td><code>proof_system</code></td><td>optional ProofSystem</td><td><code>None</code> &rarr; XChaCha20-Poly1305; <code>Groth16</code> &rarr; Poseidon sponge + shape proofs (&sect;7, &sect;8)</td></tr>
+</table>
+
+<p>Program-specific descriptors MAY add additional fields. Two implementations that serialize the same descriptor fields to CBOR MUST produce the same ProgramId.</p>
+
+<h3>5.2 &ensp;ProgramId</h3>
+
+<p>A 32-byte value:</p>
+<pre><code>ProgramId = SHA-256(CBOR(ProgramDescriptor))</code></pre>
+<p>Displayed as 64 lowercase hex characters.</p>
+
+<h3>5.3 &ensp;ZID (Zero Identity)</h3>
+
+<table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td><code>name</code></td><td><code>"zid"</code></td></tr>
+<tr><td><code>version</code></td><td><code>1</code></td></tr>
+<tr><td><code>proof_required</code></td><td><code>false</code></td></tr>
+</table>
+
+<p><strong>ZidMessage:</strong> <code>owner_did</code> (text), <code>display_name</code> (optional text), <code>timestamp_ms</code> (uint64), <code>signature</code> (PQ-hybrid, &sect;7.7).</p>
+
+<h3>5.4 &ensp;Interlink</h3>
+
+<p><strong>v2 Descriptor (current default):</strong></p>
+
+<table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td><code>name</code></td><td><code>"interlink"</code></td></tr>
+<tr><td><code>version</code></td><td><code>2</code></td></tr>
+<tr><td><code>proof_required</code></td><td><code>true</code></td></tr>
+<tr><td><code>proof_system</code></td><td><code>Groth16</code></td></tr>
+</table>
+
+<p><strong>ZMessage:</strong> <code>sender_did</code>, <code>channel_id</code>, <code>content</code> (UTF-8), <code>timestamp_ms</code>, <code>signature</code>. Maximum encoded message size: 64&nbsp;KB.</p>
+
+<p><strong>Channel-to-sector mapping:</strong></p>
+<pre><code>SectorId = SHA-256("interlink/channel/"
+                   || channel_id_bytes)</code></pre>
+
+<p>ZID (v1) and Interlink (v2) are <strong>default programs</strong>: ZODES subscribe to them automatically.</p>
+
+<h2>6 &ensp;Sectors &amp; Storage</h2>
+
+<p>Within a program, data is organized into <strong>sectors</strong>&mdash;append-only logs of encrypted entries. A sector is identified by a <code>(ProgramId, SectorId)</code> pair.</p>
+
+<h3>6.1 &ensp;SectorId</h3>
+
+<p>An opaque 32-byte identifier. In the sector protocol, sector IDs MUST be exactly 32 bytes. ZODES MUST reject requests with non-32-byte sector IDs. Displayed as lowercase hex.</p>
+
+<h3>6.2 &ensp;Cid (Content Identifier)</h3>
+
+<pre><code>Cid = SHA-256(ciphertext)</code></pre>
+
+<p>A 32-byte content-addressed identifier derived from the stored ciphertext. Displayed as 64 lowercase hex characters.</p>
+
+<h3>6.3 &ensp;Append-Only Logs</h3>
+
+<p>Each sector is an ordered sequence of entries indexed starting at&nbsp;0.</p>
+
+<h3>6.4 &ensp;Key Layout</h3>
+
+<pre><code>key = program_id (32 B) || sector_id (32 B)
+   || index (8 B, big-endian)</code></pre>
+
+<p>Total key size: 72 bytes.</p>
+
+<h3>6.5 &ensp;Operations</h3>
+
+<table>
+<tr><th>Operation</th><th>Behavior</th></tr>
+<tr><td><strong>append</strong></td><td>Reverse-seek to find max index, write at <code>max + 1</code></td></tr>
+<tr><td><strong>insert_at</strong></td><td>Write at specific index if unoccupied (idempotent)</td></tr>
+<tr><td><strong>read_log</strong></td><td>Forward-iterate from <code>from_index</code>, return up to <code>max_entries</code></td></tr>
+<tr><td><strong>log_length</strong></td><td>Reverse-seek to find max index + 1 (0 if empty)</td></tr>
+</table>
+
+<h3>6.6 &ensp;Policy Enforcement</h3>
+
+<table>
+<tr><th>Policy</th><th>Description</th></tr>
+<tr><td>Program allowlist</td><td>Only serve programs in effective topic set. Reject: <code>PolicyReject</code>.</td></tr>
+<tr><td>Sector filter</td><td>Optionally restrict to explicit sector ID set.</td></tr>
+<tr><td>Entry size limit</td><td>Max 256 KB per entry. Reject: <code>InvalidPayload</code>.</td></tr>
+<tr><td>Batch limits</td><td>Max 64 entries, 4 MB total. Reject: <code>BatchTooLarge</code>.</td></tr>
+<tr><td>Shape proof</td><td>Verify <code>ShapeProof</code> when <code>proof_system = Groth16</code>. Reject: <code>ProofInvalid</code>.</td></tr>
+<tr><td>Per-program quota</td><td>Optional max bytes per program.</td></tr>
+</table>
+
+<h2>7 &ensp;Encryption &amp; Signing</h2>
+
+<p>Data in sectors is protected by two complementary mechanisms: encryption ensures confidentiality; signing provides authenticity and integrity. Both happen client-side&mdash;ZODES never see plaintext.</p>
+
+<h3>7.1 &ensp;SectorKey</h3>
+
+<p>A SectorKey is a random 256-bit symmetric key generated via CSPRNG. Key wrapping (&sect;7.5) is unchanged regardless of encryption algorithm.</p>
+
+<h3>7.2 &ensp;XChaCha20-Poly1305</h3>
 
 <pre><code>sealed = nonce (24 bytes) || ciphertext || tag (16 bytes)</code></pre>
 
 <p><strong>Nonce:</strong> 192-bit, randomly generated per encryption. <strong>AAD:</strong> <code>program_id (32) || sector_id (32)</code>, binding ciphertext to its program and sector.</p>
 
-<h3>6.3 &ensp;Poseidon Sponge</h3>
+<h3>7.3 &ensp;Poseidon Sponge</h3>
 
 <p><strong>Parameters:</strong> BN254 scalar field, rate=2, capacity=1.</p>
 
@@ -470,7 +530,9 @@ shared_secret = HKDF-SHA256(
 <li><strong>Tag:</strong> Final 32-byte squeeze authenticates the entire encryption.</li>
 </ul>
 
-<h3>6.4 &ensp;Padding</h3>
+<p>The choice of algorithm is per-program via <code>proof_system</code> in the ProgramDescriptor (&sect;5.1): <code>None</code> uses XChaCha20-Poly1305; <code>Groth16</code> uses Poseidon sponge (required for shape proofs, &sect;8).</p>
+
+<h3>7.4 &ensp;Padding</h3>
 
 <p>Before encryption, content MUST be padded to fixed-size buckets to resist payload-size analysis. Buckets grow in 2&times; progression:</p>
 
@@ -496,9 +558,9 @@ shared_secret = HKDF-SHA256(
       || content
       || 0x00 * (bucket_size - 4 - content_length)</code></pre>
 
-<h3>6.5 &ensp;Key Wrapping</h3>
+<h3>7.5 &ensp;Key Wrapping</h3>
 
-<p><strong>Step 1&mdash;Hybrid key agreement:</strong> between sender's MachineKeyPair and the recipient's MachinePublicKey using &sect;5.5, producing a <code>SharedSecret</code> and <code>EncapBundle</code>.</p>
+<p><strong>Step 1&mdash;Hybrid key agreement:</strong> between sender's MachineKeyPair and the recipient's MachinePublicKey using &sect;4.5, producing a <code>SharedSecret</code> and <code>EncapBundle</code>.</p>
 
 <p><strong>Step 2&mdash;Context-bound wrapping:</strong></p>
 
@@ -525,7 +587,7 @@ wrapped_sector_key = XChaCha20-Poly1305(
 <tr><td><code>wrapped_key</code></td><td>bytes</td><td><code>nonce(24) || enc_key(32) || tag(16)</code> = 72&nbsp;B</td></tr>
 </table>
 
-<h3>6.6 &ensp;Sector ID Derivation</h3>
+<h3>7.6 &ensp;Sector ID Derivation</h3>
 
 <p>For metadata-private storage, sector IDs are derived client-side via two-step HKDF:</p>
 
@@ -543,88 +605,107 @@ sector_id = HKDF-SHA256(
 
 <p><strong>Properties:</strong> Deterministic (same secret + info &rarr; same sector ID), Unlinkable (different info strings &rarr; unrelated IDs), Collision-resistant (32-byte HKDF output).</p>
 
-<h2>7 &ensp;Message Signing</h2>
+<h3>7.7 &ensp;Message Signing</h3>
 
-<p>Message signing provides authenticity and integrity for entries within the encrypted blob. Signatures are PQ-hybrid (Ed25519 + ML-DSA-65) and are produced before encryption, verified after decryption.</p>
+<p>Signatures provide authenticity and integrity for entries within the encrypted blob. They are PQ-hybrid (Ed25519 + ML-DSA-65) and are produced before encryption, verified after decryption. Signatures live <strong>inside</strong> the encrypted payload&mdash;the ZODE never sees them.</p>
 
-<h3>7.1 &ensp;Placement</h3>
-
-<p>Signatures live <strong>inside</strong> the encrypted payload. The ZODE never sees plaintext; signature verification is end-to-end.</p>
-
-<h3>7.2 &ensp;Signable Bytes</h3>
+<h3>7.8 &ensp;Signable Bytes</h3>
 
 <pre><code>signable_bytes = canonical_cbor(
     all_fields_except_signature)</code></pre>
 
 <p>Fields MUST be serialized in deterministic CBOR order.</p>
 
-<h3>7.3 &ensp;HybridSignature Format</h3>
+<h3>7.9 &ensp;HybridSignature Format</h3>
 
 <p><code>Ed25519 (64) || ML-DSA-65 (3309)</code> = 3,373 bytes total. Both components sign the same <code>signable_bytes</code>. <strong>Both MUST verify.</strong></p>
 
-<h3>7.4 &ensp;Signing and Verification Flow</h3>
+<h3>7.10 &ensp;Signing and Verification Flow</h3>
 
 <ol>
 <li><strong>Signing:</strong> Client computes <code>signable_bytes</code>, signs with both algorithms, appends signature, then encrypts.</li>
 <li><strong>Verification:</strong> Recipient decrypts, recomputes <code>signable_bytes</code>, verifies both Ed25519 and ML-DSA-65.</li>
 </ol>
 
-<h3>7.5 &ensp;Ed25519-Only Fallback (v1)</h3>
+<h3>7.11 &ensp;Ed25519-Only Fallback (v1)</h3>
 
 <p>For v1 compatibility, programs MAY support Ed25519-only signatures (64 bytes).</p>
 
-<h2>8 &ensp;ZODE Storage Model</h2>
+<h2>8 &ensp;Shape Proofs</h2>
 
-<h3>8.1 &ensp;Append-Only Logs</h3>
+<p>Shape proofs allow clients to prove that an encrypted blob conforms to a declared schema without revealing plaintext. Programs with <code>proof_system = Groth16</code> use Poseidon sponge encryption (&sect;7.3) and MAY attach a shape proof to each entry.</p>
 
-<p>Each sector is an ordered sequence of entries indexed starting at&nbsp;0. Sectors are identified by <code>(ProgramId, SectorId)</code>.</p>
-
-<h3>8.2 &ensp;Key Layout</h3>
-
-<pre><code>key = program_id (32 B) || sector_id (32 B)
-   || index (8 B, big-endian)</code></pre>
-
-<p>Total key size: 72 bytes.</p>
-
-<h3>8.3 &ensp;Operations</h3>
+<h3>8.1 &ensp;ProofSystem Enum</h3>
 
 <table>
-<tr><th>Operation</th><th>Behavior</th></tr>
-<tr><td><strong>append</strong></td><td>Reverse-seek to find max index, write at <code>max + 1</code></td></tr>
-<tr><td><strong>insert_at</strong></td><td>Write at specific index if unoccupied (idempotent)</td></tr>
-<tr><td><strong>read_log</strong></td><td>Forward-iterate from <code>from_index</code>, return up to <code>max_entries</code></td></tr>
-<tr><td><strong>log_length</strong></td><td>Reverse-seek to find max index + 1 (0 if empty)</td></tr>
+<tr><th>Variant</th><th>Encryption</th><th>Shape proofs</th></tr>
+<tr><td><code>None</code></td><td>XChaCha20-Poly1305</td><td>Not supported</td></tr>
+<tr><td><code>Groth16</code></td><td>Poseidon sponge</td><td>Supported</td></tr>
 </table>
 
-<h3>8.4 &ensp;Policy Enforcement</h3>
+<h3>8.2 &ensp;FieldSchema</h3>
+
+<p>Message structure is described by a <strong>FieldSchema</strong>: a sequence of <code>FieldDef</code> (named field + <code>CborType</code>).</p>
+
+<pre><code>schema_hash = SHA-256(canonical_cbor(schema))</code></pre>
+
+<h3>8.3 &ensp;ShapeProof Wire Format</h3>
 
 <table>
-<tr><th>Policy</th><th>Description</th></tr>
-<tr><td>Program allowlist</td><td>Only serve programs in effective topic set. Reject: <code>PolicyReject</code>.</td></tr>
-<tr><td>Sector filter</td><td>Optionally restrict to explicit sector ID set.</td></tr>
-<tr><td>Entry size limit</td><td>Max 256 KB per entry. Reject: <code>InvalidPayload</code>.</td></tr>
-<tr><td>Batch limits</td><td>Max 64 entries, 4 MB total. Reject: <code>BatchTooLarge</code>.</td></tr>
-<tr><td>Shape proof</td><td>Verify <code>ShapeProof</code> when <code>proof_system = Groth16</code>. Reject: <code>ProofInvalid</code>.</td></tr>
-<tr><td>Per-program quota</td><td>Optional max bytes per program.</td></tr>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>proof_system</code></td><td>ProofSystem</td><td><code>Groth16</code></td></tr>
+<tr><td><code>ciphertext_hash</code></td><td>bytes(32)</td><td>Poseidon(C)</td></tr>
+<tr><td><code>proof_bytes</code></td><td>byte string</td><td>Groth16 proof</td></tr>
+<tr><td><code>schema_hash</code></td><td>bytes(32)</td><td>SHA-256 of schema</td></tr>
+<tr><td><code>size_bucket</code></td><td>uint32</td><td>Circuit bucket size</td></tr>
 </table>
 
-<h2>9 &ensp;Topic Naming</h2>
+<h3>8.4 &ensp;Universal Circuit</h3>
 
-<h3>9.1 &ensp;Program Topics</h3>
+<p>The shape-proof circuit proves three predicates:</p>
 
-<pre><code>topic = "prog/" + hex(ProgramId)</code></pre>
+<ol>
+<li><strong>shape(B)</strong>&mdash;Plaintext B conforms to the FieldSchema.</li>
+<li><strong>Poseidon_encrypt(B, K, N, AAD) = C</strong>&mdash;Ciphertext C is the correct encryption.</li>
+<li><strong>Poseidon(C) = ciphertext_hash</strong>&mdash;Public hash matches.</li>
+</ol>
 
-<p>Where <code>hex(ProgramId)</code> is the 64-char lowercase hex encoding of the 32-byte ProgramId. ZODES subscribe to one or more topics and only accept requests for subscribed programs.</p>
+<h3>8.5 &ensp;Strong Binding</h3>
 
-<h3>9.2 &ensp;Service Topics</h3>
+<p>The ZODE computes <code>Poseidon(received_ciphertext)</code> and MUST verify it equals the attested <code>ciphertext_hash</code>.</p>
 
-<pre><code>topic = "svc/" + hex(ServiceId)</code></pre>
+<h3>8.6 &ensp;Message-Size Buckets</h3>
 
-<p>Services participate in GossipSub under <code>svc/</code>-prefixed topics. When a ZODE starts a service, it subscribes to that service&rsquo;s topic. This enables peer discovery of which ZODES serve a given service.</p>
+<table>
+<tr><th>Bucket</th><th>Max size</th></tr>
+<tr><td>1 KB</td><td>1,024 bytes</td></tr>
+<tr><td>4 KB</td><td>4,096 bytes</td></tr>
+<tr><td>16 KB</td><td>16,384 bytes</td></tr>
+<tr><td>64 KB</td><td>65,536 bytes</td></tr>
+</table>
 
-<h2>10 &ensp;Transport Layer</h2>
+<p><strong>Version 1:</strong> Only 1 KB and 4 KB buckets are supported. One (pk, vk) pair per bucket; setup is program-agnostic.</p>
 
-<h3>10.1 &ensp;Connection</h3>
+<h3>8.7 &ensp;Verification Rules</h3>
+
+<ol>
+<li>Groth16 proof verifies against vk for the declared <code>size_bucket</code>.</li>
+<li><code>Poseidon(received_ciphertext) == ciphertext_hash</code>.</li>
+<li><code>schema_hash</code> matches the program's declared schema.</li>
+<li>Entry size (post-padding) fits within <code>size_bucket</code>.</li>
+</ol>
+
+<h2>9 &ensp;Networking</h2>
+
+<h3>9.1 &ensp;ZODE ID</h3>
+
+<p>A libp2p PeerId. On the wire and in storage, the raw PeerId bytes are used. For human display, the canonical format is <code>Zx&lt;PeerId_string&gt;</code>. The <code>Zx</code> prefix MUST NOT appear in wire formats.</p>
+
+<h3>9.2 &ensp;Topic Naming</h3>
+
+<p>Programs use topics of the form <code>prog/&lt;program_id_hex&gt;</code> where <code>program_id_hex</code> is the 64-char lowercase hex encoding of the 32-byte ProgramId. ZODES subscribe to one or more topics and only accept requests for subscribed programs. Services use topics of the form <code>svc/&lt;service_id_hex&gt;</code> for peer discovery.</p>
+
+<h3>9.3 &ensp;Connection</h3>
 
 <p>The Grid uses <strong>libp2p</strong> with the following transports:</p>
 
@@ -635,21 +716,21 @@ sector_id = HKDF-SHA256(
 
 <p>Default listen address: <code>/ip4/0.0.0.0/udp/3690/quic-v1</code>.</p>
 
-<h3>10.2 &ensp;Protocols</h3>
+<h3>9.4 &ensp;Protocols</h3>
 
 <table>
 <tr><th>Protocol String</th><th>Type</th><th>Purpose</th></tr>
 <tr><td><code>/grid/sector/1.0.0</code></td><td>Request-response</td><td>Client &harr; ZODE sector ops</td></tr>
 <tr><td><code>/grid/kad/1.0.0</code></td><td>Kademlia DHT</td><td>Peer discovery</td></tr>
 <tr><td>GossipSub</td><td>Pub/sub</td><td>Data propagation</td></tr>
-<tr><td>HTTP (<code>/services/</code>)</td><td>Request-response</td><td>Service endpoints (&sect;15)</td></tr>
+<tr><td>HTTP (<code>/services/</code>)</td><td>Request-response</td><td>Service endpoints (&sect;12)</td></tr>
 </table>
 
-<h3>10.3 &ensp;GossipSub Configuration</h3>
+<h3>9.5 &ensp;GossipSub Configuration</h3>
 
 <p>Message authentication: signed (libp2p keypair). Heartbeat interval: 10&nbsp;s. Validation mode: permissive. Message ID: hash of message data (content-based dedup).</p>
 
-<h3>10.4 &ensp;Peer Discovery</h3>
+<h3>9.6 &ensp;Peer Discovery</h3>
 
 <p>ZODES accept bootstrap peer multiaddrs in configuration. On startup, the ZODE dials each bootstrap peer. When Kademlia is enabled, the ZODE seeds the routing table, triggers initial <code>bootstrap()</code>, and periodically performs random walk queries (default: 30&nbsp;s interval).</p>
 
@@ -662,11 +743,11 @@ sector_id = HKDF-SHA256(
 <tr><td>Max concurrent dials</td><td>8</td></tr>
 </table>
 
-<h2>11 &ensp;Sector Protocol &mdash; Wire Format</h2>
+<h2>10 &ensp;Wire Protocol</h2>
 
 <p>The sector protocol is the primary client-to-ZODE interface, operating over <code>/grid/sector/1.0.0</code>.</p>
 
-<h3>11.1 &ensp;Request Envelope</h3>
+<h3>10.1 &ensp;Request Envelope</h3>
 
 <pre><code>SectorRequest = Append(SectorAppendRequest)
   | ReadLog(SectorReadLogRequest)
@@ -674,11 +755,11 @@ sector_id = HKDF-SHA256(
   | BatchAppend(SectorBatchAppendRequest)
   | BatchLogLength(SectorBatchLogLengthRequest)</code></pre>
 
-<h3>11.2 &ensp;Response Envelope</h3>
+<h3>10.2 &ensp;Response Envelope</h3>
 
 <p>Response variants correspond 1:1 to request variants.</p>
 
-<h3>11.3 &ensp;Append</h3>
+<h3>10.3 &ensp;Append</h3>
 
 <p><strong>Request:</strong></p>
 
@@ -687,32 +768,32 @@ sector_id = HKDF-SHA256(
 <tr><td><code>program_id</code></td><td>bytes(32)</td><td>Target program</td></tr>
 <tr><td><code>sector_id</code></td><td>bytes(32)</td><td>Target sector</td></tr>
 <tr><td><code>entry</code></td><td>byte string</td><td>Encrypted payload</td></tr>
-<tr><td><code>shape_proof</code></td><td>optional</td><td>ShapeProof (&sect;13)</td></tr>
+<tr><td><code>shape_proof</code></td><td>optional</td><td>ShapeProof (&sect;8)</td></tr>
 </table>
 
 <p><strong>Response:</strong> <code>ok</code> (boolean), <code>index</code> (optional uint64), <code>error_code</code> (optional).</p>
 
-<h3>11.4 &ensp;ReadLog</h3>
+<h3>10.4 &ensp;ReadLog</h3>
 
 <p><strong>Request:</strong> <code>program_id</code>, <code>sector_id</code>, <code>from_index</code> (uint64), <code>max_entries</code> (uint32, capped at 64). <strong>Response:</strong> <code>entries</code> (array of byte strings), <code>error_code</code> (optional). Empty array if sector does not exist.</p>
 
-<h3>11.5 &ensp;LogLength</h3>
+<h3>10.5 &ensp;LogLength</h3>
 
 <p><strong>Request:</strong> <code>program_id</code>, <code>sector_id</code>. <strong>Response:</strong> <code>length</code> (uint64), <code>error_code</code> (optional).</p>
 
-<h3>11.6 &ensp;BatchAppend</h3>
+<h3>10.6 &ensp;BatchAppend</h3>
 
 <p><strong>Request:</strong> <code>program_id</code>, <code>entries</code> (array of <code>BatchAppendEntry</code>, up to 64). Each entry: <code>sector_id</code>, <code>entry</code>, optional <code>shape_proof</code>. <strong>Response:</strong> <code>results</code> (array of <code>AppendResult</code>: <code>ok</code>, <code>index</code>, <code>error_code</code>).</p>
 
-<h3>11.7 &ensp;BatchLogLength</h3>
+<h3>10.7 &ensp;BatchLogLength</h3>
 
 <p><strong>Request:</strong> <code>program_id</code>, <code>sector_ids</code> (array of bytes(32), up to 64). <strong>Response:</strong> <code>results</code> (array of <code>LogLengthResult</code>: <code>length</code>, <code>error_code</code>).</p>
 
-<h3>11.8 &ensp;Batch Limits</h3>
+<h3>10.8 &ensp;Batch Limits</h3>
 
 <p>Maximum <strong>64 entries</strong> and <strong>4 MB total payload</strong> per batch. ZODES MUST reject with <code>BatchTooLarge</code>.</p>
 
-<h3>11.9 &ensp;Error Codes</h3>
+<h3>10.9 &ensp;Error Codes</h3>
 
 <table>
 <tr><th>Code</th><th>Meaning</th></tr>
@@ -729,11 +810,11 @@ sector_id = HKDF-SHA256(
 
 <p>Error codes are serialized as CBOR text strings.</p>
 
-<h2>12 &ensp;Gossip Replication</h2>
+<h2>11 &ensp;Gossip Replication</h2>
 
 <p>When a ZODE accepts an <code>Append</code> request, it publishes a <code>GossipSectorAppend</code> message to the program's GossipSub topic. Other subscribed ZODES store the entry automatically.</p>
 
-<h3>12.1 &ensp;GossipSectorAppend</h3>
+<h3>11.1 &ensp;GossipSectorAppend</h3>
 
 <table>
 <tr><th>Field</th><th>Type</th><th>Description</th></tr>
@@ -741,10 +822,10 @@ sector_id = HKDF-SHA256(
 <tr><td><code>sector_id</code></td><td>bytes(32)</td><td>Sector</td></tr>
 <tr><td><code>index</code></td><td>uint64</td><td>Assigned log index</td></tr>
 <tr><td><code>payload</code></td><td>byte string</td><td>Encrypted entry</td></tr>
-<tr><td><code>shape_proof</code></td><td>optional</td><td>ShapeProof (&sect;13)</td></tr>
+<tr><td><code>shape_proof</code></td><td>optional</td><td>ShapeProof (&sect;8)</td></tr>
 </table>
 
-<h3>12.2 &ensp;Receiving ZODE Behavior</h3>
+<h3>11.2 &ensp;Receiving ZODE Behavior</h3>
 
 <ol>
 <li><strong>Program check:</strong> Discard if not serving <code>program_id</code>.</li>
@@ -755,108 +836,11 @@ sector_id = HKDF-SHA256(
 <li><strong>No re-gossip:</strong> GossipSub mesh handles fan-out.</li>
 </ol>
 
-<h2>13 &ensp;Shape Proofs</h2>
-
-<p>Shape proofs allow clients to prove that an encrypted blob conforms to a declared schema without revealing plaintext. Programs with <code>proof_system = Groth16</code> use Poseidon sponge encryption (&sect;6.3) and MAY attach a shape proof to each entry.</p>
-
-<h3>13.1 &ensp;ProofSystem Enum</h3>
-
-<table>
-<tr><th>Variant</th><th>Encryption</th><th>Shape proofs</th></tr>
-<tr><td><code>None</code></td><td>XChaCha20-Poly1305</td><td>Not supported</td></tr>
-<tr><td><code>Groth16</code></td><td>Poseidon sponge</td><td>Supported</td></tr>
-</table>
-
-<h3>13.2 &ensp;FieldSchema</h3>
-
-<p>Message structure is described by a <strong>FieldSchema</strong>: a sequence of <code>FieldDef</code> (named field + <code>CborType</code>).</p>
-
-<pre><code>schema_hash = SHA-256(canonical_cbor(schema))</code></pre>
-
-<h3>13.3 &ensp;ShapeProof Wire Format</h3>
-
-<table>
-<tr><th>Field</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>proof_system</code></td><td>ProofSystem</td><td><code>Groth16</code></td></tr>
-<tr><td><code>ciphertext_hash</code></td><td>bytes(32)</td><td>Poseidon(C)</td></tr>
-<tr><td><code>proof_bytes</code></td><td>byte string</td><td>Groth16 proof</td></tr>
-<tr><td><code>schema_hash</code></td><td>bytes(32)</td><td>SHA-256 of schema</td></tr>
-<tr><td><code>size_bucket</code></td><td>uint32</td><td>Circuit bucket size</td></tr>
-</table>
-
-<h3>13.4 &ensp;Universal Circuit</h3>
-
-<p>The shape-proof circuit proves three predicates:</p>
-
-<ol>
-<li><strong>shape(B)</strong>&mdash;Plaintext B conforms to the FieldSchema.</li>
-<li><strong>Poseidon_encrypt(B, K, N, AAD) = C</strong>&mdash;Ciphertext C is the correct encryption.</li>
-<li><strong>Poseidon(C) = ciphertext_hash</strong>&mdash;Public hash matches.</li>
-</ol>
-
-<h3>13.5 &ensp;Strong Binding</h3>
-
-<p>The ZODE computes <code>Poseidon(received_ciphertext)</code> and MUST verify it equals the attested <code>ciphertext_hash</code>.</p>
-
-<h3>13.6 &ensp;Message-Size Buckets</h3>
-
-<table>
-<tr><th>Bucket</th><th>Max size</th></tr>
-<tr><td>1 KB</td><td>1,024 bytes</td></tr>
-<tr><td>4 KB</td><td>4,096 bytes</td></tr>
-<tr><td>16 KB</td><td>16,384 bytes</td></tr>
-<tr><td>64 KB</td><td>65,536 bytes</td></tr>
-</table>
-
-<p><strong>Version 1:</strong> Only 1 KB and 4 KB buckets are supported. One (pk, vk) pair per bucket; setup is program-agnostic.</p>
-
-<h3>13.8 &ensp;Verification Rules</h3>
-
-<ol>
-<li>Groth16 proof verifies against vk for the declared <code>size_bucket</code>.</li>
-<li><code>Poseidon(received_ciphertext) == ciphertext_hash</code>.</li>
-<li><code>schema_hash</code> matches the program's declared schema.</li>
-<li>Entry size (post-padding) fits within <code>size_bucket</code>.</li>
-</ol>
-
-<h2>14 &ensp;Standard Programs</h2>
-
-<h3>14.1 &ensp;ZID (Zero Identity)</h3>
-
-<table>
-<tr><th>Field</th><th>Value</th></tr>
-<tr><td><code>name</code></td><td><code>"zid"</code></td></tr>
-<tr><td><code>version</code></td><td><code>1</code></td></tr>
-<tr><td><code>proof_required</code></td><td><code>false</code></td></tr>
-</table>
-
-<p><strong>ZidMessage:</strong> <code>owner_did</code> (text), <code>display_name</code> (optional text), <code>timestamp_ms</code> (uint64), <code>signature</code> (PQ-hybrid, &sect;7).</p>
-
-<h3>14.2 &ensp;Interlink</h3>
-
-<p><strong>v2 Descriptor (current default):</strong></p>
-
-<table>
-<tr><th>Field</th><th>Value</th></tr>
-<tr><td><code>name</code></td><td><code>"interlink"</code></td></tr>
-<tr><td><code>version</code></td><td><code>2</code></td></tr>
-<tr><td><code>proof_required</code></td><td><code>true</code></td></tr>
-<tr><td><code>proof_system</code></td><td><code>Groth16</code></td></tr>
-</table>
-
-<p><strong>ZMessage:</strong> <code>sender_did</code>, <code>channel_id</code>, <code>content</code> (UTF-8), <code>timestamp_ms</code>, <code>signature</code>. Maximum encoded message size: 64&nbsp;KB.</p>
-
-<p><strong>Channel-to-sector mapping:</strong></p>
-<pre><code>SectorId = SHA-256("interlink/channel/"
-                   || channel_id_bytes)</code></pre>
-
-<p>ZID (v1) and Interlink (v2) are <strong>default programs</strong>: ZODES subscribe to them automatically.</p>
-
-<h2>15 &ensp;Services Layer</h2>
+<h2>12 &ensp;Services Layer</h2>
 
 <p>The Services layer provides a framework for stateless servers that run on ZODES, use Programs for persistent state, and expose HTTP endpoints. Programs are passive descriptors that define storage schemas; Services are active processes with runtime lifecycle, request handling, and background tasks. A Service never holds authoritative local state&mdash;it reads and writes exclusively through Programs, so any ZODE running the same service can serve the same requests without migration or synchronization.</p>
 
-<h3>15.1 &ensp;ServiceDescriptor</h3>
+<h3>12.1 &ensp;ServiceDescriptor and ServiceId</h3>
 
 <p>A CBOR map with the following fields:</p>
 
@@ -868,9 +852,9 @@ sector_id = HKDF-SHA256(
 <tr><td><code>owned_programs</code></td><td>list of ProgramDescriptor</td><td>Programs this service defines; auto-registered when the service is enabled</td></tr>
 </table>
 
-<p>The <code>ServiceId</code> is derived as <code>SHA-256(CBOR(ServiceDescriptor))</code>, mirroring the ProgramId pattern (&sect;4.1). Services can both depend on existing Programs and bring their own storage schemas via <code>owned_programs</code>.</p>
+<p>The <code>ServiceId</code> is derived as <code>SHA-256(CBOR(ServiceDescriptor))</code>, mirroring the ProgramId pattern (&sect;5.2). Services can both depend on existing Programs and bring their own storage schemas via <code>owned_programs</code>.</p>
 
-<h3>15.2 &ensp;Service Trait</h3>
+<h3>12.2 &ensp;Service Trait</h3>
 
 <p>Every service&mdash;native or WASM&mdash;implements four operations:</p>
 
@@ -882,7 +866,7 @@ sector_id = HKDF-SHA256(
 <tr><td><code>on_stop()</code></td><td>Cleanup hook called during ZODE shutdown.</td></tr>
 </table>
 
-<h3>15.3 &ensp;ServiceContext and ProgramStore</h3>
+<h3>12.3 &ensp;ServiceContext and ProgramStore</h3>
 
 <p>The <code>ServiceContext</code> is a service&rsquo;s interface to the ZODE. It provides:</p>
 
@@ -904,7 +888,7 @@ sector_id = HKDF-SHA256(
 <tr><td><code>len(key)</code></td><td>Return the number of entries for the derived sector.</td></tr>
 </table>
 
-<h3>15.4 &ensp;ServiceRegistry</h3>
+<h3>12.4 &ensp;ServiceRegistry</h3>
 
 <p>The <code>ServiceRegistry</code> manages the lifecycle of all active services on a ZODE:</p>
 
@@ -916,17 +900,17 @@ sector_id = HKDF-SHA256(
 <li><strong>Required programs</strong>&mdash;collect the union of all registered services&rsquo; required and owned program IDs for topic subscription.</li>
 </ul>
 
-<h3>15.5 &ensp;HTTP Integration</h3>
+<h3>12.5 &ensp;HTTP Integration</h3>
 
 <p>Service HTTP routes are merged into the same server that hosts the JSON-RPC sector endpoint. The resulting route layout is:</p>
 
-<pre><code>POST /rpc                           -- JSON-RPC sector operations (&sect;11)
+<pre><code>POST /rpc                           -- JSON-RPC sector operations (&sect;10)
 GET|POST /services/{service_id}/... -- per-service endpoints
 </code></pre>
 
 <p>Each service defines its own sub-routes (e.g. <code>/resolve</code>, <code>/health</code>, <code>/messages</code>). The ZODE handles TLS, CORS, and connection management; services only see deserialized HTTP requests.</p>
 
-<h3>15.6 &ensp;WASM Runtime</h3>
+<h3>12.6 &ensp;WASM Runtime</h3>
 
 <p>The Services layer supports a sandboxed WASM runtime for third-party services using the WebAssembly Component Model. A WIT (WebAssembly Interface Types) contract defines the host&ndash;guest boundary:</p>
 
@@ -950,7 +934,7 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 
 <p>WASM services are subject to resource limits: CPU fuel metering, memory caps, and per-request wall-clock timeouts. A misbehaving module is terminated without affecting the ZODE or other services.</p>
 
-<h3>15.7 &ensp;Standard Services</h3>
+<h3>12.7 &ensp;Standard Services</h3>
 
 <p>Two services are registered by default:</p>
 
@@ -962,7 +946,7 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 
 <p>The Identity service wraps the ZID Program with a DID resolution HTTP API. The Interlink service exposes channel message retrieval over HTTP. Both are native (compiled) services and are always registered on ZODE startup.</p>
 
-<h3>15.8 &ensp;Programs vs. Services</h3>
+<h3>12.8 &ensp;Programs vs. Services</h3>
 
 <table>
 <tr><th>Aspect</th><th>Program</th><th>Service</th></tr>
@@ -973,9 +957,9 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 <tr><td>Exposed API</td><td>None (sector protocol only)</td><td>HTTP routes, background tasks</td></tr>
 </table>
 
-<h2>16 &ensp;ZODE Behavior</h2>
+<h2>13 &ensp;ZODE Behavior</h2>
 
-<h3>16.1 &ensp;Startup Sequence</h3>
+<h3>13.1 &ensp;Startup Sequence</h3>
 
 <ol>
 <li>Open persistent storage.</li>
@@ -990,19 +974,19 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 <li>Enter event loop.</li>
 </ol>
 
-<h3>16.2 &ensp;Event Loop</h3>
+<h3>13.2 &ensp;Event Loop</h3>
 
 <p>The ZODE continuously processes: incoming sector requests, gossip messages, peer events, Kademlia discovery, publish queue, service events, and shutdown signals.</p>
 
-<h3>16.3 &ensp;Append + Gossip Flow</h3>
+<h3>13.3 &ensp;Append + Gossip Flow</h3>
 
 <p>On Append: (1) validate program, sector filter, entry size, shape proof; (2) append to local storage; (3) send success response. Gossip propagation is <strong>client-triggered</strong>: after successful append, the client publishes <code>GossipSectorAppend</code> to the program topic.</p>
 
-<h3>16.4 &ensp;Shutdown Sequence</h3>
+<h3>13.4 &ensp;Shutdown Sequence</h3>
 
 <p>On shutdown: (1) cancel service shutdown tokens; (2) call <code>on_stop</code> on each registered service; (3) stop the RPC server; (4) close the libp2p swarm; (5) flush and close persistent storage.</p>
 
-<h2>17 &ensp;Visibility and Privacy Properties</h2>
+<h2>14 &ensp;Visibility and Privacy Properties</h2>
 
 <h3>What a ZODE can see</h3>
 
@@ -1028,7 +1012,7 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 <tr><td>Ordering/timestamps</td><td>Inside encrypted payload</td></tr>
 </table>
 
-<h2>18 &ensp;Security Considerations</h2>
+<h2>15 &ensp;Security Considerations</h2>
 
 <ul>
 <li><strong>No transport anonymity.</strong> IP addresses are visible. Onion routing is out of scope.</li>
@@ -1041,25 +1025,25 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 <li><strong>Service statefulness.</strong> Services are stateless by construction; all persistent state flows through Programs. A compromised service cannot corrupt state beyond what its declared Programs allow.</li>
 </ul>
 
-<h2>19 &ensp;Interoperability Requirements</h2>
+<h2>16 &ensp;Interoperability Requirements</h2>
 
 <p>A conforming Grid implementation MUST:</p>
 
 <ol>
 <li>Serialize all protocol messages as deterministic CBOR (RFC&nbsp;8949 &sect;4.2.1).</li>
 <li>Derive ProgramIds as <code>SHA-256(CBOR(ProgramDescriptor))</code>.</li>
+<li>Use HKDF-SHA256 with exact domain separation strings (&sect;4.2).</li>
+<li>Produce hybrid signatures: Ed25519 (64&nbsp;B) + ML-DSA-65 (3,309&nbsp;B); both must verify.</li>
+<li>Perform hybrid key encapsulation: X25519 + ML-KEM-768 via HKDF (&sect;4.5).</li>
+<li>Use XChaCha20-Poly1305 or Poseidon sponge per ProgramDescriptor.</li>
+<li>Implement the padding bucket scheme (&sect;7.4).</li>
+<li>Reject non-32-byte sector IDs.</li>
 <li>Use <code>/grid/sector/1.0.0</code> for sector request-response.</li>
 <li>Use <code>/grid/kad/1.0.0</code> for Kademlia DHT.</li>
 <li>Format GossipSub topics as <code>prog/&lt;64_hex_chars&gt;</code>.</li>
 <li>Serialize <code>GossipSectorAppend</code> as CBOR.</li>
-<li>Use XChaCha20-Poly1305 or Poseidon sponge per ProgramDescriptor.</li>
-<li>Implement the padding bucket scheme (&sect;6.4).</li>
-<li>Use HKDF-SHA256 with exact domain separation strings (&sect;5.2).</li>
-<li>Produce hybrid signatures: Ed25519 (64&nbsp;B) + ML-DSA-65 (3,309&nbsp;B); both must verify.</li>
-<li>Perform hybrid key encapsulation: X25519 + ML-KEM-768 via HKDF (&sect;5.5).</li>
-<li>Reject non-32-byte sector IDs.</li>
 <li>Enforce batch limits: 64 entries, 4&nbsp;MB total.</li>
-<li>Accept gossip with conflict resolution per &sect;12.2.</li>
+<li>Accept gossip with conflict resolution per &sect;11.2.</li>
 <li>Derive ServiceIds as <code>SHA-256(CBOR(ServiceDescriptor))</code>.</li>
 <li>Mount service HTTP routes at <code>/services/{service_id_hex}/</code> alongside the JSON-RPC endpoint.</li>
 <li>Format service GossipSub topics as <code>svc/&lt;64_hex_chars&gt;</code>.</li>
@@ -1070,10 +1054,11 @@ GET|POST /services/{service_id}/... -- per-service endpoints
 
 <table>
 <tr><th>Version</th><th>Date</th><th>Changes</th></tr>
-<tr><td>0.1.0</td><td>January 2025</td><td>Initial draft. Core protocol: serialization (CBOR), identifiers (ProgramId, SectorId, CID), cryptographic primitives (NeuralKey, HKDF-SHA256, Ed25519 + ML-DSA-65 hybrid signatures, X25519 + ML-KEM-768 hybrid key agreement), sector encryption (XChaCha20-Poly1305, Poseidon sponge), padding, key wrapping, storage model (append-only logs), wire protocol (<code>/grid/sector/1.0.0</code>), GossipSub replication, shape proofs (Groth16), and standard programs (ZID, Interlink).</td></tr>
-<tr><td>0.2.0</td><td>February 2025</td><td>Sector ID derivation (&sect;6.6). DID encoding (&sect;5.6). Shamir secret sharing for NeuralKey backup (&sect;5.7). Expanded ZODE behavior specification (startup sequence, event loop, append+gossip flow). Visibility and privacy properties. Security considerations. Interoperability requirements checklist.</td></tr>
-<tr><td>0.3.0</td><td>March 2026</td><td>Services layer (&sect;15). New first-class concept: stateless servers that run on ZODES, use Programs for persistent state via ProgramStore (key-value over sector logs), and expose HTTP endpoints. ServiceDescriptor and ServiceId (&sect;4.5). Service trait, ServiceContext, ProgramStore operations, ephemeral tokens. ServiceRegistry lifecycle. HTTP route integration alongside JSON-RPC. WASM runtime with WIT contract (store, ephemeral host imports). Standard services: Identity (DID resolution) and Interlink (message retrieval). Service GossipSub topics (<code>svc/</code> prefix, &sect;9.2). Updated ZODE startup/shutdown sequences. WASM isolation and service statefulness security considerations.</td></tr>
-<tr><td>0.4.0</td><td>March 2026</td><td>Added version history.</td></tr>
+<tr><td>0.1.0</td><td>January 2025</td><td>Initial draft. Core protocol: serialization (CBOR), identifiers, cryptographic primitives, sector encryption, padding, key wrapping, storage model, wire protocol, GossipSub replication, shape proofs (Groth16), and standard programs (ZID, Interlink).</td></tr>
+<tr><td>0.2.0</td><td>February 2025</td><td>Sector ID derivation. DID encoding. Shamir secret sharing for NeuralKey backup. Expanded ZODE behavior specification. Visibility and privacy properties. Security considerations. Interoperability requirements checklist.</td></tr>
+<tr><td>0.3.0</td><td>March 2026</td><td>Services layer. Stateless servers on ZODES with ProgramStore key-value abstraction, HTTP endpoints, WASM runtime (WIT contract). ServiceDescriptor, ServiceId, ServiceRegistry. Standard services: Identity and Interlink. Service GossipSub topics. Updated ZODE startup/shutdown.</td></tr>
+<tr><td>0.4.0</td><td>March 2026</td><td>Added version history. Versioned output filenames.</td></tr>
+<tr><td>0.5.0</td><td>March 2026</td><td>Reorganized document by conceptual layers: identity (&sect;4) &rarr; programs (&sect;5) &rarr; sectors (&sect;6) &rarr; encryption &amp; signing (&sect;7) &rarr; shape proofs (&sect;8) &rarr; networking (&sect;9) &rarr; wire protocol (&sect;10) &rarr; gossip (&sect;11) &rarr; services (&sect;12) &rarr; ZODE behavior (&sect;13). Merged encryption and signing into unified &sect;7. Merged identifiers into their owning sections. Moved shape proofs before networking. Standard programs now in &sect;5 alongside the program concept. All cross-references updated.</td></tr>
 </table>
 
 </div>
