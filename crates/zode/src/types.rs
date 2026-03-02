@@ -217,7 +217,7 @@ impl fmt::Display for GossipRejectReason {
 
 /// Severity / category for a formatted log line, used by UI crates to pick
 /// colours without duplicating prefix-matching logic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogLevel {
     Reject,
     Gossip,
@@ -232,6 +232,34 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+    pub const ALL: [LogLevel; 10] = [
+        Self::Normal,
+        Self::PeerConnect,
+        Self::PeerDisconnect,
+        Self::Discovery,
+        Self::Gossip,
+        Self::Reject,
+        Self::Relay,
+        Self::DialError,
+        Self::Rpc,
+        Self::Shutdown,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Reject => "Reject",
+            Self::Gossip => "Gossip",
+            Self::Discovery => "Discovery",
+            Self::PeerConnect => "Peer Connect",
+            Self::PeerDisconnect => "Peer Disconnect",
+            Self::Relay => "Relay",
+            Self::DialError => "Dial Error",
+            Self::Rpc => "RPC",
+            Self::Shutdown => "Shutdown",
+            Self::Normal => "Normal",
+        }
+    }
+
     pub fn from_log_line(line: &str) -> Self {
         if line.starts_with("[SECTOR APPEND REJECT")
             || line.starts_with("[REJECT")
