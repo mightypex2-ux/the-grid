@@ -6,7 +6,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use grid_core::ProgramId;
 use grid_programs_interlink::{InterlinkDescriptor, ZMessage};
-use grid_service::{Service, ServiceContext, ServiceDescriptor, ServiceError};
+use grid_service::{RouteInfo, Service, ServiceContext, ServiceDescriptor, ServiceError};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -61,6 +61,21 @@ impl Service for InterlinkService {
     async fn on_stop(&self) -> Result<(), ServiceError> {
         tracing::info!("Interlink service stopped");
         Ok(())
+    }
+
+    fn route_info(&self) -> Vec<RouteInfo> {
+        vec![
+            RouteInfo {
+                method: "GET",
+                path: "/messages",
+                description: "Fetch messages for a channel",
+            },
+            RouteInfo {
+                method: "GET",
+                path: "/health",
+                description: "Service health check",
+            },
+        ]
     }
 }
 

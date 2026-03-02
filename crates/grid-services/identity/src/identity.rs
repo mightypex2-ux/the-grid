@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use grid_core::ProgramId;
 use grid_programs_zid::{ZidDescriptor, ZidMessage};
-use grid_service::{Service, ServiceContext, ServiceDescriptor, ServiceError};
+use grid_service::{RouteInfo, Service, ServiceContext, ServiceDescriptor, ServiceError};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -66,6 +66,21 @@ impl Service for IdentityService {
     async fn on_stop(&self) -> Result<(), ServiceError> {
         tracing::info!("Identity service stopped");
         Ok(())
+    }
+
+    fn route_info(&self) -> Vec<RouteInfo> {
+        vec![
+            RouteInfo {
+                method: "POST",
+                path: "/resolve",
+                description: "Resolve a DID to its identity record",
+            },
+            RouteInfo {
+                method: "GET",
+                path: "/health",
+                description: "Service health check",
+            },
+        ]
     }
 }
 
