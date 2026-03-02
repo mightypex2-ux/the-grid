@@ -23,7 +23,7 @@ impl InterlinkService {
 
         Ok(Self {
             descriptor: ServiceDescriptor {
-                name: "interlink".into(),
+                name: "INTERLINK".into(),
                 version: "1.0.0".into(),
                 required_programs: vec![pid],
                 owned_programs: vec![],

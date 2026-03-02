@@ -28,7 +28,7 @@ impl IdentityService {
 
         Ok(Self {
             descriptor: ServiceDescriptor {
-                name: "identity".into(),
+                name: "IDENTITY".into(),
                 version: "1.0.0".into(),
                 required_programs: required,
                 owned_programs: vec![],
