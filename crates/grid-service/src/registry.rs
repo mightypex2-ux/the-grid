@@ -153,6 +153,10 @@ impl ServiceRegistry {
                 return Err(e);
             }
 
+            if let Some(handler) = service.gossip_handler() {
+                self.gossip_handlers.push(handler);
+            }
+
             if let Ok(mut active) = self.active_services.write() {
                 active.insert(id);
             }
@@ -347,6 +351,15 @@ impl ServiceRegistry {
             }
         }
         programs
+    }
+
+    /// Collect live metrics from all running services.
+    pub fn service_metrics(&self) -> HashMap<String, serde_json::Value> {
+        self.services
+            .iter()
+            .filter(|(id, _)| self.contexts.contains_key(id))
+            .map(|(_, svc)| (svc.descriptor().name.clone(), svc.metrics()))
+            .collect()
     }
 
     pub fn event_tx(&self) -> &broadcast::Sender<ServiceEvent> {

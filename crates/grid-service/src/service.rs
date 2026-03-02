@@ -46,4 +46,15 @@ pub trait Service: Send + Sync + 'static {
     fn current_config(&self) -> serde_json::Value {
         serde_json::Value::Object(serde_json::Map::new())
     }
+
+    /// Return a gossip handler if this service wants to intercept GossipSub
+    /// messages. The registry auto-registers returned handlers during startup.
+    fn gossip_handler(&self) -> Option<std::sync::Arc<dyn crate::gossip::ServiceGossipHandler>> {
+        None
+    }
+
+    /// Live metrics snapshot for observability (polled by orchestrator).
+    fn metrics(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }
