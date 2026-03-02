@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::ZodeApp;
-use crate::components::tokens::{font_size, spacing};
+use crate::components::tokens::{self, font_size, spacing};
 use crate::components::{
     action_button, action_panel, colors, copy_button, editable_list, error_label, field_label,
     form_grid, hint_label, icon_button, info_grid, kv_row, kv_stacked_copyable, loading_state,
@@ -591,7 +591,7 @@ pub(crate) fn render_log(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnap
                     left: 0,
                     right: spacing::MD as i8,
                     top: 0,
-                    bottom: spacing::MD as i8,
+                    bottom: 0,
                 }),
         )
         .show_inside(ui, |ui| {
@@ -698,7 +698,7 @@ pub(crate) fn render_log(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnap
     let nav_rect = nav_resp.response.rect;
     let nav_border = egui::Rect::from_min_max(
         nav_rect.min,
-        egui::pos2(nav_rect.max.x - spacing::MD, nav_rect.max.y - spacing::MD),
+        egui::pos2(nav_rect.max.x - spacing::MD, nav_rect.max.y),
     );
     ui.painter().rect_stroke(
         nav_border,

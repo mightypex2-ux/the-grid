@@ -4,7 +4,7 @@ use super::tokens::{self, colors, font_size, spacing};
 
 /// Card-like container with an uppercased title.
 pub(crate) fn section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
-    let max = ui.max_rect();
+    let max = ui.available_rect_before_wrap();
 
     let prev_clip = ui.clip_rect();
     ui.set_clip_rect(prev_clip.intersect(egui::Rect::from_x_y_ranges(
