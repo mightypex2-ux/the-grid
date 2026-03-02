@@ -7,8 +7,18 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 grid-core = { path = "../../grid-core" }
+grid-crypto = { path = "../../grid-crypto" }
 grid-service = { path = "../../grid-service" }
 grid-programs-zephyr = { path = "../../grid-programs/zephyr" }
+ark-bn254 = "0.5"
+ark-groth16 = "0.5"
+ark-relations = "0.5"
+ark-r1cs-std = "0.5"
+ark-ff = "0.5"
+ark-serialize = "0.5"
+ark-crypto-primitives = { version = "0.5", features = ["sponge", "r1cs"] }
+ark-snark = "0.5"
+ark-std = "0.5"
 async-trait = "0.1"
 axum = "0.8"
 hex = "0.4"
