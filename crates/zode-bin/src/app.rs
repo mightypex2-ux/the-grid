@@ -827,12 +827,9 @@ impl ZodeApp {
                             .color(colors::TEXT_SECONDARY),
                     );
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            status_dot(ui, self.zode.is_some());
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_dot(ui, self.zode.is_some());
+                    });
                 });
             });
     }
