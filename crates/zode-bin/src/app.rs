@@ -442,47 +442,130 @@ impl ZodeApp {
     }
 
     fn spawn_log_listener(rt: &Runtime, zode: &Arc<Zode>, shared: &Arc<Mutex<AppState>>) {
+        use std::collections::HashMap;
+
         let log_shared = Arc::clone(shared);
         let mut event_rx = zode.subscribe_events();
+
+        let registry = zode.service_registry();
+        let registry_clone = Arc::clone(registry);
+
         rt.spawn(async move {
+            let (mut svc_event_rx, program_to_service, sid_to_name) = {
+                let reg = registry_clone.read().await;
+                let rx = reg.event_tx().subscribe();
+                let mut p2s: HashMap<String, String> = HashMap::new();
+                let mut s2n: HashMap<grid_service::ServiceId, String> = HashMap::new();
+                for info in reg.list_services() {
+                    let name = info.descriptor.name.clone();
+                    s2n.insert(info.id, name.clone());
+                    for pid in info.descriptor.all_program_ids() {
+                        p2s.insert(pid.to_hex(), name.clone());
+                    }
+                }
+                (rx, p2s, s2n)
+            };
+
             loop {
-                match event_rx.recv().await {
-                    Ok(event) => {
-                        let line = event.to_string();
-                        let mut state = log_shared.lock().await;
-                        if let LogEvent::Started { ref listen_addr } = event {
-                            state.listen_addr = Some(listen_addr.clone());
-                        }
-                        match &event {
-                            LogEvent::PeerConnected(id) => {
-                                state
-                                    .peer_events
-                                    .push_back(crate::state::PeerEvent::Connected(id.clone()));
+                tokio::select! {
+                    result = event_rx.recv() => {
+                        match result {
+                            Ok(event) => {
+                                let line = event.to_string();
+                                let level = zode::LogLevel::from_log_line(&line);
+                                let service = match &event {
+                                    LogEvent::SectorAppendProcessed { program_id, .. }
+                                    | LogEvent::SectorReadLogProcessed { program_id, .. }
+                                    | LogEvent::GossipSectorReceived { program_id, .. } => {
+                                        service_for_program_id(program_id, &program_to_service)
+                                    }
+                                    _ => None,
+                                };
+                                let entry = crate::state::LogEntry { line, level, service };
+                                let mut state = log_shared.lock().await;
+                                if let LogEvent::Started { ref listen_addr } = event {
+                                    state.listen_addr = Some(listen_addr.clone());
+                                }
+                                match &event {
+                                    LogEvent::PeerConnected(id) => {
+                                        state.peer_events.push_back(
+                                            crate::state::PeerEvent::Connected(id.clone()),
+                                        );
+                                    }
+                                    LogEvent::PeerDisconnected(id) => {
+                                        state.peer_events.push_back(
+                                            crate::state::PeerEvent::Disconnected(id.clone()),
+                                        );
+                                    }
+                                    LogEvent::PeerDiscovered(id) => {
+                                        state.peer_events.push_back(
+                                            crate::state::PeerEvent::Discovered(id.clone()),
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                                if state.log_entries.len() >= MAX_LOG_ENTRIES {
+                                    state.log_entries.pop_front();
+                                }
+                                state.log_entries.push_back(entry);
                             }
-                            LogEvent::PeerDisconnected(id) => {
-                                state
-                                    .peer_events
-                                    .push_back(crate::state::PeerEvent::Disconnected(id.clone()));
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                let entry = crate::state::LogEntry {
+                                    line: format!("[WARN] lagged {n} events"),
+                                    level: zode::LogLevel::Normal,
+                                    service: None,
+                                };
+                                let mut state = log_shared.lock().await;
+                                state.log_entries.push_back(entry);
                             }
-                            LogEvent::PeerDiscovered(id) => {
-                                state
-                                    .peer_events
-                                    .push_back(crate::state::PeerEvent::Discovered(id.clone()));
-                            }
-                            _ => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
-                        if state.log_entries.len() >= MAX_LOG_ENTRIES {
-                            state.log_entries.pop_front();
-                        }
-                        state.log_entries.push_back(line);
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        let mut state = log_shared.lock().await;
-                        state
-                            .log_entries
-                            .push_back(format!("[WARN] lagged {n} events"));
+                    result = svc_event_rx.recv() => {
+                        match result {
+                            Ok(svc_event) => {
+                                let svc_name = |id: &grid_service::ServiceId| -> String {
+                                    sid_to_name
+                                        .get(id)
+                                        .cloned()
+                                        .unwrap_or_else(|| format!("{}", id))
+                                };
+                                let (line, service_name) = match &svc_event {
+                                    grid_service::ServiceEvent::Started { service_id } => {
+                                        let name = svc_name(service_id);
+                                        (format!("[SVC] {name} started"), Some(name))
+                                    }
+                                    grid_service::ServiceEvent::Stopped { service_id } => {
+                                        let name = svc_name(service_id);
+                                        (format!("[SVC] {name} stopped"), Some(name))
+                                    }
+                                    grid_service::ServiceEvent::RequestHandled {
+                                        service_id,
+                                        path,
+                                        status,
+                                    } => {
+                                        let name = svc_name(service_id);
+                                        (
+                                            format!("[SVC] {name} {path} {status}"),
+                                            Some(name),
+                                        )
+                                    }
+                                };
+                                let entry = crate::state::LogEntry {
+                                    line,
+                                    level: zode::LogLevel::Normal,
+                                    service: service_name,
+                                };
+                                let mut state = log_shared.lock().await;
+                                if state.log_entries.len() >= MAX_LOG_ENTRIES {
+                                    state.log_entries.pop_front();
+                                }
+                                state.log_entries.push_back(entry);
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                        }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
         });
