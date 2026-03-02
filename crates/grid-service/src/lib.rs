@@ -12,5 +12,5 @@ pub use context::{ProgramStore, ServiceContext, ServiceEvent};
 pub use descriptor::{ServiceDescriptor, ServiceId};
 pub use error::ServiceError;
 pub use registry::{ServiceInfo, ServiceRegistry};
-pub use service::Service;
+pub use service::{RouteInfo, Service};
 pub use wasm_host::{load_descriptor as load_wasm_descriptor, WasmResourceLimits, WasmServiceConfig};
