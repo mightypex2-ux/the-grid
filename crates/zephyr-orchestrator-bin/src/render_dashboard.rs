@@ -4,7 +4,8 @@ use eframe::egui;
 
 use crate::app::OrchestratorApp;
 use crate::components::tokens::{self, colors, font_size, spacing};
-use crate::components::{info_grid, kv_row, section};
+use crate::components::labels::field_label;
+use crate::components::section;
 use crate::helpers::{format_uptime, node_color};
 use crate::state::AppState;
 
@@ -26,34 +27,32 @@ pub(crate) fn render_dashboard(app: &mut OrchestratorApp, ui: &mut egui::Ui, sta
 
 fn render_stats_bar(ui: &mut egui::Ui, state: &AppState, launch_instant: Option<Instant>) {
     section(ui, "Network Overview", |ui| {
-        info_grid(ui, "dash_stats", |ui| {
-            kv_row(ui, "Epoch", &format!("{}", state.network.current_epoch));
-            kv_row(ui, "Zones", &format!("{}", state.network.total_zones));
-            kv_row(ui, "Active Validators", &format!("{}", state.nodes.len()));
-            kv_row(
-                ui,
-                "Connected Peers",
-                &format!("{}", state.network.total_peers),
-            );
-            kv_row(
-                ui,
-                "Certificates",
-                &format!("{}", state.network.certificates_produced),
-            );
-            kv_row(
-                ui,
-                "Spends Processed",
-                &format!("{}", state.network.spends_processed),
-            );
-            kv_row(
-                ui,
-                "Tx Submitted",
-                &format!("{}", state.traffic_stats.total_submitted),
-            );
-            if let Some(started) = launch_instant {
-                kv_row(ui, "Uptime", &format_uptime(started.elapsed().as_secs()));
-            }
-        });
+        egui::Grid::new("dash_stats")
+            .num_columns(8)
+            .spacing([spacing::LG, spacing::XS])
+            .show(ui, |ui| {
+                field_label(ui, "Epoch");
+                ui.label(format!("{}", state.network.current_epoch));
+                field_label(ui, "Zones");
+                ui.label(format!("{}", state.network.total_zones));
+                field_label(ui, "Active Validators");
+                ui.label(format!("{}", state.nodes.len()));
+                field_label(ui, "Connected Peers");
+                ui.label(format!("{}", state.network.total_peers));
+                ui.end_row();
+
+                field_label(ui, "Certificates");
+                ui.label(format!("{}", state.network.certificates_produced));
+                field_label(ui, "Spends Processed");
+                ui.label(format!("{}", state.network.spends_processed));
+                field_label(ui, "Tx Submitted");
+                ui.label(format!("{}", state.traffic_stats.total_submitted));
+                if let Some(started) = launch_instant {
+                    field_label(ui, "Uptime");
+                    ui.label(format_uptime(started.elapsed().as_secs()));
+                }
+                ui.end_row();
+            });
     });
 }
 
