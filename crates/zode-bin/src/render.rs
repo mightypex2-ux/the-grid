@@ -702,13 +702,14 @@ pub(crate) fn render_log(app: &mut ZodeApp, ui: &mut egui::Ui, state: &StateSnap
         });
 
     let nav_rect = nav_resp.response.rect;
-    let border_rect = egui::Rect::from_min_max(
-        nav_rect.min,
-        egui::pos2(nav_rect.max.x - spacing::MD, nav_rect.max.y - spacing::MD),
+    let border_x = nav_rect.max.x - spacing::MD;
+    ui.painter().line_segment(
+        [
+            egui::pos2(border_x, nav_rect.min.y),
+            egui::pos2(border_x, nav_rect.max.y - spacing::MD),
+        ],
+        egui::Stroke::new(1.0, colors::BORDER),
     );
-    let border_stroke = egui::Stroke::new(1.0, colors::BORDER);
-    ui.painter()
-        .rect_stroke(border_rect, 0.0, border_stroke, egui::StrokeKind::Inside);
 
     // Filter entries
     let filtered: Vec<&crate::state::LogEntry> = state
