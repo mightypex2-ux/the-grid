@@ -2874,6 +2874,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "grid-services-zephyr"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "grid-core",
+ "grid-programs-zephyr",
+ "grid-service",
+ "hex",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "grid-storage"
 version = "0.2.0"
 dependencies = [
