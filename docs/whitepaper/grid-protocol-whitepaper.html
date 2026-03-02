@@ -214,16 +214,21 @@ Data propagation uses GossipSub topics keyed by program identifier; peer discove
 relies on Kademlia DHT with periodic random walks. The wire format is deterministic
 CBOR (RFC&nbsp;8949), and all identifiers&mdash;program IDs, sector IDs, content IDs&mdash;are
 derived via SHA-256 hashes of canonical CBOR, ensuring cross-implementation reproducibility.
+Above the storage substrate, a Services layer provides a trait-based framework
+for stateless servers that run on ZODES, use Programs for persistent state via a key-value
+abstraction over sector logs, and expose HTTP endpoints. Services are pluggable, discoverable,
+and support both native (compiled Rust) and sandboxed WASM runtimes via the WebAssembly
+Component Model.
 This document specifies the serialization, cryptography, storage model, wire protocol,
-gossip replication, proof system, and standard programs (ZID identity and Interlink messaging)
-in sufficient detail for independent, interoperable implementations.
+gossip replication, proof system, services framework, and standard programs (ZID identity
+and Interlink messaging) in sufficient detail for independent, interoperable implementations.
 </p>
 
 <h2>1 &ensp;Introduction</h2>
 
 <p>The Grid is a peer-to-peer encrypted storage protocol. Participating nodes&mdash;called <strong>ZODES</strong>&mdash;form a network of program-scoped, append-only log stores. Clients encrypt all data locally before upload; ZODES store and serve only opaque ciphertext. The protocol has no consensus layer, no tokens, and no global state.</p>
 
-<p>Existing decentralized storage systems typically require participants to reach consensus on a shared ledger, introduce protocol-native tokens to incentivize storage providers, or maintain globally replicated state that every node must process. These design choices impose coordination overhead, economic complexity, and scalability ceilings that are unnecessary when the primary goal is simply to store and retrieve encrypted blobs. The Grid sidesteps these concerns entirely: a ZODE is a stateless relay that accepts ciphertext, appends it to a local log, and optionally gossips it to peers. There is no ordering protocol beyond append indexing, no fee market, and no finality mechanism. The result is a minimal, high-throughput substrate on which higher-level applications&mdash;identity registries, messaging channels, document stores&mdash;can be composed as <em>programs</em> without inheriting the weight of a full blockchain stack.</p>
+<p>Existing decentralized storage systems typically require participants to reach consensus on a shared ledger, introduce protocol-native tokens to incentivize storage providers, or maintain globally replicated state that every node must process. These design choices impose coordination overhead, economic complexity, and scalability ceilings that are unnecessary when the primary goal is simply to store and retrieve encrypted blobs. The Grid sidesteps these concerns entirely: a ZODE is a stateless relay that accepts ciphertext, appends it to a local log, and optionally gossips it to peers. There is no ordering protocol beyond append indexing, no fee market, and no finality mechanism. The result is a minimal, high-throughput substrate on which higher-level applications&mdash;identity registries, messaging channels, document stores&mdash;can be composed as <em>programs</em> without inheriting the weight of a full blockchain stack. A Services layer built atop this substrate provides a standard framework for stateless servers that use programs for persistent state and expose HTTP endpoints, supporting both native and sandboxed WASM runtimes.</p>
 
 <p>Cryptographic privacy is a first-class invariant rather than an optional feature. Every entry is encrypted client-side with either XChaCha20-Poly1305 or a ZK-friendly Poseidon sponge, and signatures are embedded inside the ciphertext so that ZODES can never observe authorship, content structure, or access patterns beyond coarse timing and payload size. Post-quantum resistance is likewise non-negotiable: all signing and key-agreement operations use hybrid constructions that pair classical algorithms (Ed25519, X25519) with their post-quantum counterparts (ML-DSA-65, ML-KEM-768), ensuring that an attacker must break both families simultaneously. This document defines the Grid protocol in implementation-neutral terms. Any conforming implementation&mdash;regardless of programming language&mdash;that follows the wire formats, cryptographic constructions, and behavioral rules described here can interoperate with any other conforming implementation.</p>
 
@@ -240,7 +245,11 @@ in sufficient detail for independent, interoperable implementations.
 <tr><td><strong>Entry</strong></td><td>A single encrypted blob appended to a sector log. Entries are indexed 0, 1, 2, &hellip;</td></tr>
 <tr><td><strong>NeuralKey</strong></td><td>A 256-bit root secret from which all identity and machine keys are deterministically derived.</td></tr>
 <tr><td><strong>SectorKey</strong></td><td>A random 256-bit symmetric key used to encrypt sector entries (&sect;6).</td></tr>
-<tr><td><strong>Topic</strong></td><td>A GossipSub topic string of the form <code>prog/&lt;program_id_hex&gt;</code>.</td></tr>
+<tr><td><strong>Topic</strong></td><td>A GossipSub topic string of the form <code>prog/&lt;program_id_hex&gt;</code> (programs) or <code>svc/&lt;service_id_hex&gt;</code> (services).</td></tr>
+<tr><td><strong>Service</strong></td><td>An active, stateless process that runs on a ZODE, uses Programs for persistent state, and exposes HTTP endpoints. Contrast with Programs, which are passive descriptors.</td></tr>
+<tr><td><strong>ServiceId</strong></td><td>A 32-byte identifier derived as <code>SHA-256(CBOR(ServiceDescriptor))</code>.</td></tr>
+<tr><td><strong>ServiceDescriptor</strong></td><td>A CBOR map declaring a service&rsquo;s name, version, required programs, and owned programs.</td></tr>
+<tr><td><strong>ProgramStore</strong></td><td>A key-value abstraction over sector append-logs provided to services. Keys map to SectorIds via <code>SHA-256(key)</code>; values are sector log entries.</td></tr>
 </table>
 
 <h2>3 &ensp;Serialization</h2>
@@ -281,7 +290,13 @@ in sufficient detail for independent, interoperable implementations.
 
 <p>A 32-byte content-addressed identifier derived from the stored ciphertext. Displayed as 64 lowercase hex characters.</p>
 
-<h3>4.5 &ensp;ZODE ID</h3>
+<h3>4.5 &ensp;ServiceId</h3>
+
+<p>A 32-byte value:</p>
+<pre><code>ServiceId = SHA-256(CBOR(ServiceDescriptor))</code></pre>
+<p>Displayed as 64 lowercase hex characters. Mirrors the ProgramId derivation pattern: a canonical CBOR-serialized descriptor hashed to produce a deterministic, content-addressed identifier.</p>
+
+<h3>4.6 &ensp;ZODE ID</h3>
 
 <p>A libp2p PeerId. On the wire and in storage, the raw PeerId bytes are used. For human display, the canonical format is <code>Zx&lt;PeerId_string&gt;</code>. The <code>Zx</code> prefix MUST NOT appear in wire formats.</p>
 
@@ -576,9 +591,17 @@ sector_id = HKDF-SHA256(
 
 <h2>9 &ensp;Topic Naming</h2>
 
+<h3>9.1 &ensp;Program Topics</h3>
+
 <pre><code>topic = "prog/" + hex(ProgramId)</code></pre>
 
 <p>Where <code>hex(ProgramId)</code> is the 64-char lowercase hex encoding of the 32-byte ProgramId. ZODES subscribe to one or more topics and only accept requests for subscribed programs.</p>
+
+<h3>9.2 &ensp;Service Topics</h3>
+
+<pre><code>topic = "svc/" + hex(ServiceId)</code></pre>
+
+<p>Services participate in GossipSub under <code>svc/</code>-prefixed topics. When a ZODE starts a service, it subscribes to that service&rsquo;s topic. This enables peer discovery of which ZODES serve a given service.</p>
 
 <h2>10 &ensp;Transport Layer</h2>
 
@@ -600,6 +623,7 @@ sector_id = HKDF-SHA256(
 <tr><td><code>/grid/sector/1.0.0</code></td><td>Request-response</td><td>Client &harr; ZODE sector ops</td></tr>
 <tr><td><code>/grid/kad/1.0.0</code></td><td>Kademlia DHT</td><td>Peer discovery</td></tr>
 <tr><td>GossipSub</td><td>Pub/sub</td><td>Data propagation</td></tr>
+<tr><td>HTTP (<code>/services/</code>)</td><td>Request-response</td><td>Service endpoints (&sect;15)</td></tr>
 </table>
 
 <h3>10.3 &ensp;GossipSub Configuration</h3>
@@ -809,29 +833,157 @@ sector_id = HKDF-SHA256(
 
 <p>ZID (v1) and Interlink (v2) are <strong>default programs</strong>: ZODES subscribe to them automatically.</p>
 
-<h2>15 &ensp;ZODE Behavior</h2>
+<h2>15 &ensp;Services Layer</h2>
 
-<h3>15.1 &ensp;Startup Sequence</h3>
+<p>The Services layer provides a framework for stateless servers that run on ZODES, use Programs for persistent state, and expose HTTP endpoints. Programs are passive descriptors that define storage schemas; Services are active processes with runtime lifecycle, request handling, and background tasks. A Service never holds authoritative local state&mdash;it reads and writes exclusively through Programs, so any ZODE running the same service can serve the same requests without migration or synchronization.</p>
+
+<h3>15.1 &ensp;ServiceDescriptor</h3>
+
+<p>A CBOR map with the following fields:</p>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>text string</td><td>Human-readable service name</td></tr>
+<tr><td><code>version</code></td><td>text string</td><td>Semantic version</td></tr>
+<tr><td><code>required_programs</code></td><td>list of ProgramId</td><td>Programs this service reads/writes (must already exist)</td></tr>
+<tr><td><code>owned_programs</code></td><td>list of ProgramDescriptor</td><td>Programs this service defines; auto-registered when the service is enabled</td></tr>
+</table>
+
+<p>The <code>ServiceId</code> is derived as <code>SHA-256(CBOR(ServiceDescriptor))</code>, mirroring the ProgramId pattern (&sect;4.1). Services can both depend on existing Programs and bring their own storage schemas via <code>owned_programs</code>.</p>
+
+<h3>15.2 &ensp;Service Trait</h3>
+
+<p>Every service&mdash;native or WASM&mdash;implements four operations:</p>
+
+<table>
+<tr><th>Operation</th><th>Description</th></tr>
+<tr><td><code>descriptor()</code></td><td>Returns the service&rsquo;s <code>ServiceDescriptor</code>; declares identity and program dependencies.</td></tr>
+<tr><td><code>routes(ctx)</code></td><td>Returns an HTTP router mounted at <code>/services/{service_id_hex}/</code>.</td></tr>
+<tr><td><code>on_start(ctx)</code></td><td>Called after ZODE boot; may spawn background tasks using a cancellation token for graceful shutdown.</td></tr>
+<tr><td><code>on_stop()</code></td><td>Cleanup hook called during ZODE shutdown.</td></tr>
+</table>
+
+<h3>15.3 &ensp;ServiceContext and ProgramStore</h3>
+
+<p>The <code>ServiceContext</code> is a service&rsquo;s interface to the ZODE. It provides:</p>
+
+<ul>
+<li><strong>ProgramStore</strong>&mdash;a key-value abstraction over sector append-logs. Keys map to <code>SectorId</code> via <code>SHA-256(key)</code>. <code>put</code> appends a new entry (latest entry = current value). <code>get</code> reads the last entry. <code>list</code> reads the full log history.</li>
+<li><strong>Ephemeral tokens</strong>&mdash;HMAC-SHA256 signed, time-limited tokens for stateless short-lived flows (auth challenges, OAuth nonces). The client holds the token and presents it back; no server-side storage is required.</li>
+<li><strong>Event broadcast</strong>&mdash;services emit <code>Started</code>, <code>Stopped</code>, and <code>RequestHandled</code> events.</li>
+<li><strong>Shutdown token</strong>&mdash;cooperative cancellation for background tasks.</li>
+</ul>
+
+<h4>ProgramStore Operations</h4>
+
+<table>
+<tr><th>Operation</th><th>Behavior</th></tr>
+<tr><td><code>get(key)</code></td><td>Derive <code>SectorId = SHA-256(key)</code>, read last log entry.</td></tr>
+<tr><td><code>put(key, value)</code></td><td>Derive <code>SectorId</code>, append value to sector log.</td></tr>
+<tr><td><code>list(key)</code></td><td>Read all entries for the derived sector (full history).</td></tr>
+<tr><td><code>list_from(key, from)</code></td><td>Read entries starting from a given index.</td></tr>
+<tr><td><code>len(key)</code></td><td>Return the number of entries for the derived sector.</td></tr>
+</table>
+
+<h3>15.4 &ensp;ServiceRegistry</h3>
+
+<p>The <code>ServiceRegistry</code> manages the lifecycle of all active services on a ZODE:</p>
+
+<ul>
+<li><strong>Register</strong>&mdash;compute <code>ServiceId</code>, reject duplicates, store the service.</li>
+<li><strong>Start all</strong>&mdash;create a <code>ServiceContext</code> per service, call <code>on_start</code>, emit <code>Started</code> event.</li>
+<li><strong>Stop all</strong>&mdash;cancel background tasks, call <code>on_stop</code>, emit <code>Stopped</code> event.</li>
+<li><strong>Merged router</strong>&mdash;build a combined HTTP router with each service nested at <code>/services/{service_id_hex}/</code>.</li>
+<li><strong>Required programs</strong>&mdash;collect the union of all registered services&rsquo; required and owned program IDs for topic subscription.</li>
+</ul>
+
+<h3>15.5 &ensp;HTTP Integration</h3>
+
+<p>Service HTTP routes are merged into the same server that hosts the JSON-RPC sector endpoint. The resulting route layout is:</p>
+
+<pre><code>POST /rpc                           -- JSON-RPC sector operations (&sect;11)
+GET|POST /services/{service_id}/... -- per-service endpoints
+</code></pre>
+
+<p>Each service defines its own sub-routes (e.g. <code>/resolve</code>, <code>/health</code>, <code>/messages</code>). The ZODE handles TLS, CORS, and connection management; services only see deserialized HTTP requests.</p>
+
+<h3>15.6 &ensp;WASM Runtime</h3>
+
+<p>The Services layer supports a sandboxed WASM runtime for third-party services using the WebAssembly Component Model. A WIT (WebAssembly Interface Types) contract defines the host&ndash;guest boundary:</p>
+
+<p><strong>Host-provided imports:</strong></p>
+
+<table>
+<tr><th>Interface</th><th>Functions</th><th>Description</th></tr>
+<tr><td><code>store</code></td><td><code>get</code>, <code>put</code>, <code>list-entries</code>, <code>list-from</code>, <code>entry-count</code></td><td>Key-value access to Grid Programs</td></tr>
+<tr><td><code>ephemeral</code></td><td><code>create-token</code>, <code>verify-token</code></td><td>Signed time-limited tokens</td></tr>
+</table>
+
+<p><strong>Guest-exported interface:</strong></p>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>get-descriptor()</code></td><td>Returns the service descriptor</td></tr>
+<tr><td><code>handle-request(req)</code></td><td>Processes an HTTP request and returns a response</td></tr>
+<tr><td><code>on-start()</code></td><td>Lifecycle hook at service startup</td></tr>
+<tr><td><code>on-stop()</code></td><td>Lifecycle hook at service shutdown</td></tr>
+</table>
+
+<p>WASM services are subject to resource limits: CPU fuel metering, memory caps, and per-request wall-clock timeouts. A misbehaving module is terminated without affecting the ZODE or other services.</p>
+
+<h3>15.7 &ensp;Standard Services</h3>
+
+<p>Two services are registered by default:</p>
+
+<table>
+<tr><th>Service</th><th>Required Programs</th><th>Endpoints</th></tr>
+<tr><td><strong>Identity</strong> (v1.0.0)</td><td>ZID v1</td><td><code>POST /resolve</code>, <code>GET /health</code></td></tr>
+<tr><td><strong>Interlink</strong> (v1.0.0)</td><td>Interlink v2</td><td><code>GET /messages</code>, <code>GET /health</code></td></tr>
+</table>
+
+<p>The Identity service wraps the ZID Program with a DID resolution HTTP API. The Interlink service exposes channel message retrieval over HTTP. Both are native (compiled) services and are always registered on ZODE startup.</p>
+
+<h3>15.8 &ensp;Programs vs. Services</h3>
+
+<table>
+<tr><th>Aspect</th><th>Program</th><th>Service</th></tr>
+<tr><td>Nature</td><td>Passive descriptor (schema + proof config)</td><td>Active process (server, compute)</td></tr>
+<tr><td>State</td><td>Defines storage format</td><td>Stateless; reads/writes via Programs</td></tr>
+<tr><td>Identity</td><td><code>ProgramId = SHA-256(descriptor)</code></td><td><code>ServiceId = SHA-256(descriptor)</code></td></tr>
+<tr><td>Runs on</td><td>Nothing (specification only)</td><td>ZODE nodes</td></tr>
+<tr><td>Exposed API</td><td>None (sector protocol only)</td><td>HTTP routes, background tasks</td></tr>
+</table>
+
+<h2>16 &ensp;ZODE Behavior</h2>
+
+<h3>16.1 &ensp;Startup Sequence</h3>
 
 <ol>
 <li>Open persistent storage.</li>
 <li>Start libp2p swarm (GossipSub, request-response, Kademlia).</li>
-<li>Compute effective topic set: defaults &cup; configured programs.</li>
+<li>Build <code>ServiceRegistry</code>; register default services (Identity, Interlink).</li>
+<li>Compute effective topic set: default programs &cup; configured programs &cup; service-required programs.</li>
 <li>Subscribe to each GossipSub topic.</li>
+<li>Start all registered services (<code>on_start</code>); build merged HTTP router.</li>
+<li>Start RPC server with sector endpoint and service routes merged.</li>
 <li>Dial bootstrap peers.</li>
 <li>If Kademlia enabled, seed routing table and bootstrap.</li>
 <li>Enter event loop.</li>
 </ol>
 
-<h3>15.2 &ensp;Event Loop</h3>
+<h3>16.2 &ensp;Event Loop</h3>
 
-<p>The ZODE continuously processes: incoming sector requests, gossip messages, peer events, Kademlia discovery, publish queue, and shutdown signals.</p>
+<p>The ZODE continuously processes: incoming sector requests, gossip messages, peer events, Kademlia discovery, publish queue, service events, and shutdown signals.</p>
 
-<h3>15.3 &ensp;Append + Gossip Flow</h3>
+<h3>16.3 &ensp;Append + Gossip Flow</h3>
 
 <p>On Append: (1) validate program, sector filter, entry size, shape proof; (2) append to local storage; (3) send success response. Gossip propagation is <strong>client-triggered</strong>: after successful append, the client publishes <code>GossipSectorAppend</code> to the program topic.</p>
 
-<h2>16 &ensp;Visibility and Privacy Properties</h2>
+<h3>16.4 &ensp;Shutdown Sequence</h3>
+
+<p>On shutdown: (1) cancel service shutdown tokens; (2) call <code>on_stop</code> on each registered service; (3) stop the RPC server; (4) close the libp2p swarm; (5) flush and close persistent storage.</p>
+
+<h2>17 &ensp;Visibility and Privacy Properties</h2>
 
 <h3>What a ZODE can see</h3>
 
@@ -843,6 +995,7 @@ sector_id = HKDF-SHA256(
 <tr><td>Entry timing</td><td>Yes &mdash; append/read arrival</td></tr>
 <tr><td>Batched sector IDs</td><td>Yes &mdash; within one request</td></tr>
 <tr><td>Client IP</td><td>Yes &mdash; transport-level</td></tr>
+<tr><td>Service requests</td><td>Yes &mdash; ZODE routes HTTP to services</td></tr>
 </table>
 
 <h3>What a ZODE cannot see</h3>
@@ -856,7 +1009,7 @@ sector_id = HKDF-SHA256(
 <tr><td>Ordering/timestamps</td><td>Inside encrypted payload</td></tr>
 </table>
 
-<h2>17 &ensp;Security Considerations</h2>
+<h2>18 &ensp;Security Considerations</h2>
 
 <ul>
 <li><strong>No transport anonymity.</strong> IP addresses are visible. Onion routing is out of scope.</li>
@@ -865,9 +1018,11 @@ sector_id = HKDF-SHA256(
 <li><strong>Gossip propagation delay.</strong> Entries initially exist on one ZODE. Clients MAY multi-send.</li>
 <li><strong>Key compromise.</strong> NeuralKey compromise implies all derived keys are compromised. Shamir splitting mitigates single-point-of-failure.</li>
 <li><strong>Post-quantum readiness.</strong> Hybrid constructions require breaking both classical and PQ components.</li>
+<li><strong>WASM service isolation.</strong> Sandboxed WASM services are subject to fuel metering, memory limits, and wall-clock timeouts. A misbehaving module cannot affect the ZODE or other services, but resource exhaustion within limits is possible.</li>
+<li><strong>Service statefulness.</strong> Services are stateless by construction; all persistent state flows through Programs. A compromised service cannot corrupt state beyond what its declared Programs allow.</li>
 </ul>
 
-<h2>18 &ensp;Interoperability Requirements</h2>
+<h2>19 &ensp;Interoperability Requirements</h2>
 
 <p>A conforming Grid implementation MUST:</p>
 
@@ -886,6 +1041,10 @@ sector_id = HKDF-SHA256(
 <li>Reject non-32-byte sector IDs.</li>
 <li>Enforce batch limits: 64 entries, 4&nbsp;MB total.</li>
 <li>Accept gossip with conflict resolution per &sect;12.2.</li>
+<li>Derive ServiceIds as <code>SHA-256(CBOR(ServiceDescriptor))</code>.</li>
+<li>Mount service HTTP routes at <code>/services/{service_id_hex}/</code> alongside the JSON-RPC endpoint.</li>
+<li>Format service GossipSub topics as <code>svc/&lt;64_hex_chars&gt;</code>.</li>
+<li>Map ProgramStore keys to SectorIds via <code>SHA-256(key)</code>; <code>put</code> appends, <code>get</code> reads last entry.</li>
 </ol>
 
 </div>
