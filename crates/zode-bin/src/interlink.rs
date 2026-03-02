@@ -817,19 +817,18 @@ fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
         SignatureStatus::None => 0.0,
     };
 
-    ui.horizontal(|ui| {
-        let total = ui.available_width();
-        let content_max = (total - icon_width).max(0.0);
+    let total = ui.available_width();
+    let content_max = (total - icon_width).max(0.0);
 
-        ui.allocate_ui_with_layout(
-            egui::vec2(content_max, ui.spacing().interact_size.y),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.set_max_width(content_max);
+            ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new(format!("[{time}]")).monospace().weak());
                 ui.label(egui::RichText::new(format!("{name}:")).monospace().strong());
-                ui.label(&msg.content);
-            },
-        );
+                ui.add(egui::Label::new(&msg.content).wrap());
+            });
+        });
 
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center),
