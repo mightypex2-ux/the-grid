@@ -789,10 +789,27 @@ fn do_load_history(app: &mut ZodeApp) {
 fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
     let time = format_timestamp_ms(msg.timestamp_ms);
     let name = shorten_zid(&msg.sender, 6);
+
+    let icon_width = match msg.signature_status {
+        SignatureStatus::Verified | SignatureStatus::Failed => 14.0 + 4.0,
+        SignatureStatus::None => 0.0,
+    };
+
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("[{time}]")).monospace().weak());
-        ui.label(egui::RichText::new(format!("{name}:")).monospace().strong());
-        ui.label(&msg.content);
+        let total = ui.available_width();
+        let content_max = (total - icon_width).max(0.0);
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(content_max, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new(format!("[{time}]")).monospace().weak());
+                ui.label(
+                    egui::RichText::new(format!("{name}:")).monospace().strong(),
+                );
+                ui.label(&msg.content);
+            },
+        );
 
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center),
