@@ -295,7 +295,11 @@ impl Zode {
                 self.metrics.set_rpc_requests(rpc.requests_total());
             }
         }
-        let metrics = self.metrics.snapshot();
+        let mut metrics = self.metrics.snapshot();
+        if let Ok(stats) = self.storage.sector_stats() {
+            metrics.sectors_stored_total = stats.entry_count;
+            metrics.db_size_bytes = stats.sector_size_bytes;
+        }
         let connected_peers = self
             .connected_peers
             .read()
