@@ -157,6 +157,11 @@ impl ZoneConsensus {
         }
 
         if let Some(cert) = self.cert_builder.add_vote(vote, self.parent_hash) {
+            // Guard against double-advancement: if apply_certificate already
+            // moved us forward for this block, parent_hash == cert.block_hash.
+            if cert.block_hash == self.parent_hash {
+                return None;
+            }
             self.parent_hash = cert.block_hash;
             self.round += 1;
             self.height += 1;
