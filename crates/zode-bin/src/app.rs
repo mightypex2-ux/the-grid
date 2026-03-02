@@ -738,7 +738,7 @@ impl ZodeApp {
                 .inner_margin(egui::Margin {
                     left: spacing::XL as i8,
                     right: spacing::MD as i8,
-                    top: spacing::MD as i8,
+                    top: spacing::XXL as i8,
                     bottom: spacing::MD as i8,
                 })
                 .stroke(egui::Stroke::new(1.0, colors::BORDER));
