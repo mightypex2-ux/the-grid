@@ -20,7 +20,7 @@ pub(crate) fn render_services(app: &mut ZodeApp, ui: &mut egui::Ui) {
 
     let zode = Arc::clone(zode);
 
-    section(ui, "Factory Services", |ui| {
+    section(ui, "DEFAULT SERVICES", |ui| {
         let registry = zode.service_registry();
         let Ok(registry) = registry.try_lock() else {
             muted_label(ui, "Loading services…");
@@ -63,11 +63,7 @@ fn service_card(
     let id_hex = svc.id.to_hex();
     let short_id = &id_hex[..8.min(id_hex.len())];
 
-    let border_color = if svc.running {
-        colors::CONNECTED
-    } else {
-        colors::ERROR
-    };
+    let border_color = colors::BORDER;
 
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(CARD_WIDTH, CARD_HEIGHT),

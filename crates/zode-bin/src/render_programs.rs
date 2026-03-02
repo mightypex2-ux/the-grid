@@ -159,11 +159,7 @@ fn render_service_programs(
 }
 
 fn program_card(ui: &mut egui::Ui, entry: &ProgramEntry) {
-    let border_color = if entry.subscribed {
-        colors::CONNECTED
-    } else {
-        colors::BORDER
-    };
+    let border_color = colors::BORDER;
 
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(CARD_WIDTH, CARD_HEIGHT),
