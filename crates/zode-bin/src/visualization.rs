@@ -31,6 +31,7 @@ pub(crate) struct GraphNode {
     pub(crate) discovered: bool,
     pub(crate) ip_addr: Option<String>,
     pub(crate) location: Option<String>,
+    pub(crate) last_heartbeat: Option<std::time::Instant>,
 }
 
 pub(crate) struct Camera {
@@ -53,6 +54,7 @@ impl NetworkVisualization {
         local_id: &str,
         peers: &[String],
         peer_ips: &HashMap<String, String>,
+        peer_last_activity: &HashMap<String, u64>,
     ) {
         if self.local_id.as_deref() != Some(local_id) {
             self.nodes.clear();
@@ -66,12 +68,17 @@ impl NetworkVisualization {
         self.nodes[idx].connected = true;
 
         let peer_set: HashSet<&str> = peers.iter().map(|s| s.as_str()).collect();
+        let now = std::time::Instant::now();
 
         for p in peers {
             let i = self.ensure_node(p, false);
             self.nodes[i].connected = true;
             if let Some(ip) = peer_ips.get(p) {
                 self.nodes[i].ip_addr = Some(ip.clone());
+            }
+            if let Some(&elapsed_ms) = peer_last_activity.get(p) {
+                self.nodes[i].last_heartbeat =
+                    Some(now - std::time::Duration::from_millis(elapsed_ms));
             }
         }
 
@@ -148,6 +155,7 @@ impl NetworkVisualization {
             discovered: false,
             ip_addr: None,
             location: None,
+            last_heartbeat: None,
         });
         self.index.insert(id.to_string(), idx);
         idx

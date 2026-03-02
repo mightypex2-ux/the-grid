@@ -79,6 +79,7 @@ pub(crate) fn render_programs(app: &mut ZodeApp, ui: &mut egui::Ui, state: &Stat
                     svc.running,
                     &entries,
                     &mut app.detail_selection,
+                    &mut app.detail_closing,
                 );
             }
         }
@@ -109,6 +110,7 @@ pub(crate) fn render_programs(app: &mut ZodeApp, ui: &mut egui::Ui, state: &Stat
             true,
             &standalone,
             &mut app.detail_selection,
+            &mut app.detail_closing,
         );
     }
 
@@ -147,6 +149,7 @@ fn render_service_programs(
     service_running: bool,
     entries: &[ProgramEntry],
     detail_selection: &mut Option<DetailSelection>,
+    detail_closing: &mut bool,
 ) {
     section(ui, title, |ui| {
         if !service_running {
@@ -162,7 +165,7 @@ fn render_service_programs(
         for row in entries.chunks(cols) {
             ui.horizontal(|ui| {
                 for entry in row {
-                    program_card(ui, entry, detail_selection);
+                    program_card(ui, entry, detail_selection, detail_closing);
                     ui.add_space(spacing::MD);
                 }
             });
@@ -175,6 +178,7 @@ fn program_card(
     ui: &mut egui::Ui,
     entry: &ProgramEntry,
     detail_selection: &mut Option<DetailSelection>,
+    detail_closing: &mut bool,
 ) {
     let is_selected = *detail_selection == Some(DetailSelection::Program(entry.program_id));
     let border_color = if is_selected {

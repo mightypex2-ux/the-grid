@@ -46,7 +46,7 @@ pub(crate) fn render_services(app: &mut ZodeApp, ui: &mut egui::Ui) {
         for row in services.chunks(cols) {
             ui.horizontal(|ui| {
                 for svc in row {
-                    service_card(ui, svc, &app.rt, &zode, &mut app.detail_selection);
+                    service_card(ui, svc, &app.rt, &zode, &mut app.detail_selection, &mut app.detail_closing);
                     ui.add_space(spacing::MD);
                 }
             });
@@ -61,6 +61,7 @@ fn service_card(
     rt: &Runtime,
     zode: &Arc<Zode>,
     detail_selection: &mut Option<DetailSelection>,
+    detail_closing: &mut bool,
 ) {
     let id_hex = svc.id.to_hex();
     let short_id = &id_hex[..8.min(id_hex.len())];
@@ -219,5 +220,6 @@ fn service_card(
 
     if resp.clicked() && !cb_resp.clicked() {
         *detail_selection = Some(DetailSelection::Service(svc.id));
+        *detail_closing = false;
     }
 }

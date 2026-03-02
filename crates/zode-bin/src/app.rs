@@ -42,6 +42,7 @@ pub(crate) struct ZodeApp {
     pub session_password: Option<String>,
     pub settings_section: SettingsSection,
     pub detail_selection: Option<DetailSelection>,
+    pub detail_closing: bool,
 }
 
 impl ZodeApp {
@@ -89,6 +90,7 @@ impl ZodeApp {
             session_password: None,
             settings_section: SettingsSection::General,
             detail_selection: None,
+            detail_closing: false,
         }
     }
 
@@ -555,6 +557,7 @@ impl ZodeApp {
                 &status.zode_id,
                 &status.connected_peers,
                 &status.peer_ips,
+                &status.peer_last_activity,
             );
         }
     }
@@ -732,7 +735,32 @@ impl ZodeApp {
     }
 
     fn render_central_panel(&mut self, ctx: &egui::Context, state: &crate::state::StateSnapshot) {
-        if self.detail_selection.is_some() {
+        const DETAIL_PANEL_WIDTH: f32 = 202.0;
+        const DETAIL_ANIM_SPEED: f32 = 0.15;
+
+        let has_detail = self.detail_selection.is_some();
+        let target_w = if has_detail && !self.detail_closing {
+            DETAIL_PANEL_WIDTH
+        } else {
+            0.0
+        };
+
+        let anim_w = ctx.animate_value_with_time(
+            egui::Id::new("detail_panel_width"),
+            target_w,
+            DETAIL_ANIM_SPEED,
+        );
+
+        if (anim_w - target_w).abs() > 0.5 {
+            ctx.request_repaint();
+        }
+
+        if self.detail_closing && anim_w < 1.0 {
+            self.detail_selection = None;
+            self.detail_closing = false;
+        }
+
+        if anim_w > 1.0 {
             let detail_frame =
                 egui::Frame::default()
                     .fill(colors::PANEL_BG)
@@ -743,7 +771,7 @@ impl ZodeApp {
                         bottom: spacing::MD as i8,
                     });
             egui::SidePanel::right("detail_panel")
-                .exact_width(202.0)
+                .exact_width(anim_w)
                 .resizable(false)
                 .show_separator_line(false)
                 .frame(detail_frame)
@@ -752,8 +780,8 @@ impl ZodeApp {
                 });
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.detail_selection = None;
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && has_detail && !self.detail_closing {
+            self.detail_closing = true;
         }
 
         let central_frame = egui::Frame::default()
@@ -781,8 +809,8 @@ impl ZodeApp {
                         il.focus_compose = true;
                     }
                 }
-                if self.tab != self.prev_tab {
-                    self.detail_selection = None;
+                if self.tab != self.prev_tab && self.detail_selection.is_some() {
+                    self.detail_closing = true;
                 }
                 self.prev_tab = self.tab;
 

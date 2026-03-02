@@ -281,4 +281,6 @@ pub struct ZodeStatus {
     pub rpc_auth_required: bool,
     /// Mapping of Zode ID to IP address string for connected peers.
     pub peer_ips: HashMap<String, String>,
+    /// Mapping of Zode ID to milliseconds since last packet exchange.
+    pub peer_last_activity: HashMap<String, u64>,
 }

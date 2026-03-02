@@ -188,7 +188,7 @@ pub(crate) fn render_detail(app: &mut ZodeApp, ui: &mut egui::Ui) {
     ui.set_clip_rect(prev_clip);
 
     if close {
-        app.detail_selection = None;
+        app.detail_closing = true;
     }
 }
 

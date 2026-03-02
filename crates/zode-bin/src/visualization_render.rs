@@ -42,7 +42,7 @@ impl NetworkVisualization {
         self.paint_overlay_controls(ui, rect, peer_count);
 
         let energy: f32 = self.nodes.iter().map(|n| n.vel.length_sq()).sum();
-        if energy > 0.01 {
+        if energy > 0.01 || self.selected.is_some() {
             ui.ctx().request_repaint();
         }
     }
@@ -190,11 +190,27 @@ impl NetworkVisualization {
         let font = egui::FontId::monospace(11.0);
         let ip_label = node.ip_addr.as_deref().unwrap_or("Unknown");
         let loc_label = node.location.as_deref().unwrap_or("Unknown");
+        let heartbeat_label = match node.last_heartbeat {
+            Some(inst) => {
+                let secs = inst.elapsed().as_secs();
+                if secs < 2 {
+                    "just now".to_string()
+                } else if secs < 60 {
+                    format!("{secs}s ago")
+                } else if secs < 3600 {
+                    format!("{}m {}s ago", secs / 60, secs % 60)
+                } else {
+                    format!("{}h {}m ago", secs / 3600, (secs % 3600) / 60)
+                }
+            }
+            None => "N/A".to_string(),
+        };
         let lines = [
             format!("ID: {}", node.id),
             format!("Status: {status_label}"),
             format!("IP: {ip_label}"),
             format!("Location: {loc_label}"),
+            format!("Last Heartbeat: {heartbeat_label}"),
         ];
 
         let max_w = lines
