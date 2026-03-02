@@ -314,3 +314,104 @@ fn poseidon_hash_different_data() {
     let h2 = poseidon_hash(b"input B");
     assert_ne!(h1, h2);
 }
+
+// ---------------------------------------------------------------------------
+// Padding (pad_to_bucket / unpad_from_bucket)
+// ---------------------------------------------------------------------------
+
+use crate::{pad_to_bucket, unpad_from_bucket};
+
+#[test]
+fn pad_unpad_round_trip() {
+    let data = b"hello, padded world!";
+    let padded = pad_to_bucket(data);
+    let recovered = unpad_from_bucket(&padded).expect("unpad");
+    assert_eq!(recovered, data);
+}
+
+#[test]
+fn pad_unpad_empty_data() {
+    let padded = pad_to_bucket(b"");
+    assert_eq!(padded.len(), 256, "empty content should pad to smallest bucket");
+    let recovered = unpad_from_bucket(&padded).expect("unpad empty");
+    assert!(recovered.is_empty());
+}
+
+#[test]
+fn padded_size_is_bucket_aligned() {
+    let bucket_sizes: &[usize] = &[256, 512, 1_024, 2_048, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144];
+    for &size in bucket_sizes {
+        if size < 4 {
+            continue;
+        }
+        let content_len = size - 4; // exactly fills the bucket (4-byte header + content)
+        let content = vec![0xABu8; content_len];
+        let padded = pad_to_bucket(&content);
+        assert_eq!(padded.len(), size, "content of len {content_len} should fit exactly in bucket {size}");
+        let recovered = unpad_from_bucket(&padded).expect("unpad");
+        assert_eq!(recovered, content);
+    }
+}
+
+#[test]
+fn content_just_over_bucket_goes_to_next() {
+    let content = vec![0xCDu8; 253]; // 4 + 253 = 257, exceeds 256 bucket → 512
+    let padded = pad_to_bucket(&content);
+    assert_eq!(padded.len(), 512);
+    let recovered = unpad_from_bucket(&padded).expect("unpad");
+    assert_eq!(recovered, content);
+}
+
+#[test]
+fn oversized_content_rounds_to_largest_bucket_multiple() {
+    let largest_bucket = 262_144;
+    let content_len = largest_bucket; // 4 + 262144 > 262144 → needs 2 × 262144
+    let content = vec![0xFFu8; content_len];
+    let padded = pad_to_bucket(&content);
+    assert_eq!(padded.len(), 2 * largest_bucket);
+    let recovered = unpad_from_bucket(&padded).expect("unpad");
+    assert_eq!(recovered, content);
+}
+
+#[test]
+fn unpad_too_short_fails() {
+    let result = unpad_from_bucket(&[0u8; 3]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn unpad_declared_length_exceeds_buffer_fails() {
+    let mut bad = vec![0u8; 256];
+    let fake_len: u32 = 300;
+    bad[..4].copy_from_slice(&fake_len.to_le_bytes());
+    let result = unpad_from_bucket(&bad);
+    assert!(result.is_err());
+}
+
+#[test]
+fn pad_stores_length_as_le_u32() {
+    let data = vec![0x42u8; 100];
+    let padded = pad_to_bucket(&data);
+    let stored_len = u32::from_le_bytes([padded[0], padded[1], padded[2], padded[3]]);
+    assert_eq!(stored_len, 100);
+}
+
+#[test]
+fn padding_bytes_are_zero() {
+    let data = b"short";
+    let padded = pad_to_bucket(data);
+    let payload_end = 4 + data.len();
+    for &b in &padded[payload_end..] {
+        assert_eq!(b, 0, "padding bytes must be zero");
+    }
+}
+
+#[test]
+fn various_sizes_round_trip() {
+    for size in [1, 10, 100, 252, 508, 1020, 4092, 50_000, 200_000] {
+        let content = vec![(size & 0xFF) as u8; size];
+        let padded = pad_to_bucket(&content);
+        let recovered = unpad_from_bucket(&padded).expect("unpad");
+        assert_eq!(recovered, content, "round-trip failed for content size {size}");
+    }
+}

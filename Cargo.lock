@@ -2776,6 +2776,7 @@ dependencies = [
  "clap",
  "futures",
  "libp2p",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",

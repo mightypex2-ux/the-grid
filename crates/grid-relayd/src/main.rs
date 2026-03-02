@@ -694,6 +694,7 @@ fn ingest_circuit_addrs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn env_only_config_path() {
@@ -761,5 +762,260 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains(ENV_MAX_CIRCUITS));
         assert!(msg.contains("invalid unsigned integer"));
+    }
+
+    // ── parse_usize: MAX_CONFIG_VALUE enforcement ──────────────────────
+
+    #[test]
+    fn parse_usize_at_max_is_ok() {
+        let result = parse_usize(Some(MAX_CONFIG_VALUE), None, "test").unwrap();
+        assert_eq!(result, Some(MAX_CONFIG_VALUE));
+    }
+
+    #[test]
+    fn parse_usize_above_max_is_rejected() {
+        let err = parse_usize(Some(MAX_CONFIG_VALUE + 1), None, "MY_VAR")
+            .expect_err("should reject values above MAX_CONFIG_VALUE");
+        let msg = err.to_string();
+        assert!(msg.contains("MY_VAR"));
+        assert!(msg.contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn parse_usize_env_above_max_is_rejected() {
+        let raw = (MAX_CONFIG_VALUE + 42).to_string();
+        let err = parse_usize(None, Some(&raw), "ENV_VAR")
+            .expect_err("env value above max should fail");
+        assert!(err.to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn parse_usize_none_when_both_absent() {
+        assert_eq!(parse_usize(None, None, "test").unwrap(), None);
+    }
+
+    #[test]
+    fn parse_usize_cli_overrides_env() {
+        let env_val = "50".to_string();
+        let result = parse_usize(Some(7), Some(&env_val), "test").unwrap();
+        assert_eq!(result, Some(7));
+    }
+
+    // ── normalize_multiaddr ────────────────────────────────────────────
+
+    fn peer_id_a() -> PeerId {
+        PeerId::from_str("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN").unwrap()
+    }
+
+    fn peer_id_b() -> PeerId {
+        PeerId::from_str("12D3KooWGzBLb7F5rUFtj6VqPxRQySmRsLeFmh9G7zhHWGmSqUir").unwrap()
+    }
+
+    #[test]
+    fn normalize_direct_addr_strips_p2p() {
+        let addr: Multiaddr = format!("/ip4/1.2.3.4/tcp/4001/p2p/{}", peer_id_a())
+            .parse()
+            .unwrap();
+        let norm = normalize_multiaddr(&addr);
+        assert_eq!(norm.to_string(), "/ip4/1.2.3.4/tcp/4001");
+    }
+
+    #[test]
+    fn normalize_direct_addr_without_p2p_unchanged() {
+        let addr: Multiaddr = "/ip4/10.0.0.1/tcp/5000".parse().unwrap();
+        let norm = normalize_multiaddr(&addr);
+        assert_eq!(norm, addr);
+    }
+
+    #[test]
+    fn normalize_circuit_addr_canonical_form() {
+        let raw = format!(
+            "/ip4/1.2.3.4/tcp/4001/p2p/{}/p2p-circuit/p2p/{}",
+            peer_id_a(),
+            peer_id_b()
+        );
+        let addr: Multiaddr = raw.parse().unwrap();
+        let norm = normalize_multiaddr(&addr);
+        let expected = format!(
+            "/ip4/1.2.3.4/tcp/4001/p2p/{}/p2p-circuit/p2p/{}",
+            peer_id_a(),
+            peer_id_b()
+        );
+        assert_eq!(norm.to_string(), expected);
+    }
+
+    #[test]
+    fn normalize_circuit_without_dest_peer() {
+        let raw = format!(
+            "/ip4/1.2.3.4/tcp/4001/p2p/{}/p2p-circuit",
+            peer_id_a()
+        );
+        let addr: Multiaddr = raw.parse().unwrap();
+        let norm = normalize_multiaddr(&addr);
+        let expected = format!(
+            "/ip4/1.2.3.4/tcp/4001/p2p/{}/p2p-circuit",
+            peer_id_a()
+        );
+        assert_eq!(norm.to_string(), expected);
+    }
+
+    #[test]
+    fn normalize_circuit_without_relay_peer() {
+        let raw = format!("/ip4/1.2.3.4/tcp/4001/p2p-circuit/p2p/{}", peer_id_b());
+        let addr: Multiaddr = raw.parse().unwrap();
+        let norm = normalize_multiaddr(&addr);
+        let expected = format!("/ip4/1.2.3.4/tcp/4001/p2p-circuit/p2p/{}", peer_id_b());
+        assert_eq!(norm.to_string(), expected);
+    }
+
+    // ── strip_p2p_suffix ───────────────────────────────────────────────
+
+    #[test]
+    fn strip_p2p_removes_peer_id() {
+        let addr: Multiaddr = format!("/ip4/1.2.3.4/tcp/9999/p2p/{}", peer_id_a())
+            .parse()
+            .unwrap();
+        assert_eq!(strip_p2p_suffix(&addr).to_string(), "/ip4/1.2.3.4/tcp/9999");
+    }
+
+    #[test]
+    fn strip_p2p_noop_without_p2p() {
+        let addr: Multiaddr = "/ip4/10.0.0.1/udp/3000".parse().unwrap();
+        assert_eq!(strip_p2p_suffix(&addr), addr);
+    }
+
+    // ── is_globally_routable ───────────────────────────────────────────
+
+    #[test]
+    fn routable_public_ipv4() {
+        let addr: Multiaddr = "/ip4/8.8.8.8/tcp/443".parse().unwrap();
+        assert!(is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_loopback_ipv4() {
+        let addr: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_private_ipv4() {
+        let addr: Multiaddr = "/ip4/192.168.1.1/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_link_local_ipv4() {
+        let addr: Multiaddr = "/ip4/169.254.1.1/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_unspecified_ipv4() {
+        let addr: Multiaddr = "/ip4/0.0.0.0/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_broadcast_ipv4() {
+        let addr: Multiaddr = "/ip4/255.255.255.255/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn routable_public_ipv6() {
+        let addr: Multiaddr = "/ip6/2607:f8b0:4004:800::200e/tcp/443".parse().unwrap();
+        assert!(is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_loopback_ipv6() {
+        let addr: Multiaddr = "/ip6/::1/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    #[test]
+    fn not_routable_unspecified_ipv6() {
+        let addr: Multiaddr = "/ip6/::/tcp/4001".parse().unwrap();
+        assert!(!is_globally_routable(&addr));
+    }
+
+    // ── is_peer_circuit_addr_via_relay ──────────────────────────────────
+
+    #[test]
+    fn circuit_addr_matches_relay_and_dest() {
+        let relay = peer_id_a();
+        let dest = peer_id_b();
+        let addr: Multiaddr = format!(
+            "/ip4/8.8.8.8/tcp/4001/p2p/{}/p2p-circuit/p2p/{}",
+            relay, dest
+        )
+        .parse()
+        .unwrap();
+        assert!(is_peer_circuit_addr_via_relay(&addr, dest, relay));
+    }
+
+    #[test]
+    fn circuit_addr_wrong_relay_rejected() {
+        let relay = peer_id_a();
+        let dest = peer_id_b();
+        let addr: Multiaddr = format!(
+            "/ip4/8.8.8.8/tcp/4001/p2p/{}/p2p-circuit/p2p/{}",
+            dest, dest
+        )
+        .parse()
+        .unwrap();
+        assert!(!is_peer_circuit_addr_via_relay(&addr, dest, relay));
+    }
+
+    #[test]
+    fn circuit_addr_non_routable_rejected() {
+        let relay = peer_id_a();
+        let dest = peer_id_b();
+        let addr: Multiaddr = format!(
+            "/ip4/127.0.0.1/tcp/4001/p2p/{}/p2p-circuit/p2p/{}",
+            relay, dest
+        )
+        .parse()
+        .unwrap();
+        assert!(!is_peer_circuit_addr_via_relay(&addr, dest, relay));
+    }
+
+    #[test]
+    fn non_circuit_addr_rejected() {
+        let relay = peer_id_a();
+        let dest = peer_id_b();
+        let addr: Multiaddr = format!("/ip4/8.8.8.8/tcp/4001/p2p/{}", dest)
+            .parse()
+            .unwrap();
+        assert!(!is_peer_circuit_addr_via_relay(&addr, dest, relay));
+    }
+
+    // ── load_or_generate_keypair ───────────────────────────────────────
+
+    #[test]
+    fn keypair_generate_and_reload_stable_peer_id() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let key_path = dir.path().join("test-keypair");
+
+        let kp1 = load_or_generate_keypair(&key_path).expect("should generate keypair");
+        assert!(key_path.exists(), "keypair file should be written");
+
+        let kp2 = load_or_generate_keypair(&key_path).expect("should reload keypair");
+        assert_eq!(
+            kp1.public().to_peer_id(),
+            kp2.public().to_peer_id(),
+            "peer ID should be stable across reloads"
+        );
+    }
+
+    #[test]
+    fn keypair_creates_parent_directories() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let key_path = dir.path().join("deep").join("nested").join("keypair");
+
+        let kp = load_or_generate_keypair(&key_path).expect("should create dirs and generate");
+        assert!(key_path.exists());
+        assert!(!kp.public().to_peer_id().to_string().is_empty());
     }
 }

@@ -103,3 +103,102 @@ impl GridError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_code_storage_full() {
+        assert_eq!(GridError::StorageFull.error_code(), Some(ErrorCode::StorageFull));
+    }
+
+    #[test]
+    fn error_code_proof_invalid() {
+        assert_eq!(GridError::ProofInvalid.error_code(), Some(ErrorCode::ProofInvalid));
+    }
+
+    #[test]
+    fn error_code_policy_reject() {
+        assert_eq!(GridError::PolicyReject.error_code(), Some(ErrorCode::PolicyReject));
+    }
+
+    #[test]
+    fn error_code_not_found() {
+        assert_eq!(GridError::NotFound.error_code(), Some(ErrorCode::NotFound));
+    }
+
+    #[test]
+    fn error_code_invalid_payload() {
+        assert_eq!(
+            GridError::InvalidPayload("bad data".into()).error_code(),
+            Some(ErrorCode::InvalidPayload),
+        );
+    }
+
+    #[test]
+    fn error_code_program_mismatch() {
+        assert_eq!(GridError::ProgramMismatch.error_code(), Some(ErrorCode::ProgramMismatch));
+    }
+
+    #[test]
+    fn error_code_io_returns_none() {
+        let err = GridError::Io(std::io::Error::new(std::io::ErrorKind::Other, "oops"));
+        assert_eq!(err.error_code(), None);
+    }
+
+    #[test]
+    fn error_code_encode_returns_none() {
+        assert_eq!(GridError::Encode("fail".into()).error_code(), None);
+    }
+
+    #[test]
+    fn error_code_decode_returns_none() {
+        assert_eq!(GridError::Decode("fail".into()).error_code(), None);
+    }
+
+    #[test]
+    fn error_code_other_returns_none() {
+        assert_eq!(GridError::Other("misc".into()).error_code(), None);
+    }
+
+    #[test]
+    fn error_code_display_strings() {
+        assert_eq!(ErrorCode::StorageFull.to_string(), "storage full");
+        assert_eq!(ErrorCode::ProofInvalid.to_string(), "proof invalid");
+        assert_eq!(ErrorCode::PolicyReject.to_string(), "policy reject");
+        assert_eq!(ErrorCode::NotFound.to_string(), "not found");
+        assert_eq!(ErrorCode::InvalidPayload.to_string(), "invalid payload");
+        assert_eq!(ErrorCode::ProgramMismatch.to_string(), "program mismatch");
+        assert_eq!(ErrorCode::SlotOccupied.to_string(), "slot occupied");
+        assert_eq!(ErrorCode::BatchTooLarge.to_string(), "batch too large");
+        assert_eq!(ErrorCode::ConditionFailed.to_string(), "condition failed");
+    }
+
+    #[test]
+    fn error_code_from_sector_store_error() {
+        let err = SectorStoreError::BatchTooLarge("too many".into());
+        assert_eq!(ErrorCode::from(err), ErrorCode::BatchTooLarge);
+    }
+
+    #[test]
+    fn grid_error_from_error_code_round_trip() {
+        let codes = [
+            ErrorCode::StorageFull,
+            ErrorCode::ProofInvalid,
+            ErrorCode::PolicyReject,
+            ErrorCode::NotFound,
+            ErrorCode::ProgramMismatch,
+        ];
+        for code in codes {
+            let err = GridError::from(code);
+            assert_eq!(err.error_code(), Some(code));
+        }
+    }
+
+    #[test]
+    fn grid_error_from_error_code_slot_occupied_maps_to_invalid_payload() {
+        let err = GridError::from(ErrorCode::SlotOccupied);
+        assert_eq!(err.error_code(), Some(ErrorCode::InvalidPayload));
+    }
+}
