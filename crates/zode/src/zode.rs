@@ -610,6 +610,38 @@ impl Zode {
             tokio::sync::oneshot::Sender<Result<grid_core::SectorResponse, String>>,
         > = HashMap::new();
 
+        // Drain any topic commands enqueued during service startup (e.g. Zephyr
+        // zone subscriptions) so they are processed before the first publish.
+        {
+            let mut net = network.lock().await;
+            while let Ok(cmd) = topic_rx.try_recv() {
+                match cmd {
+                    grid_service::TopicCommand::Subscribe(topic) => {
+                        if let Err(e) = net.subscribe(&topic) {
+                            warn!(error = %e, %topic, "dynamic subscribe failed (drain)");
+                        } else {
+                            info!(%topic, "dynamic subscribe (drain)");
+                            if let Ok(mut t) = topics.write() {
+                                if !t.contains(&topic) {
+                                    t.push(topic);
+                                }
+                            }
+                        }
+                    }
+                    grid_service::TopicCommand::Unsubscribe(topic) => {
+                        if let Err(e) = net.unsubscribe(&topic) {
+                            warn!(error = %e, %topic, "dynamic unsubscribe failed (drain)");
+                        } else {
+                            info!(%topic, "dynamic unsubscribe (drain)");
+                            if let Ok(mut t) = topics.write() {
+                                t.retain(|s| s != &topic);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         loop {
             let event = {
                 let mut net = network.lock().await;

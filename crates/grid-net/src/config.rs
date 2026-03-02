@@ -45,6 +45,12 @@ pub struct DiscoveryConfig {
     /// Prevents hammering unreachable peers with stale NAT-mapped addresses.
     /// Default: 5 minutes.
     pub dial_backoff_duration: Duration,
+
+    /// Allow private/loopback addresses for discovery dialing and Kademlia.
+    /// Required for local-network and orchestrator testing where all nodes
+    /// bind to `127.0.0.1` or LAN addresses.
+    /// Default: `false`.
+    pub allow_private_addresses: bool,
 }
 
 /// Kademlia operating mode.
@@ -77,6 +83,7 @@ impl Default for DiscoveryConfig {
             random_walk_interval: Duration::from_secs(30),
             max_concurrent_discovery_dials: 8,
             dial_backoff_duration: Duration::from_secs(300),
+            allow_private_addresses: false,
         }
     }
 }

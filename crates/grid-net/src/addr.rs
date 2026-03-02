@@ -151,6 +151,17 @@ pub fn is_globally_routable(addr: &Multiaddr) -> bool {
     true
 }
 
+/// Returns `true` when the address is suitable for dialing. When
+/// `allow_private` is set, any address with a transport component (IP + port)
+/// is accepted; otherwise only globally-routable addresses qualify.
+pub fn is_dialable(addr: &Multiaddr, allow_private: bool) -> bool {
+    if allow_private {
+        has_transport(addr)
+    } else {
+        is_globally_routable(addr)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

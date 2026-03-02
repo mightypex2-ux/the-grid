@@ -66,6 +66,9 @@ pub struct NetworkService {
     /// Per-peer last packet-exchange timestamp, updated on every swarm event
     /// that involves a specific peer (Ping, Identify, Gossip, Sector, etc.).
     peer_last_activity: HashMap<PeerId, std::time::Instant>,
+    /// When `true`, private/loopback addresses are accepted for discovery
+    /// dialing, Kademlia insertion, and peer-address storage.
+    allow_private_addresses: bool,
 }
 
 impl NetworkService {
@@ -80,6 +83,7 @@ impl NetworkService {
         let max_discovery_dials = config.discovery.max_concurrent_discovery_dials;
         let dial_backoff_duration = config.discovery.dial_backoff_duration;
         let kademlia_mode = config.discovery.kademlia_mode;
+        let allow_private_addresses = config.discovery.allow_private_addresses;
         let relay_enabled = config.relay.enabled;
 
         let (mut swarm, keypair) = build_swarm(config.keypair)?;
@@ -96,7 +100,12 @@ impl NetworkService {
             .listen_on(config.listen_addr)
             .map_err(|e| NetworkError::Transport(e.to_string()))?;
 
-        dial_bootstrap_peers(&mut swarm, &config.bootstrap_peers, kademlia_enabled);
+        dial_bootstrap_peers(
+            &mut swarm,
+            &config.bootstrap_peers,
+            kademlia_enabled,
+            allow_private_addresses,
+        );
 
         let mut relay_peer_ids = HashSet::new();
         if relay_enabled {
@@ -190,6 +199,7 @@ impl NetworkService {
             dial_backoff: HashMap::new(),
             dial_backoff_duration,
             peer_last_activity: HashMap::new(),
+            allow_private_addresses,
         })
     }
 
@@ -479,10 +489,12 @@ impl NetworkService {
                 debug!(%peer_id, num = %num_established, "connection established");
                 let raw_addr = endpoint.get_remote_address().clone();
                 let normalized = crate::addr::normalize_multiaddr(&raw_addr);
-                if crate::addr::is_globally_routable(&normalized) {
+                if crate::addr::is_dialable(&normalized, self.allow_private_addresses) {
                     self.insert_peer_addr(peer_id, normalized.clone());
                 }
-                if self.kademlia_enabled && crate::addr::is_globally_routable(&normalized) {
+                if self.kademlia_enabled
+                    && crate::addr::is_dialable(&normalized, self.allow_private_addresses)
+                {
                     self.swarm
                         .behaviour_mut()
                         .kademlia
@@ -738,7 +750,7 @@ impl NetworkService {
 
         for addr in addrs {
             let normalized = crate::addr::normalize_multiaddr(addr);
-            if crate::addr::is_globally_routable(&normalized)
+            if crate::addr::is_dialable(&normalized, self.allow_private_addresses)
                 && crate::addr::has_transport(&normalized)
             {
                 if self.kademlia_enabled {
@@ -877,14 +889,14 @@ impl NetworkService {
             "{log_message}"
         );
 
-        if crate::addr::is_globally_routable(&info.observed_addr) {
+        if crate::addr::is_dialable(&info.observed_addr, self.allow_private_addresses) {
             self.swarm.add_external_address(info.observed_addr);
         }
 
         if self.kademlia_enabled {
             for addr in &listen_addrs {
                 let normalized = crate::addr::normalize_multiaddr(addr);
-                if crate::addr::is_globally_routable(&normalized) {
+                if crate::addr::is_dialable(&normalized, self.allow_private_addresses) {
                     self.swarm
                         .behaviour_mut()
                         .kademlia
@@ -895,7 +907,7 @@ impl NetworkService {
 
         for a in &listen_addrs {
             let normalized = crate::addr::normalize_multiaddr(a);
-            if crate::addr::is_globally_routable(&normalized) {
+            if crate::addr::is_dialable(&normalized, self.allow_private_addresses) {
                 self.insert_peer_addr(peer_id, normalized);
             }
         }
@@ -1020,7 +1032,7 @@ impl NetworkService {
                     .map(crate::addr::normalize_multiaddr)
                     .collect();
                 for a in &addrs {
-                    if crate::addr::is_globally_routable(a) {
+                    if crate::addr::is_dialable(a, self.allow_private_addresses) {
                         self.insert_peer_addr(peer, a.clone());
                     }
                 }
@@ -1070,7 +1082,7 @@ impl NetworkService {
                 .map(crate::addr::normalize_multiaddr)
                 .collect();
             for a in &addrs {
-                if crate::addr::is_globally_routable(a) {
+                if crate::addr::is_dialable(a, self.allow_private_addresses) {
                     self.insert_peer_addr(peer_id, a.clone());
                 }
             }

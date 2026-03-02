@@ -121,6 +121,7 @@ pub(crate) fn dial_bootstrap_peers(
     swarm: &mut libp2p::Swarm<GridBehaviour>,
     peers: &[Multiaddr],
     kademlia_enabled: bool,
+    allow_private_addresses: bool,
 ) {
     let local_peer_id = *swarm.local_peer_id();
 
@@ -138,7 +139,9 @@ pub(crate) fn dial_bootstrap_peers(
                 debug!(%peer_addr, "skipping self-dial");
                 continue;
             }
-            if kademlia_enabled && crate::addr::is_globally_routable(&normalized) {
+            if kademlia_enabled
+                && crate::addr::is_dialable(&normalized, allow_private_addresses)
+            {
                 swarm
                     .behaviour_mut()
                     .kademlia

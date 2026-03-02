@@ -101,6 +101,10 @@ pub(crate) fn launch_network(
                 listen_addr,
                 keypair: Some(kp),
                 bootstrap_peers,
+                discovery: grid_net::DiscoveryConfig {
+                    allow_private_addresses: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
