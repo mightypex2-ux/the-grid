@@ -155,7 +155,7 @@ fn service_card(ui: &mut egui::Ui, svc: &grid_service::ServiceInfo) {
         colors::TEXT_SECONDARY,
     );
 
-    let status_text = if svc.running { "Running" } else { "Stopped" };
+    let status_text = if svc.running { "RUNNING" } else { "STOPPED" };
     let status_color = if svc.running {
         colors::CONNECTED
     } else {
