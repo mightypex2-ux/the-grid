@@ -606,6 +606,7 @@ impl ZodeApp {
         ui.add_space(spacing::SM);
         ui.selectable_value(&mut self.tab, Tab::Status, "ZODE");
         ui.selectable_value(&mut self.tab, Tab::Services, "SERVICES");
+        ui.selectable_value(&mut self.tab, Tab::Programs, "PROGRAMS");
         ui.selectable_value(&mut self.tab, Tab::Storage, "STORAGE");
         ui.selectable_value(&mut self.tab, Tab::Peers, "PEERS");
         ui.selectable_value(&mut self.tab, Tab::Log, "LOG");
@@ -755,6 +756,7 @@ impl ZodeApp {
                 match self.tab {
                     Tab::Status => crate::render::render_status(self, ui, state),
                     Tab::Services => crate::render_services::render_services(self, ui),
+                    Tab::Programs => crate::render_programs::render_programs(self, ui, state),
                     Tab::Storage => crate::render_storage::render_storage(self, ui, state),
                     Tab::Peers => crate::render::render_peers(self, ui, state),
                     Tab::Log => crate::render::render_log(self, ui, state),

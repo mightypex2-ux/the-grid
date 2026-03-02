@@ -45,6 +45,7 @@ pub(crate) struct StateSnapshot {
 pub(crate) enum Tab {
     Status,
     Services,
+    Programs,
     Storage,
     Peers,
     Log,
