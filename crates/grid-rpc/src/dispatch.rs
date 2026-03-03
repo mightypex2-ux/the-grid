@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use grid_core::{
-    SectorAppendRequest, SectorBatchAppendRequest, SectorBatchLogLengthRequest,
-    SectorLogLengthRequest, SectorReadLogRequest, SectorRequest, SectorResponse,
+    KvContainsRequest, KvDeleteRequest, KvGetRequest, KvPutRequest, SectorAppendRequest,
+    SectorBatchAppendRequest, SectorBatchLogLengthRequest, SectorLogLengthRequest,
+    SectorReadLogRequest, SectorRequest, SectorResponse,
 };
 
 use crate::SectorDispatch;
@@ -68,6 +69,12 @@ pub(crate) fn dispatch(handler: &dyn SectorDispatch, req: &JsonRpcRequest) -> Js
             req,
             SectorRequest::BatchLogLength,
         ),
+        "kv.get" => dispatch_typed::<KvGetRequest>(handler, req, SectorRequest::KvGet),
+        "kv.put" => dispatch_typed::<KvPutRequest>(handler, req, SectorRequest::KvPut),
+        "kv.delete" => dispatch_typed::<KvDeleteRequest>(handler, req, SectorRequest::KvDelete),
+        "kv.contains" => {
+            dispatch_typed::<KvContainsRequest>(handler, req, SectorRequest::KvContains)
+        }
         _ => error_response(
             req.id.clone(),
             METHOD_NOT_FOUND,
@@ -125,7 +132,10 @@ fn error_response(id: Value, code: i32, message: &str) -> JsonRpcResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grid_core::{SectorLogLengthResponse, SectorRequest, SectorResponse};
+    use grid_core::{
+        KvContainsResponse, KvDeleteResponse, KvGetResponse, KvPutResponse,
+        SectorLogLengthResponse, SectorRequest, SectorResponse,
+    };
 
     struct MockHandler;
 
@@ -136,7 +146,23 @@ mod tests {
                     length: 42,
                     error_code: None,
                 }),
-                _ => unimplemented!("MockHandler only supports LogLength"),
+                SectorRequest::KvGet(_) => SectorResponse::KvGet(KvGetResponse {
+                    value: Some(b"hello".to_vec()),
+                    error_code: None,
+                }),
+                SectorRequest::KvPut(_) => SectorResponse::KvPut(KvPutResponse {
+                    ok: true,
+                    error_code: None,
+                }),
+                SectorRequest::KvDelete(_) => SectorResponse::KvDelete(KvDeleteResponse {
+                    ok: true,
+                    error_code: None,
+                }),
+                SectorRequest::KvContains(_) => SectorResponse::KvContains(KvContainsResponse {
+                    exists: true,
+                    error_code: None,
+                }),
+                _ => unimplemented!("MockHandler: unsupported request"),
             }
         }
     }
@@ -204,5 +230,51 @@ mod tests {
         assert!(resp.result.is_none());
         let err = resp.error.as_ref().unwrap();
         assert_eq!(err.code, INVALID_PARAMS);
+    }
+
+    fn kv_params(key: &[u8]) -> Value {
+        let program_id_bytes: Vec<u8> = vec![1; 32];
+        serde_json::json!({
+            "program_id": program_id_bytes,
+            "key": key,
+        })
+    }
+
+    #[test]
+    fn kv_get_dispatch_returns_result() {
+        let req = make_request("2.0", "kv.get", kv_params(b"mykey"));
+        let resp = dispatch(&MockHandler, &req);
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.as_ref().unwrap();
+        assert!(result["KvGet"]["value"].is_array());
+    }
+
+    #[test]
+    fn kv_put_dispatch_returns_result() {
+        let mut params = kv_params(b"mykey");
+        params["value"] = serde_json::json!(vec![1u8, 2, 3]);
+        let req = make_request("2.0", "kv.put", params);
+        let resp = dispatch(&MockHandler, &req);
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.as_ref().unwrap();
+        assert_eq!(result["KvPut"]["ok"], true);
+    }
+
+    #[test]
+    fn kv_delete_dispatch_returns_result() {
+        let req = make_request("2.0", "kv.delete", kv_params(b"mykey"));
+        let resp = dispatch(&MockHandler, &req);
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.as_ref().unwrap();
+        assert_eq!(result["KvDelete"]["ok"], true);
+    }
+
+    #[test]
+    fn kv_contains_dispatch_returns_result() {
+        let req = make_request("2.0", "kv.contains", kv_params(b"mykey"));
+        let resp = dispatch(&MockHandler, &req);
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.as_ref().unwrap();
+        assert_eq!(result["KvContains"]["exists"], true);
     }
 }
