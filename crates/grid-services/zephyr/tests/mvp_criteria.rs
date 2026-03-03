@@ -302,7 +302,7 @@ fn criterion_4_rotation_continuity() {
         "epoch 1 block must reference epoch 0's zone head"
     );
 
-    let voter_e1 = ZoneConsensus::new(
+    let mut voter_e1 = ZoneConsensus::new(
         test_zone,
         1,
         committee_e1.clone(),

@@ -108,6 +108,11 @@ impl CertificateBuilder {
         self.votes.len()
     }
 
+    /// Highest vote count across all tracked block hashes.
+    pub fn max_vote_count(&self) -> usize {
+        self.votes.values().map(|v| v.len()).max().unwrap_or(0)
+    }
+
     /// Discard all accumulated votes (called when the round advances).
     pub fn clear_votes(&mut self) {
         self.votes.clear();

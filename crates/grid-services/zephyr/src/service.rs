@@ -690,6 +690,15 @@ async fn zone_consensus_task(
                 for zmsg in batch {
                     match zmsg {
                         ZephyrZoneMessage::Proposal(proposal) => {
+                            info!(
+                                zone_id,
+                                proposer = %hex::encode(&proposal.header.proposer_id[..8]),
+                                block_hash = %hex::encode(&proposal.block_hash[..8]),
+                                tx_count = proposal.transactions.len(),
+                                height = proposal.header.height,
+                                parent_hash = %hex::encode(&proposal.header.parent_hash[..8]),
+                                "received proposal from network"
+                            );
                             cache_block_txs(
                                 &mut block_tx_cache,
                                 &mut block_nullifiers,
@@ -1057,6 +1066,7 @@ async fn zone_consensus_task(
                     if eng.is_round_timed_out(config.round_timeout_ticks) {
                         let effective_timeout = config.round_timeout_ticks
                             * (1 + eng.consecutive_timeouts().min(3));
+                        let (vote_blocks, max_votes) = eng.vote_summary();
                         warn!(
                             zone_id,
                             round = eng.round(),
@@ -1066,8 +1076,11 @@ async fn zone_consensus_task(
                             is_leader = eng.is_leader(),
                             leader = %hex::encode(&eng.leader_id()[..8]),
                             parent_hash = %eng.parent_hash_hex(),
+                            proposal_seen = eng.proposal_seen(),
                             has_pending_proposal = eng.has_pending_proposal(),
                             votes_for_pending = eng.vote_count_for_pending(),
+                            vote_blocks,
+                            max_votes,
                             committee_size = eng.committee_size(),
                             quorum = config.quorum_threshold,
                             pending_certs = pending_certs.len(),
@@ -1085,6 +1098,7 @@ async fn zone_consensus_task(
 
                     // Periodic health summary during stalls (every ~10s at default 100ms tick)
                     if eng.consecutive_timeouts() > 0 && eng.ticks_in_round() % 100 == 0 {
+                        let (vote_blocks, max_votes) = eng.vote_summary();
                         info!(
                             zone_id,
                             round = eng.round(),
@@ -1094,8 +1108,11 @@ async fn zone_consensus_task(
                             ticks_in_round = eng.ticks_in_round(),
                             is_leader = eng.is_leader(),
                             leader = %hex::encode(&eng.leader_id()[..8]),
+                            proposal_seen = eng.proposal_seen(),
                             has_pending_proposal = eng.has_pending_proposal(),
                             votes_for_pending = eng.vote_count_for_pending(),
+                            vote_blocks,
+                            max_votes,
                             parent_hash = %eng.parent_hash_hex(),
                             pending_certs = pending_certs.len(),
                             mempool_len = mempool.len(zone_id),
@@ -1191,7 +1208,7 @@ fn apply_certificate_locally(
     *height += 1;
     let block_height = *height;
 
-    debug!(
+    info!(
         zone_id = cert.zone_id,
         height = block_height,
         spend_count,
@@ -1297,7 +1314,7 @@ async fn try_propose_for_zone(
     let vid = my_validator_id;
     if let Some(action) = engine.propose(spends, |data| hmac_sign(&vid, data)) {
         if let ConsensusAction::BroadcastProposal(ref block) = action {
-            debug!(
+            info!(
                 zone_id,
                 height = engine.height(),
                 round = engine.round(),

@@ -83,7 +83,14 @@ impl ServiceGossipHandler for ZephyrGossipHandler {
         } else if self.is_zone_topic(topic) {
             match grid_core::decode_canonical::<ZephyrZoneMessage>(data) {
                 Ok(msg) => {
-                    debug!(%topic, %sender_label, "received zone message");
+                    let msg_type = match &msg {
+                        ZephyrZoneMessage::Proposal(_) => "Proposal",
+                        ZephyrZoneMessage::Vote(_) => "Vote",
+                        ZephyrZoneMessage::Reject(_) => "Reject",
+                        ZephyrZoneMessage::SubmitSpend(_) => "SubmitSpend",
+                        ZephyrZoneMessage::SubmitSpendBatch(_) => "SubmitSpendBatch",
+                    };
+                    debug!(%topic, %sender_label, msg_type, "received zone message");
                     match msg {
                         ZephyrZoneMessage::SubmitSpend(_)
                         | ZephyrZoneMessage::SubmitSpendBatch(_) => {

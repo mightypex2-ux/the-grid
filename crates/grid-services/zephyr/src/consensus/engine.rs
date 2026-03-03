@@ -1,7 +1,7 @@
 use grid_programs_zephyr::{
     Block, BlockVote, EpochId, FinalityCertificate, SpendTransaction, ValidatorInfo, ZoneId,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use super::block::{build_block, BlockParams};
 use super::leader::leader_for_round;
@@ -30,6 +30,7 @@ pub struct ZoneConsensus {
     rebroadcast_count: u32,
     ticks_in_round: u32,
     consecutive_timeouts: u32,
+    proposal_seen: bool,
 }
 
 /// Actions the consensus engine requests the caller to perform.
@@ -63,6 +64,7 @@ impl ZoneConsensus {
             rebroadcast_count: 0,
             ticks_in_round: 0,
             consecutive_timeouts: 0,
+            proposal_seen: false,
         }
     }
 
@@ -118,6 +120,7 @@ impl ZoneConsensus {
         self.rebroadcast_count = 0;
         self.ticks_in_round = 0;
         self.consecutive_timeouts += 1;
+        self.proposal_seen = false;
         self.cert_builder.clear_votes();
         txs
     }
@@ -173,6 +176,7 @@ impl ZoneConsensus {
 
         let block = build_block(params, block_spends, sign_fn);
         self.pending_proposal = Some(block.clone());
+        self.proposal_seen = true;
 
         Some(ConsensusAction::BroadcastProposal(block))
     }
@@ -191,7 +195,7 @@ impl ZoneConsensus {
     /// 2. Checking nullifiers against the NullifierSet
     /// 3. Passing only valid proposals to this method
     pub fn vote_on_proposal(
-        &self,
+        &mut self,
         proposal: &Block,
         sign_fn: impl FnOnce(&[u8]) -> Vec<u8>,
     ) -> Option<ConsensusAction> {
@@ -231,6 +235,8 @@ impl ZoneConsensus {
             return None;
         }
 
+        self.proposal_seen = true;
+
         let signature = sign_fn(&proposal.block_hash);
         let vote = BlockVote {
             zone_id: self.zone_id,
@@ -239,6 +245,15 @@ impl ZoneConsensus {
             voter_id: self.my_validator_id,
             signature,
         };
+
+        info!(
+            zone_id = self.zone_id,
+            round = self.round,
+            block_hash = %hex::encode(&proposal.block_hash[..8]),
+            proposer = %hex::encode(&proposal.header.proposer_id[..8]),
+            tx_count = proposal.transactions.len(),
+            "voting on proposal"
+        );
 
         Some(ConsensusAction::BroadcastVote(vote))
     }
@@ -274,6 +289,14 @@ impl ZoneConsensus {
                 );
                 return None;
             }
+            info!(
+                zone_id = self.zone_id,
+                round = self.round,
+                height = self.height,
+                block_hash = %hex::encode(&cert.block_hash[..8]),
+                signers = cert.signatures.len(),
+                "quorum reached, certificate produced"
+            );
             self.advance_round(cert.block_hash);
             Some(ConsensusAction::BroadcastCertificate(cert))
         } else {
@@ -325,6 +348,7 @@ impl ZoneConsensus {
         self.rebroadcast_count = 0;
         self.ticks_in_round = 0;
         self.consecutive_timeouts = 0;
+        self.proposal_seen = false;
         self.cert_builder =
             CertificateBuilder::new(self.zone_id, new_epoch, self.config.quorum_threshold);
     }
@@ -364,6 +388,23 @@ impl ZoneConsensus {
         self.committee.len()
     }
 
+    pub fn proposal_seen(&self) -> bool {
+        self.proposal_seen
+    }
+
+    /// Number of distinct block hashes that have received at least one vote.
+    pub fn vote_block_count(&self) -> usize {
+        self.cert_builder.pending_count()
+    }
+
+    /// `(distinct_block_count, max_votes_for_any_single_block)`.
+    pub fn vote_summary(&self) -> (usize, usize) {
+        (
+            self.cert_builder.pending_count(),
+            self.cert_builder.max_vote_count(),
+        )
+    }
+
     fn advance_round(&mut self, new_parent_hash: [u8; 32]) {
         self.parent_hash = new_parent_hash;
         self.round += 1;
@@ -372,6 +413,7 @@ impl ZoneConsensus {
         self.rebroadcast_count = 0;
         self.ticks_in_round = 0;
         self.consecutive_timeouts = 0;
+        self.proposal_seen = false;
         self.cert_builder.clear_votes();
     }
 }
@@ -467,7 +509,7 @@ mod tests {
             _ => panic!("expected proposal"),
         };
 
-        let voter = ZoneConsensus::new(
+        let mut voter = ZoneConsensus::new(
             0,
             0,
             committee.clone(),
@@ -492,7 +534,7 @@ mod tests {
             _ => panic!("expected proposal"),
         };
 
-        let voter = ZoneConsensus::new(
+        let mut voter = ZoneConsensus::new(
             0,
             0,
             committee.clone(),
