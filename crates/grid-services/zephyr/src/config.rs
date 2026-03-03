@@ -29,6 +29,10 @@ pub struct ZephyrConfig {
     /// Maximum spends per block.
     #[serde(default = "default_max_block_size")]
     pub max_block_size: usize,
+    /// Number of round ticks before a stalled round times out and the leader
+    /// rotates.  Prevents permanent zone stalls when quorum is not reached.
+    #[serde(default = "default_round_timeout_ticks")]
+    pub round_timeout_ticks: u32,
     /// Genesis randomness seed (R_0).
     #[serde(default, with = "hex_bytes")]
     pub initial_randomness: [u8; 32],
@@ -59,6 +63,9 @@ fn default_quorum_threshold() -> usize {
 fn default_max_block_size() -> usize {
     512
 }
+fn default_round_timeout_ticks() -> u32 {
+    10
+}
 
 impl Default for ZephyrConfig {
     fn default() -> Self {
@@ -69,6 +76,7 @@ impl Default for ZephyrConfig {
             round_interval_ms: default_round_interval_ms(),
             quorum_threshold: default_quorum_threshold(),
             max_block_size: default_max_block_size(),
+            round_timeout_ticks: default_round_timeout_ticks(),
             initial_randomness: [0u8; 32],
             validators: vec![],
             self_validate: false,

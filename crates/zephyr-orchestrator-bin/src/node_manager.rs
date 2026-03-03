@@ -63,6 +63,7 @@ pub(crate) fn launch_network(
         round_interval_ms,
         quorum_threshold: ((2 * committee_size) / 3) + 1,
         max_block_size,
+        round_timeout_ticks: 10,
         initial_randomness: [0u8; 32],
         validators: validators.clone(),
         self_validate: false,

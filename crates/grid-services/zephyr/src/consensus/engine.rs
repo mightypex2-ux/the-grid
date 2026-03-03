@@ -27,6 +27,7 @@ pub struct ZoneConsensus {
     config: ZephyrConfig,
     pending_proposal: Option<Block>,
     rebroadcast_count: u32,
+    ticks_in_round: u32,
 }
 
 /// Actions the consensus engine requests the caller to perform.
@@ -58,6 +59,7 @@ impl ZoneConsensus {
             config,
             pending_proposal: None,
             rebroadcast_count: 0,
+            ticks_in_round: 0,
         }
     }
 
@@ -80,6 +82,27 @@ impl ZoneConsensus {
     pub fn is_leader(&self) -> bool {
         let leader = leader_for_round(&self.committee, self.epoch, self.round);
         leader.validator_id == self.my_validator_id
+    }
+
+    /// Increment the per-round tick counter.  Called once per round-timer fire.
+    pub fn tick(&mut self) {
+        self.ticks_in_round += 1;
+    }
+
+    /// Whether the current round has exceeded the timeout threshold.
+    pub fn is_round_timed_out(&self, timeout_ticks: u32) -> bool {
+        self.ticks_in_round >= timeout_ticks
+    }
+
+    /// Advance to the next round without a finalized block.  Rotates the
+    /// leader while preserving `parent_hash` and `height` (no block was
+    /// committed).
+    pub fn timeout_round(&mut self) {
+        self.round += 1;
+        self.pending_proposal = None;
+        self.rebroadcast_count = 0;
+        self.ticks_in_round = 0;
+        self.cert_builder.clear_votes();
     }
 
     /// Called by the leader when the round timer fires.
@@ -221,6 +244,7 @@ impl ZoneConsensus {
         self.round = 0;
         self.pending_proposal = None;
         self.rebroadcast_count = 0;
+        self.ticks_in_round = 0;
         self.cert_builder =
             CertificateBuilder::new(self.zone_id, new_epoch, self.config.quorum_threshold);
     }
@@ -235,6 +259,7 @@ impl ZoneConsensus {
         self.height += 1;
         self.pending_proposal = None;
         self.rebroadcast_count = 0;
+        self.ticks_in_round = 0;
         self.cert_builder.clear_votes();
     }
 }

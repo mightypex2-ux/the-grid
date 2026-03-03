@@ -554,6 +554,20 @@ async fn consensus_loop(
                     rt.current_epoch = epoch_mgr.current_epoch();
                 }
 
+                for &zone_id in &assigned_zones {
+                    if let Some(engine) = consensus_engines.get_mut(&zone_id) {
+                        engine.tick();
+                        if engine.is_round_timed_out(config.round_timeout_ticks) {
+                            warn!(
+                                zone_id,
+                                round = engine.round(),
+                                "round timed out without quorum, rotating leader"
+                            );
+                            engine.timeout_round();
+                        }
+                    }
+                }
+
                 try_propose_for_zones(
                     &assigned_zones,
                     &mut consensus_engines,
