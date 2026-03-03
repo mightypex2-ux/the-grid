@@ -50,6 +50,7 @@ pub(crate) struct ZephyrRuntime {
     pub assigned_zones: Vec<u32>,
     zone_heights: HashMap<u32, u64>,
     recent_blocks: VecDeque<BlockSummary>,
+    blocks_produced: u64,
 }
 
 /// Shared state handed to HTTP route handlers.
@@ -150,6 +151,7 @@ impl ZephyrService {
                 assigned_zones: Vec::new(),
                 zone_heights: HashMap::new(),
                 recent_blocks: VecDeque::new(),
+                blocks_produced: 0,
             })),
             gossip_handler,
             zone_rx: std::sync::Mutex::new(Some(zone_rx)),
@@ -272,10 +274,14 @@ impl Service for ZephyrService {
             self.config.committee_size,
         );
 
-        for &zone_id in &assigned_zones {
+        // Subscribe to ALL zone topics up-front so that epoch transitions
+        // (which may reassign zones) don't require dynamic topic management.
+        let mut topic_to_zone: HashMap<String, u32> = HashMap::new();
+        for zone_id in 0..self.config.total_zones {
             let topic = self.zone_topic(zone_id);
             self.gossip_handler.add_zone_topic(topic.clone());
             ctx.subscribe_topic(&topic)?;
+            topic_to_zone.insert(topic.clone(), zone_id);
             info!(zone_id, %topic, "subscribed to zone topic");
         }
 
@@ -293,12 +299,6 @@ impl Service for ZephyrService {
             .map_err(|e| ServiceError::Other(format!("lock poisoned: {e}")))?
             .take()
             .ok_or_else(|| ServiceError::Other("global_rx already taken".into()))?;
-
-        // Build topic-to-zone-id map
-        let mut topic_to_zone: HashMap<String, u32> = HashMap::new();
-        for &zone_id in &assigned_zones {
-            topic_to_zone.insert(self.zone_topic(zone_id), zone_id);
-        }
 
         // Update runtime with initial state
         if let Ok(mut rt) = self.runtime.write() {
@@ -401,6 +401,7 @@ impl Service for ZephyrService {
             "spends_processed": rt.spends_processed,
             "mempool_sizes": rt.mempool_sizes,
             "assigned_zones": rt.assigned_zones,
+            "blocks_produced": rt.blocks_produced,
             "recent_blocks": rt.recent_blocks.iter().map(|b| {
                 serde_json::json!({
                     "zone_id": b.zone_id,
@@ -418,7 +419,7 @@ impl Service for ZephyrService {
 async fn consensus_loop(
     my_validator_id: [u8; 32],
     validators: Vec<ValidatorInfo>,
-    assigned_zones: Vec<u32>,
+    mut assigned_zones: Vec<u32>,
     topic_to_zone: HashMap<String, u32>,
     config: ZephyrConfig,
     runtime: Arc<std::sync::RwLock<ZephyrRuntime>>,
@@ -495,6 +496,53 @@ async fn consensus_loop(
                         lost = transition.lost_zones.len(),
                         "epoch advanced"
                     );
+
+                    let new_epoch = transition.new_epoch;
+
+                    for &zone_id in &transition.retained_zones {
+                        let committee = sample_committee(
+                            epoch_mgr.randomness_seed(),
+                            zone_id,
+                            &validators,
+                            config.committee_size,
+                        );
+                        if let Some(engine) = consensus_engines.get_mut(&zone_id) {
+                            engine.advance_to_epoch(new_epoch, committee);
+                        }
+                    }
+
+                    for &zone_id in &transition.gained_zones {
+                        let committee = sample_committee(
+                            epoch_mgr.randomness_seed(),
+                            zone_id,
+                            &validators,
+                            config.committee_size,
+                        );
+                        let prev_head = zone_head_store.get_or_genesis(zone_id);
+                        consensus_engines.insert(
+                            zone_id,
+                            ZoneConsensus::new(
+                                zone_id,
+                                new_epoch,
+                                committee,
+                                my_validator_id,
+                                prev_head,
+                                config.clone(),
+                            ),
+                        );
+                        mempools.entry(zone_id).or_insert_with(|| Mempool::new(zone_id, 4096));
+                    }
+
+                    for &zone_id in &transition.lost_zones {
+                        consensus_engines.remove(&zone_id);
+                        mempools.remove(&zone_id);
+                    }
+
+                    assigned_zones = epoch_mgr.zones_for_validator(&my_validator_id);
+
+                    if let Ok(mut rt) = runtime.write() {
+                        rt.assigned_zones = assigned_zones.clone();
+                    }
                 }
 
                 if let Ok(mut rt) = runtime.write() {
@@ -502,7 +550,11 @@ async fn consensus_loop(
                     rt.current_epoch = epoch_mgr.current_epoch();
                 }
 
-                // Leader proposes for assigned zones
+                // Leader proposes for assigned zones.
+                // On the first tick of a round the engine builds a new block
+                // and we drain the mempool.  On subsequent ticks it
+                // re-broadcasts the cached block (same hash) and we skip
+                // draining so transactions are not lost.
                 for &zone_id in &assigned_zones {
                     let Some(engine) = consensus_engines.get_mut(&zone_id) else {
                         continue;
@@ -510,10 +562,14 @@ async fn consensus_loop(
                     if !engine.is_leader() {
                         continue;
                     }
-                    let Some(mp) = mempools.get_mut(&zone_id) else {
-                        continue;
+                    let spends = if engine.has_pending_proposal() {
+                        vec![]
+                    } else {
+                        mempools
+                            .get_mut(&zone_id)
+                            .map(|mp| mp.drain(config.max_block_size))
+                            .unwrap_or_default()
                     };
-                    let spends = mp.drain(config.max_block_size);
                     let vid = my_validator_id;
                     if let Some(action) = engine.propose(spends, |data| hmac_sign(&vid, data)) {
                         if let ConsensusAction::BroadcastProposal(ref block) = action {
@@ -530,6 +586,7 @@ async fn consensus_loop(
                                     zone_id,
                                     &global_topic,
                                     &publish_tx,
+                                    &block_tx_cache,
                                 )
                                 .await;
                                 if let ConsensusAction::BroadcastVote(vote) = vote_action {
@@ -550,13 +607,14 @@ async fn consensus_loop(
                                             zone_id,
                                             &global_topic,
                                             &publish_tx,
+                                            &block_tx_cache,
                                         )
                                         .await;
                                     }
                                 }
                             }
                         }
-                        publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx).await;
+                        publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx, &block_tx_cache).await;
                     }
                 }
 
@@ -590,7 +648,7 @@ async fn consensus_loop(
                         };
                         let vid = my_validator_id;
                         if let Some(action) = engine.vote_on_proposal(&proposal, |data| hmac_sign(&vid, data)) {
-                            publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx).await;
+                            publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx, &block_tx_cache).await;
                         }
                     }
                     ZephyrZoneMessage::Vote(vote) => {
@@ -606,7 +664,7 @@ async fn consensus_loop(
                                     &runtime,
                                 );
                             }
-                            publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx).await;
+                            publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx, &block_tx_cache).await;
                         }
                     }
                     ZephyrZoneMessage::Reject(_) => {
@@ -618,7 +676,16 @@ async fn consensus_loop(
             msg = global_rx.recv() => {
                 let Some(msg) = msg else { break };
                 match msg {
-                    ZephyrGlobalMessage::Certificate(cert) => {
+                    ZephyrGlobalMessage::Certificate { cert, tx_nullifiers } => {
+                        // Populate the block_tx_cache from the global broadcast
+                        // so nodes that never saw the zone-level proposal can
+                        // still display transaction data.
+                        if !tx_nullifiers.is_empty() {
+                            block_tx_cache
+                                .entry(cert.block_hash)
+                                .or_insert_with(|| (cert.zone_id, tx_nullifiers));
+                        }
+
                         let cz = cert.zone_id;
                         if let Some(engine) = consensus_engines.get_mut(&cz) {
                             if engine.apply_certificate(&cert) {
@@ -675,8 +742,8 @@ fn apply_certificate_locally(
 ) {
     zone_head_store.set(cert.zone_id, cert.block_hash);
     let tx_nullifiers = block_tx_cache
-        .remove(&cert.block_hash)
-        .map(|(_, n)| n)
+        .get(&cert.block_hash)
+        .map(|(_, n)| n.clone())
         .unwrap_or_default();
     let spend_count = tx_nullifiers.len() as u64;
     if let Ok(mut rt) = runtime.write() {
@@ -694,6 +761,7 @@ fn apply_certificate_locally(
             height: block_height,
             tx_nullifiers,
         });
+        rt.blocks_produced += 1;
         if rt.recent_blocks.len() > MAX_RECENT_BLOCKS {
             rt.recent_blocks.pop_front();
         }
@@ -706,6 +774,7 @@ async fn publish_action(
     zone_id: u32,
     global_topic: &str,
     publish_tx: &mpsc::Sender<(String, Vec<u8>)>,
+    block_tx_cache: &HashMap<[u8; 32], (u32, Vec<String>)>,
 ) {
     let (topic, data) = match action {
         ConsensusAction::BroadcastProposal(p) => {
@@ -733,7 +802,14 @@ async fn publish_action(
             (topic, data)
         }
         ConsensusAction::BroadcastCertificate(c) => {
-            let msg = ZephyrGlobalMessage::Certificate(c.clone());
+            let tx_nullifiers = block_tx_cache
+                .get(&c.block_hash)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_default();
+            let msg = ZephyrGlobalMessage::Certificate {
+                cert: c.clone(),
+                tx_nullifiers,
+            };
             let data = match grid_core::encode_canonical(&msg) {
                 Ok(d) => d,
                 Err(e) => {

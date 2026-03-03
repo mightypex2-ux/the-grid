@@ -14,7 +14,14 @@ pub enum ZephyrZoneMessage {
 /// Messages gossiped on the global topic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZephyrGlobalMessage {
-    Certificate(FinalityCertificate),
+    Certificate {
+        cert: FinalityCertificate,
+        /// Hex-encoded nullifier prefixes of the transactions in the certified
+        /// block. Allows nodes that did not see the zone-level proposal to
+        /// display transaction data in the dashboard.
+        #[serde(default)]
+        tx_nullifiers: Vec<String>,
+    },
     EpochAnnounce(EpochAnnouncement),
 }
 

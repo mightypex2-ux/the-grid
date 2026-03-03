@@ -36,6 +36,9 @@ pub(crate) struct OrchestratorApp {
 
     pub auto_traffic: bool,
     pub traffic_rate: f32,
+
+    pub max_block_size: usize,
+    pub round_interval_ms: u64,
 }
 
 impl OrchestratorApp {
@@ -61,13 +64,22 @@ impl OrchestratorApp {
 
             auto_traffic: false,
             traffic_rate: 1.0,
+
+            max_block_size: 512,
+            round_interval_ms: 100,
         }
     }
 
     pub fn do_launch(&mut self) {
         self.launching = true;
         self.launch_error = None;
-        let nodes = node_manager::launch_network(&self.selected_preset, &self.rt, &self.shared);
+        let nodes = node_manager::launch_network(
+            &self.selected_preset,
+            self.max_block_size,
+            self.round_interval_ms,
+            &self.rt,
+            &self.shared,
+        );
         if nodes.is_empty() {
             self.launch_error = Some("Failed to start any nodes".to_string());
             self.launching = false;

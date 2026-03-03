@@ -54,6 +54,14 @@ impl Mempool {
         result
     }
 
+    /// Return clones of up to `max` spends without removing them.
+    ///
+    /// Used by the leader to build a proposal; the actual removal happens
+    /// later via `remove_nullifiers` once the block is certified.
+    pub fn peek(&self, max: usize) -> Vec<SpendTransaction> {
+        self.queue.iter().take(max).cloned().collect()
+    }
+
     /// Check if a nullifier is already in the mempool.
     pub fn contains_nullifier(&self, nullifier: &Nullifier) -> bool {
         self.seen_nullifiers.contains_key(nullifier)
@@ -174,5 +182,20 @@ mod tests {
         for (i, spend) in drained.iter().enumerate() {
             assert_eq!(spend.nullifier, Nullifier([i as u8; 32]));
         }
+    }
+
+    #[test]
+    fn peek_does_not_remove() {
+        let mut mp = Mempool::new(0, 100);
+        mp.insert(dummy_spend(1));
+        mp.insert(dummy_spend(2));
+
+        let peeked = mp.peek(2);
+        assert_eq!(peeked.len(), 2);
+        assert_eq!(mp.len(), 2, "peek must not remove items");
+
+        let peeked_one = mp.peek(1);
+        assert_eq!(peeked_one.len(), 1);
+        assert_eq!(peeked_one[0].nullifier, Nullifier([1; 32]));
     }
 }

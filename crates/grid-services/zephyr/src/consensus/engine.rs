@@ -23,6 +23,10 @@ pub struct ZoneConsensus {
     cert_builder: CertificateBuilder,
     parent_hash: [u8; 32],
     config: ZephyrConfig,
+    /// Cached block from the first proposal in this round.  Re-broadcast on
+    /// every subsequent tick so gossip eventually delivers it, while keeping
+    /// all votes on the same hash.
+    pending_proposal: Option<Block>,
 }
 
 /// Actions the consensus engine requests the caller to perform.
@@ -52,6 +56,7 @@ impl ZoneConsensus {
             cert_builder: CertificateBuilder::new(zone_id, epoch, config.quorum_threshold),
             parent_hash,
             config,
+            pending_proposal: None,
         }
     }
 
@@ -77,14 +82,23 @@ impl ZoneConsensus {
     }
 
     /// Called by the leader when the round timer fires.
-    /// Takes verified spends from the mempool and builds a block.
+    ///
+    /// On the first call in a round, builds a new block from `spends` and
+    /// caches it.  On subsequent calls, re-broadcasts the cached block (same
+    /// hash) so gossip eventually delivers it while all votes converge on one
+    /// hash.  The caller should only drain the mempool when
+    /// `has_pending_proposal()` is false.
     pub fn propose(
-        &self,
+        &mut self,
         spends: Vec<SpendTransaction>,
         sign_fn: impl FnOnce(&[u8]) -> Vec<u8>,
     ) -> Option<ConsensusAction> {
         if !self.is_leader() {
             return None;
+        }
+
+        if let Some(ref block) = self.pending_proposal {
+            return Some(ConsensusAction::BroadcastProposal(block.clone()));
         }
 
         let max = self.config.max_block_size.min(spends.len());
@@ -105,8 +119,16 @@ impl ZoneConsensus {
         };
 
         let block = build_block(params, block_spends, sign_fn);
+        self.pending_proposal = Some(block.clone());
 
         Some(ConsensusAction::BroadcastProposal(block))
+    }
+
+    /// Whether a proposal is already pending for this round.
+    /// When true, the caller should skip draining the mempool since those
+    /// transactions are already in the cached block.
+    pub fn has_pending_proposal(&self) -> bool {
+        self.pending_proposal.is_some()
     }
 
     /// Validate a proposal and produce a vote if it checks out.
@@ -162,9 +184,7 @@ impl ZoneConsensus {
             if cert.block_hash == self.parent_hash {
                 return None;
             }
-            self.parent_hash = cert.block_hash;
-            self.round += 1;
-            self.height += 1;
+            self.advance_round(cert.block_hash);
             Some(ConsensusAction::BroadcastCertificate(cert))
         } else {
             None
@@ -181,14 +201,34 @@ impl ZoneConsensus {
             return false;
         }
 
-        self.parent_hash = cert.block_hash;
-        self.round += 1;
-        self.height += 1;
+        self.advance_round(cert.block_hash);
         true
+    }
+
+    /// Transition to the next epoch with a new committee.
+    ///
+    /// Resets round to 0, clears the pending proposal, and rebuilds the
+    /// certificate builder for the new epoch. Height is preserved across
+    /// epochs (monotonic per-zone counter).
+    pub fn advance_to_epoch(&mut self, new_epoch: EpochId, new_committee: Vec<ValidatorInfo>) {
+        self.epoch = new_epoch;
+        self.committee = new_committee;
+        self.round = 0;
+        self.pending_proposal = None;
+        self.cert_builder =
+            CertificateBuilder::new(self.zone_id, new_epoch, self.config.quorum_threshold);
     }
 
     pub fn parent_hash(&self) -> &[u8; 32] {
         &self.parent_hash
+    }
+
+    fn advance_round(&mut self, new_parent_hash: [u8; 32]) {
+        self.parent_hash = new_parent_hash;
+        self.round += 1;
+        self.height += 1;
+        self.pending_proposal = None;
+        self.cert_builder.clear_votes();
     }
 }
 
@@ -228,7 +268,7 @@ mod tests {
     fn leader_can_propose() {
         let committee = make_committee(3);
         let leader_id = leader_for_round(&committee, 0, 0).validator_id;
-        let zc = ZoneConsensus::new(0, 0, committee, leader_id, [0; 32], test_config());
+        let mut zc = ZoneConsensus::new(0, 0, committee, leader_id, [0; 32], test_config());
 
         assert!(zc.is_leader());
         let action = zc.propose(vec![], identity_sign);
@@ -246,16 +286,36 @@ mod tests {
                 break;
             }
         }
-        let zc = ZoneConsensus::new(0, 0, committee, non_leader_id, [0; 32], test_config());
+        let mut zc = ZoneConsensus::new(0, 0, committee, non_leader_id, [0; 32], test_config());
         assert!(!zc.is_leader());
         assert!(zc.propose(vec![], identity_sign).is_none());
+    }
+
+    #[test]
+    fn re_proposal_returns_same_block() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+        let mut zc = ZoneConsensus::new(0, 0, committee, leader_id, [0; 32], test_config());
+
+        let first = zc.propose(vec![], identity_sign).unwrap();
+        let second = zc.propose(vec![], identity_sign).unwrap();
+        let hash1 = match first {
+            ConsensusAction::BroadcastProposal(b) => b.block_hash,
+            _ => panic!("expected proposal"),
+        };
+        let hash2 = match second {
+            ConsensusAction::BroadcastProposal(b) => b.block_hash,
+            _ => panic!("expected proposal"),
+        };
+        assert_eq!(hash1, hash2, "re-proposal must return the same block");
     }
 
     #[test]
     fn vote_on_valid_proposal() {
         let committee = make_committee(3);
         let leader_id = leader_for_round(&committee, 0, 0).validator_id;
-        let zc = ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
 
         let action = zc.propose(vec![], identity_sign).unwrap();
         let block = match action {
@@ -279,7 +339,8 @@ mod tests {
     fn reject_proposal_with_wrong_head() {
         let committee = make_committee(3);
         let leader_id = leader_for_round(&committee, 0, 0).validator_id;
-        let zc = ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
 
         let action = zc.propose(vec![], identity_sign).unwrap();
         let block = match action {
@@ -302,7 +363,8 @@ mod tests {
     fn quorum_produces_certificate() {
         let committee = make_committee(3);
         let leader_id = leader_for_round(&committee, 0, 0).validator_id;
-        let zc = ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
 
         let block = match zc.propose(vec![], identity_sign).unwrap() {
             ConsensusAction::BroadcastProposal(p) => p,

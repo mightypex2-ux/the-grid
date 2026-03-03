@@ -74,13 +74,35 @@ fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state:
             );
 
             let mut rate = app.traffic_rate;
-            let slider = egui::Slider::new(&mut rate, 0.1..=50.0)
+            let slider = egui::Slider::new(&mut rate, 0.1..=10_000.0)
                 .logarithmic(true)
                 .text("tx/s");
             if ui.add(slider).changed() {
                 app.traffic_rate = rate;
                 app.sync_traffic_to_shared();
             }
+        });
+
+        ui.add_space(spacing::SM);
+
+        ui.horizontal(|ui| {
+            let tps_per_zone =
+                app.max_block_size as f64 * (1000.0 / app.round_interval_ms as f64);
+            let total_zones = _state.network.total_zones.max(1);
+            let total_tps = tps_per_zone * total_zones as f64;
+
+            ui.label(
+                egui::RichText::new(format!(
+                    "Block size: {}  |  Round: {} ms  |  Ceiling: {:.0} tx/s ({:.0}/zone \u{00d7} {} zones)",
+                    app.max_block_size,
+                    app.round_interval_ms,
+                    total_tps,
+                    tps_per_zone,
+                    total_zones,
+                ))
+                .size(font_size::SMALL)
+                .color(colors::TEXT_MUTED),
+            );
         });
     });
 }

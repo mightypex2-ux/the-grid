@@ -51,13 +51,13 @@ fn default_epoch_duration_ms() -> u64 {
     120_000
 }
 fn default_round_interval_ms() -> u64 {
-    500
+    100
 }
 fn default_quorum_threshold() -> usize {
     4
 }
 fn default_max_block_size() -> usize {
-    64
+    512
 }
 
 impl Default for ZephyrConfig {

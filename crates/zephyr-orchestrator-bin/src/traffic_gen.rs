@@ -41,7 +41,7 @@ pub(crate) fn spawn_traffic_generator(
                 continue;
             }
 
-            let interval = Duration::from_secs_f64(1.0 / rate.min(100.0) as f64);
+            let interval = Duration::from_secs_f64(1.0 / rate as f64);
             tokio::time::sleep(interval).await;
 
             if nodes.is_empty() || total_zones == 0 {

@@ -26,6 +26,8 @@ pub(crate) struct ManagedNode {
 /// from the `LogEvent::Started` broadcast so subsequent nodes can bootstrap.
 pub(crate) fn launch_network(
     preset: &NetworkPreset,
+    max_block_size: usize,
+    round_interval_ms: u64,
     rt: &Runtime,
     shared: &Arc<Mutex<AppState>>,
 ) -> Vec<ManagedNode> {
@@ -58,9 +60,9 @@ pub(crate) fn launch_network(
         total_zones,
         committee_size,
         epoch_duration_ms: 120_000,
-        round_interval_ms: 500,
+        round_interval_ms,
         quorum_threshold: ((2 * committee_size) / 3) + 1,
-        max_block_size: 64,
+        max_block_size,
         initial_randomness: [0u8; 32],
         validators: validators.clone(),
         self_validate: false,
@@ -295,12 +297,18 @@ pub(crate) fn spawn_status_pollers(
                                 }
                             }
 
+                            let total_produced = zephyr
+                                .get("blocks_produced")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as usize;
+
                             if let Some(blocks) =
                                 zephyr.get("recent_blocks").and_then(|v| v.as_array())
                             {
-                                let new_count = blocks.len();
-                                if new_count > state.blocks_seen {
-                                    for b in &blocks[state.blocks_seen..] {
+                                let new_blocks = total_produced.saturating_sub(state.blocks_seen);
+                                if new_blocks > 0 {
+                                    let take = new_blocks.min(blocks.len());
+                                    for b in &blocks[blocks.len() - take..] {
                                         let zone_id =
                                             b.get("zone_id").and_then(|v| v.as_u64()).unwrap_or(0)
                                                 as u32;
@@ -330,7 +338,7 @@ pub(crate) fn spawn_status_pollers(
                                             tx_nullifiers,
                                         });
                                     }
-                                    state.blocks_seen = new_count;
+                                    state.blocks_seen = total_produced;
                                     while state.recent_blocks.len() > 200 {
                                         state.recent_blocks.pop_front();
                                     }

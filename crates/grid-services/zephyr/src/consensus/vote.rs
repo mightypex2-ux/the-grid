@@ -73,6 +73,17 @@ impl CertificateBuilder {
     pub fn has_quorum(&self, block_hash: &[u8; 32]) -> bool {
         quorum_reached(self.vote_count(block_hash), self.quorum_threshold)
     }
+
+    /// Discard all accumulated votes (called when the round advances).
+    pub fn clear_votes(&mut self) {
+        self.votes.clear();
+    }
+
+    /// Update the epoch and clear all accumulated votes.
+    pub fn advance_epoch(&mut self, new_epoch: EpochId) {
+        self.epoch = new_epoch;
+        self.votes.clear();
+    }
 }
 
 #[cfg(test)]

@@ -69,6 +69,9 @@ pub(crate) fn render_launch_screen(app: &mut OrchestratorApp, ui: &mut egui::Ui)
             }
             ui.add_space(spacing::MD);
 
+            render_throughput_inputs(ui, &mut app.max_block_size, &mut app.round_interval_ms);
+            ui.add_space(spacing::MD);
+
             ui.add_space(spacing::XXL);
 
             if app.launching {
@@ -157,6 +160,41 @@ fn preset_card(ui: &mut egui::Ui, preset: &NetworkPreset, selected: &NetworkPres
     );
 
     resp.clicked()
+}
+
+fn render_throughput_inputs(ui: &mut egui::Ui, max_block_size: &mut usize, round_interval_ms: &mut u64) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = spacing::SM;
+
+        ui.label(
+            egui::RichText::new("MAX BLOCK SIZE")
+                .size(font_size::SMALL)
+                .color(colors::TEXT_SECONDARY),
+        );
+        let mut bs = *max_block_size as i32;
+        ui.add(egui::DragValue::new(&mut bs).range(1..=4096));
+        *max_block_size = bs.max(1) as usize;
+
+        ui.add_space(spacing::MD);
+
+        ui.label(
+            egui::RichText::new("ROUND INTERVAL (ms)")
+                .size(font_size::SMALL)
+                .color(colors::TEXT_SECONDARY),
+        );
+        let mut ri = *round_interval_ms as i32;
+        ui.add(egui::DragValue::new(&mut ri).range(10..=5000));
+        *round_interval_ms = ri.max(10) as u64;
+
+        ui.add_space(spacing::MD);
+
+        let tps_per_zone = *max_block_size as f64 * (1000.0 / *round_interval_ms as f64);
+        ui.label(
+            egui::RichText::new(format!("{:.0} tx/s per zone", tps_per_zone))
+                .size(font_size::SMALL)
+                .color(colors::ACCENT),
+        );
+    });
 }
 
 fn render_custom_inputs(ui: &mut egui::Ui, preset: &mut NetworkPreset) {
