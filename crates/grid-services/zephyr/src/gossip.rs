@@ -79,19 +79,28 @@ impl ServiceGossipHandler for ZephyrGossipHandler {
             match grid_core::decode_canonical::<ZephyrZoneMessage>(data) {
                 Ok(msg) => {
                     debug!(%topic, %sender_label, "received zone message");
-                    let is_spend = matches!(msg, ZephyrZoneMessage::SubmitSpend(_));
-                    if is_spend {
-                        // Drop excess spends rather than blocking the gossip
-                        // task — blocking here would stall Proposal/Vote
-                        // delivery and kill consensus.
-                        let _ = self.zone_message_tx.try_send((topic.to_owned(), msg));
-                    } else if self
-                        .zone_message_tx
-                        .send((topic.to_owned(), msg))
-                        .await
-                        .is_err()
-                    {
-                        warn!("zone message channel closed");
+                    match msg {
+                        ZephyrZoneMessage::SubmitSpend(_) => {
+                            let _ = self.zone_message_tx.try_send((topic.to_owned(), msg));
+                        }
+                        ZephyrZoneMessage::SubmitSpendBatch(txs) => {
+                            for tx in txs {
+                                let _ = self.zone_message_tx.try_send((
+                                    topic.to_owned(),
+                                    ZephyrZoneMessage::SubmitSpend(tx),
+                                ));
+                            }
+                        }
+                        _ => {
+                            if self
+                                .zone_message_tx
+                                .send((topic.to_owned(), msg))
+                                .await
+                                .is_err()
+                            {
+                                warn!("zone message channel closed");
+                            }
+                        }
                     }
                 }
                 Err(e) => {

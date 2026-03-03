@@ -666,7 +666,7 @@ async fn consensus_loop(
                     ZephyrZoneMessage::Proposal(_) => 0,
                     ZephyrZoneMessage::Vote(_) => 1,
                     ZephyrZoneMessage::Reject(_) => 2,
-                    ZephyrZoneMessage::SubmitSpend(_) => 3,
+                    ZephyrZoneMessage::SubmitSpend(_) | ZephyrZoneMessage::SubmitSpendBatch(_) => 3,
                 });
 
                 for (topic, msg) in batch {
@@ -679,6 +679,13 @@ async fn consensus_loop(
                         ZephyrZoneMessage::SubmitSpend(tx) => {
                             if let Some(mp) = mempools.get_mut(&zone_id) {
                                 mp.insert(tx);
+                            }
+                        }
+                        ZephyrZoneMessage::SubmitSpendBatch(txs) => {
+                            if let Some(mp) = mempools.get_mut(&zone_id) {
+                                for tx in txs {
+                                    mp.insert(tx);
+                                }
                             }
                         }
                         ZephyrZoneMessage::Proposal(proposal) => {

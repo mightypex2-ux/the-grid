@@ -13,6 +13,8 @@ use crate::config::ZephyrConfig;
 /// instance. It tracks the current round, collects votes, and coordinates
 /// proposal/certification. `height` is a monotonic per-zone counter that
 /// is not reset across epochs.
+const MAX_PROPOSAL_REBROADCASTS: u32 = 2;
+
 pub struct ZoneConsensus {
     zone_id: ZoneId,
     epoch: EpochId,
@@ -23,10 +25,8 @@ pub struct ZoneConsensus {
     cert_builder: CertificateBuilder,
     parent_hash: [u8; 32],
     config: ZephyrConfig,
-    /// Cached block from the first proposal in this round.  Re-broadcast on
-    /// every subsequent tick so gossip eventually delivers it, while keeping
-    /// all votes on the same hash.
     pending_proposal: Option<Block>,
+    rebroadcast_count: u32,
 }
 
 /// Actions the consensus engine requests the caller to perform.
@@ -57,6 +57,7 @@ impl ZoneConsensus {
             parent_hash,
             config,
             pending_proposal: None,
+            rebroadcast_count: 0,
         }
     }
 
@@ -84,9 +85,9 @@ impl ZoneConsensus {
     /// Called by the leader when the round timer fires.
     ///
     /// On the first call in a round, builds a new block from `spends` and
-    /// caches it.  On subsequent calls, re-broadcasts the cached block (same
-    /// hash) so gossip eventually delivers it while all votes converge on one
-    /// hash.  The caller should only drain the mempool when
+    /// caches it.  Re-broadcasts the cached block up to
+    /// `MAX_PROPOSAL_REBROADCASTS` times, then returns `None` to avoid
+    /// flooding GossipSub.  The caller should only drain the mempool when
     /// `has_pending_proposal()` is false.
     pub fn propose(
         &mut self,
@@ -98,6 +99,10 @@ impl ZoneConsensus {
         }
 
         if let Some(ref block) = self.pending_proposal {
+            if self.rebroadcast_count >= MAX_PROPOSAL_REBROADCASTS {
+                return None;
+            }
+            self.rebroadcast_count += 1;
             return Some(ConsensusAction::BroadcastProposal(block.clone()));
         }
 
@@ -215,6 +220,7 @@ impl ZoneConsensus {
         self.committee = new_committee;
         self.round = 0;
         self.pending_proposal = None;
+        self.rebroadcast_count = 0;
         self.cert_builder =
             CertificateBuilder::new(self.zone_id, new_epoch, self.config.quorum_threshold);
     }
@@ -228,6 +234,7 @@ impl ZoneConsensus {
         self.round += 1;
         self.height += 1;
         self.pending_proposal = None;
+        self.rebroadcast_count = 0;
         self.cert_builder.clear_votes();
     }
 }

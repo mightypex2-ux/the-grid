@@ -6,6 +6,7 @@ use crate::types::{Block, BlockVote, EpochId, FinalityCertificate, Nullifier, Sp
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZephyrZoneMessage {
     SubmitSpend(SpendTransaction),
+    SubmitSpendBatch(Vec<SpendTransaction>),
     Proposal(Block),
     Vote(BlockVote),
     Reject(SpendReject),

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -64,27 +65,31 @@ pub(crate) fn spawn_traffic_generator(
                 continue;
             }
 
-            let mut submitted: u64 = 0;
+            let mut zone_batches: HashMap<usize, Vec<SpendTransaction>> = HashMap::new();
             for _ in 0..batch_size {
                 let tx = make_random_spend(&mut seq);
                 let zone_id =
                     grid_services_zephyr::routing::zone_for_nullifier(&tx.nullifier, total_zones)
                         as usize;
+                zone_batches.entry(zone_id).or_default().push(tx);
+                seq += 1;
+            }
 
-                let msg = ZephyrZoneMessage::SubmitSpend(tx);
+            let mut submitted: u64 = 0;
+            let node_idx = seq as usize % nodes.len();
+            for (zone_id, txs) in zone_batches {
+                let count = txs.len() as u64;
+                let msg = ZephyrZoneMessage::SubmitSpendBatch(txs);
                 let data = match grid_core::encode_canonical(&msg) {
                     Ok(d) => d,
                     Err(e) => {
-                        warn!(error = %e, "failed to encode spend");
+                        warn!(error = %e, "failed to encode spend batch");
                         continue;
                     }
                 };
-
                 let topic = &zone_topics[zone_id % zone_topics.len()];
-                let node_idx = seq as usize % nodes.len();
-                nodes[node_idx].publish(topic.clone(), data);
-                submitted += 1;
-                seq += 1;
+                nodes[node_idx % nodes.len()].publish(topic.clone(), data);
+                submitted += count;
             }
 
             debug!(submitted, rate = cached_rate, "traffic gen: batch sent");
