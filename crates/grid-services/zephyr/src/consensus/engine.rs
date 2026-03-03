@@ -221,15 +221,30 @@ impl ZoneConsensus {
             return None;
         }
         if proposal.header.parent_hash != self.parent_hash {
-            warn!(
-                zone_id = self.zone_id,
-                round = self.round,
-                proposal_parent = %hex::encode(&proposal.header.parent_hash[..8]),
-                local_parent = %hex::encode(&self.parent_hash[..8]),
-                height = self.height,
-                "rejecting proposal: parent_hash mismatch (chain divergence)"
-            );
-            return None;
+            if self.force_adopt_next_cert {
+                warn!(
+                    zone_id = self.zone_id,
+                    round = self.round,
+                    proposal_parent = %hex::encode(&proposal.header.parent_hash[..8]),
+                    local_parent = %hex::encode(&self.parent_hash[..8]),
+                    old_height = self.height,
+                    new_height = proposal.header.height,
+                    "fork recovery: adopting proposal's chain tip"
+                );
+                self.parent_hash = proposal.header.parent_hash;
+                self.height = proposal.header.height;
+                self.force_adopt_next_cert = false;
+            } else {
+                warn!(
+                    zone_id = self.zone_id,
+                    round = self.round,
+                    proposal_parent = %hex::encode(&proposal.header.parent_hash[..8]),
+                    local_parent = %hex::encode(&self.parent_hash[..8]),
+                    height = self.height,
+                    "rejecting proposal: parent_hash mismatch (chain divergence)"
+                );
+                return None;
+            }
         }
         if !self
             .committee
@@ -453,7 +468,7 @@ impl ZoneConsensus {
         self.pending_proposal = None;
         self.rebroadcast_count = 0;
         self.ticks_in_round = 0;
-        self.consecutive_timeouts = 0;
+        self.consecutive_timeouts = self.consecutive_timeouts.saturating_sub(1);
         self.proposal_seen = false;
         self.cert_builder.clear_votes();
     }
@@ -764,6 +779,51 @@ mod tests {
     }
 
     #[test]
+    fn fork_recovery_adopts_proposal_chain_tip() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut leader =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0xBB; 32], test_config());
+        let block = match leader.propose(vec![], identity_sign).unwrap() {
+            ConsensusAction::BroadcastProposal(b) => b,
+            _ => panic!("expected proposal"),
+        };
+        assert_eq!(block.header.parent_hash, [0xBB; 32]);
+
+        let mut voter = ZoneConsensus::new(
+            0,
+            0,
+            committee.clone(),
+            committee[1].validator_id,
+            [0xAA; 32], // different chain tip
+            test_config(),
+        );
+
+        assert!(
+            voter.vote_on_proposal(&block, identity_sign).is_none(),
+            "proposal with mismatched parent should be rejected normally"
+        );
+
+        voter.enable_fork_recovery();
+        let vote = voter.vote_on_proposal(&block, identity_sign);
+        assert!(
+            vote.is_some(),
+            "proposal should be accepted after fork recovery is enabled"
+        );
+        assert_eq!(
+            voter.parent_hash(),
+            &[0xBB; 32],
+            "voter should adopt the proposal's parent_hash"
+        );
+        assert_eq!(
+            voter.height(),
+            block.header.height,
+            "voter should adopt the proposal's height"
+        );
+    }
+
+    #[test]
     fn consecutive_timeouts_persist_across_epochs() {
         let committee = make_committee(3);
         let leader_id = leader_for_round(&committee, 0, 0).validator_id;
@@ -781,6 +841,48 @@ mod tests {
             zc.consecutive_timeouts(),
             3,
             "consecutive_timeouts must survive epoch transitions"
+        );
+    }
+
+    #[test]
+    fn advance_round_decrements_consecutive_timeouts() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0xAA; 32], test_config());
+
+        for _ in 0..5 {
+            zc.timeout_round();
+        }
+        assert_eq!(zc.consecutive_timeouts(), 5);
+
+        let cert = FinalityCertificate {
+            zone_id: 0,
+            epoch: 0,
+            block_hash: [0xBB; 32],
+            parent_hash: [0xAA; 32],
+            signatures: vec![],
+        };
+        assert!(zc.apply_certificate(&cert));
+        assert_eq!(
+            zc.consecutive_timeouts(),
+            4,
+            "advance_round should decrement by 1, not zero"
+        );
+
+        let cert2 = FinalityCertificate {
+            zone_id: 0,
+            epoch: 0,
+            block_hash: [0xCC; 32],
+            parent_hash: [0xBB; 32],
+            signatures: vec![],
+        };
+        assert!(zc.apply_certificate(&cert2));
+        assert_eq!(
+            zc.consecutive_timeouts(),
+            3,
+            "second advance_round should decrement to 3"
         );
     }
 }

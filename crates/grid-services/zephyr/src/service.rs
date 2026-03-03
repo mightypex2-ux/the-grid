@@ -911,6 +911,19 @@ async fn zone_consensus_task(
                                             break;
                                         }
                                     }
+
+                                    const PENDING_CERTS_PURGE_THRESHOLD: usize = 32;
+                                    if pending_certs.len() > PENDING_CERTS_PURGE_THRESHOLD {
+                                        let drop_count =
+                                            pending_certs.len() - PENDING_CERTS_PURGE_THRESHOLD;
+                                        warn!(
+                                            zone_id,
+                                            dropped = drop_count,
+                                            remaining = PENDING_CERTS_PURGE_THRESHOLD,
+                                            "purging oldest buffered certs (likely stale forks)"
+                                        );
+                                        pending_certs.drain(..drop_count);
+                                    }
                                 } else if cert.block_hash == *eng.parent_hash() {
                                     debug!(
                                         zone_id,
@@ -1102,6 +1115,16 @@ async fn zone_consensus_task(
                         let abandoned_txs = eng.timeout_round();
                         if !abandoned_txs.is_empty() {
                             mempool.reinsert_batch(zone_id, abandoned_txs);
+                        }
+                        if eng.consecutive_timeouts() >= 3 {
+                            warn!(
+                                zone_id,
+                                consecutive_timeouts = eng.consecutive_timeouts(),
+                                height = eng.height(),
+                                parent_hash = %eng.parent_hash_hex(),
+                                "zone stalled, enabling fork recovery"
+                            );
+                            eng.enable_fork_recovery();
                         }
                         {
                             let mut rt = runtime.write();

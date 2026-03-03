@@ -34,8 +34,9 @@ pub struct ZephyrConfig {
     #[serde(default = "default_round_timeout_ticks")]
     pub round_timeout_ticks: u32,
     /// Maximum number of out-of-order certificates buffered per zone while
-    /// waiting for their parent to arrive.  At ~7 blocks/sec, 512 entries
-    /// cover ~73 seconds of lag.
+    /// waiting for their parent to arrive.  At ~7 blocks/sec, 64 entries
+    /// cover ~9 seconds of lag.  Stale certs from dead forks are purged
+    /// when the buffer exceeds `PENDING_CERTS_PURGE_THRESHOLD`.
     #[serde(default = "default_max_pending_certs")]
     pub max_pending_certs: usize,
     /// Genesis randomness seed (R_0).
@@ -72,7 +73,7 @@ fn default_round_timeout_ticks() -> u32 {
     50
 }
 fn default_max_pending_certs() -> usize {
-    512
+    64
 }
 
 impl Default for ZephyrConfig {
