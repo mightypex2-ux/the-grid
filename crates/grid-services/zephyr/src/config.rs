@@ -33,6 +33,11 @@ pub struct ZephyrConfig {
     /// rotates.  Prevents permanent zone stalls when quorum is not reached.
     #[serde(default = "default_round_timeout_ticks")]
     pub round_timeout_ticks: u32,
+    /// Maximum number of out-of-order certificates buffered per zone while
+    /// waiting for their parent to arrive.  At ~7 blocks/sec, 512 entries
+    /// cover ~73 seconds of lag.
+    #[serde(default = "default_max_pending_certs")]
+    pub max_pending_certs: usize,
     /// Genesis randomness seed (R_0).
     #[serde(default, with = "hex_bytes")]
     pub initial_randomness: [u8; 32],
@@ -66,6 +71,9 @@ fn default_max_block_size() -> usize {
 fn default_round_timeout_ticks() -> u32 {
     50
 }
+fn default_max_pending_certs() -> usize {
+    512
+}
 
 impl Default for ZephyrConfig {
     fn default() -> Self {
@@ -77,6 +85,7 @@ impl Default for ZephyrConfig {
             quorum_threshold: default_quorum_threshold(),
             max_block_size: default_max_block_size(),
             round_timeout_ticks: default_round_timeout_ticks(),
+            max_pending_certs: default_max_pending_certs(),
             initial_randomness: [0u8; 32],
             validators: vec![],
             self_validate: false,

@@ -923,7 +923,7 @@ async fn zone_consensus_task(
                                         cert_block = %hex::encode(&cert.block_hash[..8]),
                                         "ignoring duplicate buffered certificate"
                                     );
-                                } else if pending_certs.len() < 64 {
+                                } else if pending_certs.len() < config.max_pending_certs {
                                     debug!(
                                         zone_id,
                                         cert_block = %hex::encode(&cert.block_hash[..8]),
@@ -1031,7 +1031,18 @@ async fn zone_consensus_task(
                             );
                             drop(em);
                             if let Some(ref mut eng) = engine {
+                                if eng.consecutive_timeouts() >= 10 {
+                                    warn!(
+                                        zone_id,
+                                        consecutive_timeouts = eng.consecutive_timeouts(),
+                                        height = eng.height(),
+                                        parent_hash = %eng.parent_hash_hex(),
+                                        "zone stalled at epoch boundary, resetting to genesis"
+                                    );
+                                    eng.reset_to_genesis();
+                                }
                                 eng.advance_to_epoch(current_epoch, committee);
+                                pending_certs.clear();
                             } else {
                                 let prev_head =
                                     zone_head_store.lock().await.get_or_genesis(zone_id);
@@ -1044,12 +1055,14 @@ async fn zone_consensus_task(
                                     config.clone(),
                                 ));
                                 mempool.add_zone(zone_id, 65_536);
+                                pending_certs.clear();
                             }
                         } else {
                             drop(em);
                             if was_assigned {
                                 engine = None;
                                 mempool.remove_zone(zone_id);
+                                pending_certs.clear();
                             }
                         }
                     }

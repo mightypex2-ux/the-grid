@@ -176,7 +176,6 @@ impl ZoneConsensus {
 
         let block = build_block(params, block_spends, sign_fn);
         self.pending_proposal = Some(block.clone());
-        self.proposal_seen = true;
 
         Some(ConsensusAction::BroadcastProposal(block))
     }
@@ -199,6 +198,15 @@ impl ZoneConsensus {
         proposal: &Block,
         sign_fn: impl FnOnce(&[u8]) -> Vec<u8>,
     ) -> Option<ConsensusAction> {
+        if self.proposal_seen {
+            debug!(
+                zone_id = self.zone_id,
+                round = self.round,
+                block_hash = %hex::encode(&proposal.block_hash[..8]),
+                "ignoring proposal: already voted this round"
+            );
+            return None;
+        }
         if proposal.header.zone_id != self.zone_id || proposal.header.epoch != self.epoch {
             warn!(
                 zone_id = self.zone_id,
@@ -351,6 +359,16 @@ impl ZoneConsensus {
         self.proposal_seen = false;
         self.cert_builder =
             CertificateBuilder::new(self.zone_id, new_epoch, self.config.quorum_threshold);
+    }
+
+    /// Reset consensus state to genesis, discarding the current chain tip.
+    ///
+    /// Used as a last-resort recovery when a zone is permanently stalled
+    /// (e.g. after a fork where neither side can reach quorum). Sacrifices
+    /// uncommitted chain state to restore liveness.
+    pub fn reset_to_genesis(&mut self) {
+        self.parent_hash = [0u8; 32];
+        self.height = 0;
     }
 
     pub fn parent_hash(&self) -> &[u8; 32] {
@@ -576,5 +594,98 @@ mod tests {
             }
         }
         panic!("expected certificate after quorum");
+    }
+
+    #[test]
+    fn second_proposal_rejected_after_voting() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut leader =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
+        let block_a = match leader.propose(vec![], identity_sign).unwrap() {
+            ConsensusAction::BroadcastProposal(b) => b,
+            _ => panic!("expected proposal"),
+        };
+
+        let mut voter = ZoneConsensus::new(
+            0,
+            0,
+            committee.clone(),
+            committee[1].validator_id,
+            [0; 32],
+            test_config(),
+        );
+
+        let first_vote = voter.vote_on_proposal(&block_a, identity_sign);
+        assert!(first_vote.is_some(), "first vote should succeed");
+        assert!(voter.proposal_seen(), "proposal_seen should be set");
+
+        let second_vote = voter.vote_on_proposal(&block_a, identity_sign);
+        assert!(
+            second_vote.is_none(),
+            "second vote in same round must be rejected"
+        );
+    }
+
+    #[test]
+    fn vote_lock_resets_after_timeout() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut leader =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
+        let block = match leader.propose(vec![], identity_sign).unwrap() {
+            ConsensusAction::BroadcastProposal(b) => b,
+            _ => panic!("expected proposal"),
+        };
+
+        let mut voter = ZoneConsensus::new(
+            0,
+            0,
+            committee.clone(),
+            committee[1].validator_id,
+            [0; 32],
+            test_config(),
+        );
+
+        voter.vote_on_proposal(&block, identity_sign);
+        assert!(voter.proposal_seen());
+
+        voter.timeout_round();
+        assert!(!voter.proposal_seen(), "proposal_seen should reset on timeout");
+    }
+
+    #[test]
+    fn leader_can_self_vote_after_propose() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0; 32], test_config());
+        let block = match zc.propose(vec![], identity_sign).unwrap() {
+            ConsensusAction::BroadcastProposal(b) => b,
+            _ => panic!("expected proposal"),
+        };
+
+        let vote = zc.vote_on_proposal(&block, identity_sign);
+        assert!(
+            vote.is_some(),
+            "leader must be able to self-vote after proposing"
+        );
+    }
+
+    #[test]
+    fn reset_to_genesis_clears_chain_state() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0xFF; 32], test_config());
+        assert_eq!(zc.parent_hash(), &[0xFF; 32]);
+
+        zc.reset_to_genesis();
+        assert_eq!(zc.parent_hash(), &[0u8; 32]);
+        assert_eq!(zc.height(), 0);
     }
 }
