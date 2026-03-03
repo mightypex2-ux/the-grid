@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
-use grid_rpc::{RpcConfig, RpcServer};
+use grid_rpc::{NodeStatus, RpcConfig, RpcServer};
 
 use crate::config::ZodeConfig;
 use crate::error::ZodeError;
@@ -54,6 +54,57 @@ pub struct Zode {
     rpc_server: Mutex<Option<RpcServer>>,
     rpc_config: RpcConfig,
     service_registry: Arc<tokio::sync::RwLock<ServiceRegistry>>,
+}
+
+/// Lightweight provider for `NodeStatus` that captures the shared `Arc`
+/// fields available before the Zode is fully constructed, allowing the
+/// RPC server to serve `node.status` without holding a reference to `Zode`.
+struct NodeStatusProvider {
+    zode_id: ZodeId,
+    metrics: Arc<ZodeMetrics>,
+    storage: Arc<RocksStorage>,
+    connected_peers: Arc<RwLock<Vec<String>>>,
+    peer_ips: Arc<RwLock<HashMap<String, String>>>,
+    peer_last_activity: Arc<RwLock<HashMap<String, u64>>>,
+    topics: Arc<RwLock<Vec<String>>>,
+    rpc_config: RpcConfig,
+}
+
+impl NodeStatus for NodeStatusProvider {
+    fn status(&self) -> Value {
+        let mut metrics = self.metrics.snapshot();
+        if let Ok(stats) = self.storage.sector_stats() {
+            metrics.sectors_stored_total = stats.entry_count;
+            metrics.db_size_bytes = stats.sector_size_bytes;
+        }
+        let connected_peers = self
+            .connected_peers
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let peer_count = connected_peers.len() as u64;
+        let peer_ips = self.peer_ips.read().map(|g| g.clone()).unwrap_or_default();
+        let topics = self.topics.read().map(|t| t.clone()).unwrap_or_default();
+        let peer_last_activity = self
+            .peer_last_activity
+            .read()
+            .map(|m| m.clone())
+            .unwrap_or_default();
+
+        let status = ZodeStatus {
+            zode_id: format_zode_id(&self.zode_id),
+            peer_count,
+            connected_peers,
+            topics,
+            metrics,
+            rpc_enabled: true,
+            rpc_addr: None,
+            rpc_auth_required: self.rpc_config.api_key.is_some(),
+            peer_ips,
+            peer_last_activity,
+        };
+        serde_json::to_value(status).unwrap_or_default()
+    }
 }
 
 impl Zode {
@@ -176,10 +227,24 @@ impl Zode {
 
         let service_router = service_registry.merged_router();
 
+        let topics = Arc::new(RwLock::new(topic_strings));
+
+        let node_status: Arc<dyn NodeStatus> = Arc::new(NodeStatusProvider {
+            zode_id,
+            metrics: Arc::clone(&metrics),
+            storage: Arc::clone(&storage),
+            connected_peers: Arc::clone(&connected_peers),
+            peer_ips: Arc::clone(&peer_ips),
+            peer_last_activity: Arc::clone(&peer_last_activity),
+            topics: Arc::clone(&topics),
+            rpc_config: config.rpc.clone(),
+        });
+
         let rpc_server = if config.rpc.enabled {
             match RpcServer::start(
                 &config.rpc,
                 Arc::clone(&sector_handler) as _,
+                Some(node_status),
                 Some(service_router),
             )
             .await
@@ -201,7 +266,6 @@ impl Zode {
 
         let network = Arc::new(Mutex::new(network));
         let service_registry_arc = Arc::new(tokio::sync::RwLock::new(service_registry));
-        let topics = Arc::new(RwLock::new(topic_strings));
         let event_loop_handle = Self::spawn_event_loop(
             sector_handler,
             Arc::clone(&service_registry_arc),

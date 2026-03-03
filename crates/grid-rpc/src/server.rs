@@ -15,11 +15,12 @@ use tracing::info;
 use crate::config::RpcConfig;
 use crate::dispatch::{self, JsonRpcRequest};
 use crate::error::RpcError;
-use crate::SectorDispatch;
+use crate::{NodeStatus, SectorDispatch};
 
 #[derive(Clone)]
 struct AppState {
     handler: Arc<dyn SectorDispatch>,
+    node_status: Option<Arc<dyn NodeStatus>>,
     api_key: Option<String>,
     requests_total: Arc<AtomicU64>,
 }
@@ -34,11 +35,13 @@ pub struct RpcServer {
 }
 
 impl RpcServer {
-    /// Start the RPC server with the given config, sector dispatch handler, and
-    /// an optional service router to merge into the HTTP server.
+    /// Start the RPC server with the given config, sector dispatch handler,
+    /// an optional node-status provider, and an optional service router to
+    /// merge into the HTTP server.
     pub async fn start(
         config: &RpcConfig,
         handler: Arc<dyn SectorDispatch>,
+        node_status: Option<Arc<dyn NodeStatus>>,
         service_router: Option<Router>,
     ) -> Result<Self, RpcError> {
         let requests_total = Arc::new(AtomicU64::new(0));
@@ -47,6 +50,7 @@ impl RpcServer {
         let auth_required = config.api_key.is_some();
         let state = AppState {
             handler,
+            node_status,
             api_key: config.api_key.clone(),
             requests_total: Arc::clone(&requests_total),
         };
@@ -147,7 +151,7 @@ async fn rpc_handler(
         }
     };
 
-    let response = dispatch::dispatch(&*state.handler, &request);
+    let response = dispatch::dispatch(&*state.handler, state.node_status.as_deref(), &request);
     (StatusCode::OK, Json(response)).into_response()
 }
 

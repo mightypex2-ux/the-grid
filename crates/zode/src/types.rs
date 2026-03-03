@@ -289,7 +289,7 @@ impl LogLevel {
 }
 
 /// Status snapshot of the running Zode.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ZodeStatus {
     /// The local Zode ID.
     pub zode_id: String,

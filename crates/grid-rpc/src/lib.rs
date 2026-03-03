@@ -21,3 +21,9 @@ use grid_core::{SectorRequest, SectorResponse};
 pub trait SectorDispatch: Send + Sync + 'static {
     fn dispatch(&self, req: &SectorRequest) -> SectorResponse;
 }
+
+/// Trait for querying node status, implemented by the Zode to expose
+/// health/connectivity info via the `node.status` RPC method.
+pub trait NodeStatus: Send + Sync + 'static {
+    fn status(&self) -> serde_json::Value;
+}
