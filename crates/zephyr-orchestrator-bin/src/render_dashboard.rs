@@ -238,7 +238,7 @@ fn render_zone_activity_column(
             .inner_margin(egui::Margin::same(spacing::SM as i8))
             .fill(colors::SURFACE_DARK)
             .stroke(egui::Stroke::new(tokens::STROKE_DEFAULT, colors::BORDER))
-            .corner_radius(4.0)
+            .corner_radius(0.0)
             .show(ui, |ui| {
                 ui.set_width(col_w - spacing::SM * 2.0);
 
