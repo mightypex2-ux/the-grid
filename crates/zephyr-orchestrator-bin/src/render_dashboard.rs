@@ -98,24 +98,46 @@ fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state:
 
             ui.add_space(spacing::LG);
 
-            for preset in [2_500.0_f32, 5_000.0, 10_000.0, 15_000.0, 20_000.0] {
-                let label = if preset >= 1_000.0 {
+            for preset in [1_000.0_f32, 2_500.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0] {
+                let label = if preset == 2_500.0 {
+                    "2.5k".to_string()
+                } else if preset >= 1_000.0 {
                     format!("{}k", preset as u32 / 1_000)
                 } else {
                     format!("{}", preset as u32)
                 };
                 let active = (app.traffic_rate - preset).abs() < 0.5;
+                let size = egui::vec2(tokens::WIDGET_HEIGHT, tokens::WIDGET_HEIGHT);
+
+                let wv = &mut ui.visuals_mut().widgets;
+                let saved = (
+                    wv.inactive.weak_bg_fill,
+                    wv.hovered.weak_bg_fill,
+                    wv.active.weak_bg_fill,
+                );
+                wv.inactive.weak_bg_fill =
+                    if active { colors::SURFACE_RAISED } else { egui::Color32::BLACK };
+                wv.hovered.weak_bg_fill = colors::SURFACE_INTERACTIVE;
+                wv.active.weak_bg_fill = colors::BORDER;
+
                 let btn = egui::Button::new(
-                    egui::RichText::new(label)
+                    egui::RichText::new(&label)
                         .size(font_size::TINY)
-                        .color(if active { colors::ACCENT } else { colors::TEXT_SECONDARY }),
+                        .color(if active { colors::ACCENT } else { egui::Color32::WHITE }),
                 )
-                .fill(if active { colors::SURFACE_RAISED } else { colors::SURFACE_DARK })
-                .corner_radius(3.0);
+                .stroke(tokens::default_stroke())
+                .corner_radius(0.0)
+                .min_size(size);
+
                 if ui.add(btn).clicked() {
                     app.traffic_rate = preset;
                     app.sync_traffic_to_shared();
                 }
+
+                let wv = &mut ui.visuals_mut().widgets;
+                wv.inactive.weak_bg_fill = saved.0;
+                wv.hovered.weak_bg_fill = saved.1;
+                wv.active.weak_bg_fill = saved.2;
             }
         });
 
