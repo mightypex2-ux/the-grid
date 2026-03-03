@@ -1274,6 +1274,7 @@ async fn zone_consensus_task(
                             height = eng.height(),
                             epoch = eng.epoch(),
                             consecutive_timeouts = eng.consecutive_timeouts(),
+                            consecutive_successes = eng.consecutive_successes(),
                             ticks_in_round = eng.ticks_in_round(),
                             is_leader = eng.is_leader(),
                             leader = %hex::encode(&eng.leader_id()[..8]),

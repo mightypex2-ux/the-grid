@@ -15,6 +15,7 @@ use crate::config::ZephyrConfig;
 /// proposal/certification. `height` is a monotonic per-zone counter that
 /// is not reset across epochs.
 const MAX_PROPOSAL_REBROADCASTS: u32 = 2;
+const STALL_DECAY_SUCCESSES: u32 = 2;
 
 pub struct ZoneConsensus {
     zone_id: ZoneId,
@@ -30,6 +31,7 @@ pub struct ZoneConsensus {
     rebroadcast_count: u32,
     ticks_in_round: u32,
     consecutive_timeouts: u32,
+    consecutive_successes: u32,
     proposal_seen: bool,
     force_adopt_next_cert: bool,
     fork_recovery_used: bool,
@@ -66,6 +68,7 @@ impl ZoneConsensus {
             rebroadcast_count: 0,
             ticks_in_round: 0,
             consecutive_timeouts: 0,
+            consecutive_successes: 0,
             proposal_seen: false,
             force_adopt_next_cert: false,
             fork_recovery_used: false,
@@ -124,6 +127,7 @@ impl ZoneConsensus {
         self.rebroadcast_count = 0;
         self.ticks_in_round = 0;
         self.consecutive_timeouts += 1;
+        self.consecutive_successes = 0;
         self.proposal_seen = false;
         self.cert_builder.clear_votes();
         txs
@@ -425,6 +429,7 @@ impl ZoneConsensus {
         // consecutive_timeouts intentionally preserved across epochs so the
         // stall-recovery threshold can accumulate even when epoch boundaries
         // intervene.
+        self.consecutive_successes = 0;
         self.proposal_seen = false;
         self.cert_builder =
             CertificateBuilder::new(self.zone_id, new_epoch, self.config.quorum_threshold);
@@ -456,6 +461,10 @@ impl ZoneConsensus {
 
     pub fn consecutive_timeouts(&self) -> u32 {
         self.consecutive_timeouts
+    }
+
+    pub fn consecutive_successes(&self) -> u32 {
+        self.consecutive_successes
     }
 
     pub fn ticks_in_round(&self) -> u32 {
@@ -514,7 +523,11 @@ impl ZoneConsensus {
         self.rebroadcast_count = 0;
         self.ticks_in_round = 0;
         if is_genuine_progress {
-            self.consecutive_timeouts = self.consecutive_timeouts.saturating_sub(1);
+            self.consecutive_successes += 1;
+            if self.consecutive_successes >= STALL_DECAY_SUCCESSES {
+                self.consecutive_timeouts = self.consecutive_timeouts.saturating_sub(1);
+                self.consecutive_successes = 0;
+            }
         }
         self.proposal_seen = false;
         self.cert_builder.clear_votes();
@@ -906,7 +919,10 @@ mod tests {
             zc.timeout_round();
         }
         assert_eq!(zc.consecutive_timeouts(), 5);
+        assert_eq!(zc.consecutive_successes(), 0);
 
+        // First success: consecutive_successes goes to 1, but threshold is 2
+        // so consecutive_timeouts stays at 5.
         let cert = FinalityCertificate {
             zone_id: 0,
             epoch: 0,
@@ -918,10 +934,12 @@ mod tests {
         assert!(zc.apply_certificate(&cert));
         assert_eq!(
             zc.consecutive_timeouts(),
-            4,
-            "advance_round should decrement by 1, not zero"
+            5,
+            "first success should NOT yet decrement (need 2 consecutive)"
         );
+        assert_eq!(zc.consecutive_successes(), 1);
 
+        // Second success: reaches threshold, decrements timeouts 5->4, resets successes.
         let cert2 = FinalityCertificate {
             zone_id: 0,
             epoch: 0,
@@ -933,8 +951,13 @@ mod tests {
         assert!(zc.apply_certificate(&cert2));
         assert_eq!(
             zc.consecutive_timeouts(),
-            3,
-            "second advance_round should decrement to 3"
+            4,
+            "second consecutive success should decrement timeouts to 4"
+        );
+        assert_eq!(
+            zc.consecutive_successes(),
+            0,
+            "consecutive_successes should reset after decay"
         );
     }
 
