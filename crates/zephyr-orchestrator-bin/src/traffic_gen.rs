@@ -11,10 +11,13 @@ use zode::Zode;
 
 use crate::state::AppState;
 
+const TICK_MS: u64 = 50;
+const CONFIG_REFRESH_TICKS: u64 = 4;
+
 /// Spawn a traffic generator that publishes random spend transactions to nodes.
 ///
-/// The generator checks `shared.auto_traffic` every tick and adjusts its
-/// rate from `shared.traffic_rate` (transactions per second).
+/// Uses batched sends: every TICK_MS we compute how many txs to emit for that
+/// tick and publish them all at once, avoiding per-tx sleeps and mutex locks.
 pub(crate) fn spawn_traffic_generator(
     nodes: &[Arc<Zode>],
     zone_program_ids: &[grid_core::ProgramId],
@@ -30,59 +33,81 @@ pub(crate) fn spawn_traffic_generator(
 
     rt.spawn(async move {
         let mut seq: u64 = 0;
+        let mut cached_enabled = false;
+        let mut cached_rate: f32 = 0.0;
+        let mut ticks_since_refresh: u64 = CONFIG_REFRESH_TICKS;
+        let mut fractional_carry: f64 = 0.0;
+
+        let tick = Duration::from_millis(TICK_MS);
+
         loop {
-            let (enabled, rate) = {
+            tokio::time::sleep(tick).await;
+
+            ticks_since_refresh += 1;
+            if ticks_since_refresh >= CONFIG_REFRESH_TICKS {
                 let state = shared.lock().await;
-                (state.auto_traffic, state.traffic_rate)
-            };
+                cached_enabled = state.auto_traffic;
+                cached_rate = state.traffic_rate;
+                ticks_since_refresh = 0;
+            }
 
-            if !enabled || rate <= 0.0 {
-                tokio::time::sleep(Duration::from_millis(250)).await;
+            if !cached_enabled || cached_rate <= 0.0 || nodes.is_empty() || total_zones == 0 {
+                fractional_carry = 0.0;
                 continue;
             }
 
-            let interval = Duration::from_secs_f64(1.0 / rate as f64);
-            tokio::time::sleep(interval).await;
+            let exact = cached_rate as f64 * (TICK_MS as f64 / 1000.0) + fractional_carry;
+            let batch_size = exact as u64;
+            fractional_carry = exact - batch_size as f64;
 
-            if nodes.is_empty() || total_zones == 0 {
+            if batch_size == 0 {
                 continue;
             }
 
-            let tx = make_random_spend(&mut seq);
-            let zone_id =
-                grid_services_zephyr::routing::zone_for_nullifier(&tx.nullifier, total_zones)
-                    as usize;
+            let mut submitted: u64 = 0;
+            for _ in 0..batch_size {
+                let tx = make_random_spend(&mut seq);
+                let zone_id =
+                    grid_services_zephyr::routing::zone_for_nullifier(&tx.nullifier, total_zones)
+                        as usize;
 
-            let msg = ZephyrZoneMessage::SubmitSpend(tx);
-            let data = match grid_core::encode_canonical(&msg) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(error = %e, "failed to encode spend");
-                    continue;
-                }
-            };
+                let msg = ZephyrZoneMessage::SubmitSpend(tx);
+                let data = match grid_core::encode_canonical(&msg) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        warn!(error = %e, "failed to encode spend");
+                        continue;
+                    }
+                };
 
-            let topic = &zone_topics[zone_id % zone_topics.len()];
-            let node_idx = seq as usize % nodes.len();
-            nodes[node_idx].publish(topic.clone(), data);
+                let topic = &zone_topics[zone_id % zone_topics.len()];
+                let node_idx = seq as usize % nodes.len();
+                nodes[node_idx].publish(topic.clone(), data);
+                submitted += 1;
+                seq += 1;
+            }
 
-            // Track the submission
+            debug!(submitted, rate = cached_rate, "traffic gen: batch sent");
+
             {
                 let mut state = shared.lock().await;
-                state.traffic_stats.total_submitted += 1;
-                let recent = crate::state::RecentTransaction {
-                    nullifier_hex: hex::encode(&msg_nullifier_bytes(seq.wrapping_sub(1))[..8]),
-                    zone_id: zone_id as u32,
-                    timestamp: std::time::Instant::now(),
-                };
-                state.traffic_stats.recent.push_back(recent);
-                if state.traffic_stats.recent.len() > 50 {
+                state.traffic_stats.total_submitted += submitted;
+                let now = std::time::Instant::now();
+                let start_seq = seq - submitted;
+                let keep = submitted.min(50);
+                for i in (submitted - keep)..submitted {
+                    let s = start_seq + i;
+                    let recent = crate::state::RecentTransaction {
+                        nullifier_hex: hex::encode(&msg_nullifier_bytes(s)[..8]),
+                        zone_id: (s as u32) % total_zones,
+                        timestamp: now,
+                    };
+                    state.traffic_stats.recent.push_back(recent);
+                }
+                while state.traffic_stats.recent.len() > 50 {
                     state.traffic_stats.recent.pop_front();
                 }
             }
-
-            debug!(seq, zone_id, "traffic gen: submitted spend");
-            seq += 1;
         }
     })
 }

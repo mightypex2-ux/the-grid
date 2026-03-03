@@ -2,7 +2,7 @@ use grid_core::GossipSectorAppend;
 use grid_service::ServiceRegistry;
 use grid_storage::SectorStore;
 use tokio::sync::broadcast;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::sector_handler::SectorRequestHandler;
 use crate::types::LogEvent;
@@ -15,7 +15,7 @@ pub(crate) async fn handle_gossip_message<S: SectorStore>(
     data: &[u8],
     sender: Option<String>,
 ) {
-    info!(%topic, bytes = data.len(), ?sender, "gossip message received");
+    debug!(%topic, bytes = data.len(), ?sender, "gossip message received");
 
     if let Some(handler) = service_registry.gossip_handler_for(topic) {
         handler.on_gossip(topic, data, sender).await;

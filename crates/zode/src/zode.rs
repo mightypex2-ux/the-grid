@@ -101,7 +101,7 @@ impl Zode {
 
         let (event_tx, _) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
-        let (publish_tx, publish_rx) = mpsc::channel(64);
+        let (publish_tx, publish_rx) = mpsc::channel(2048);
         let (sector_request_tx, sector_request_rx) = mpsc::channel(16);
         let metrics = Arc::new(ZodeMetrics::default());
         let connected_peers: Arc<RwLock<Vec<String>>> = Arc::default();
@@ -679,6 +679,11 @@ impl Zode {
                     Some((topic, data)) = publish_rx.recv() => {
                         if let Err(e) = net.publish(&topic, data) {
                             warn!(error = %e, "gossip publish failed");
+                        }
+                        while let Ok((t, d)) = publish_rx.try_recv() {
+                            if let Err(e) = net.publish(&t, d) {
+                                warn!(error = %e, "gossip publish failed");
+                            }
                         }
                         continue;
                     }
