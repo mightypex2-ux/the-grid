@@ -16,17 +16,18 @@ const ROW_TOP_MARGIN: f32 = 36.0;
 const BORDER_STROKE: f32 = 1.2;
 const BORDER_ALPHA: f32 = 0.50;
 const BLOCK_BG_ALPHA: f32 = 0.09;
-const GLOW_FILL_ALPHA: f32 = 0.35;
+const GLOW_FILL_ALPHA: f32 = 0.42;
 const GLOW_TAIL_LENGTH: f32 = 80.0;
 const GLOW_TAIL_MIN_ALPHA: f32 = 0.04;
-const GLOW_FADE_IN_SECS: f32 = 0.3;
+const GLOW_FADE_IN_SECS: f32 = 0.20;
 const FADE_ZONE_FRAC: f32 = 0.25;
-const LABEL_WIDTH: f32 = 72.0;
+const LABEL_WIDTH: f32 = 36.0;
+const LABEL_FADE_WIDTH: f32 = 28.0;
 const BLOCK_GAP: f32 = 6.0;
 const BASE_SCROLL_SPEED: f32 = 700.0;
-const MAX_SCROLL_SPEED: f32 = 7000.0;
-const TARGET_LEAD_SECS: f32 = 0.8;
-const SPEED_UP_RATE: f32 = 6.0;
+const MAX_SCROLL_SPEED: f32 = 4000.0;
+const TARGET_LEAD_SECS: f32 = 1.5;
+const SPEED_UP_RATE: f32 = 4.0;
 const SLOW_DOWN_RATE: f32 = 2.0;
 const MAX_BLOCKS_PER_ZONE: usize = 200;
 const BATCH_STAGGER_SECS: f32 = 0.06;
@@ -36,13 +37,13 @@ const MICRO_JITTER_SECS: f32 = 0.06;
 const ENTRY_LEAD_SECS: f32 = 0.5;
 const COLOR_BLEND_MS: f32 = 150.0;
 
-const PROPOSED_THRESHOLD_MS: u128 = 400;
-const VOTING_THRESHOLD_MS: u128 = 900;
+const PROPOSED_THRESHOLD_MS: u128 = 200;
+const VOTING_THRESHOLD_MS: u128 = 500;
 
-const PULSE_FILL_SECS: f32 = 0.35;
-const PULSE_DRAIN_SECS: f32 = 0.35;
+const PULSE_FILL_SECS: f32 = 0.30;
+const PULSE_DRAIN_SECS: f32 = 0.30;
 const PULSE_EDGE_FRAC: f32 = 0.10;
-const PULSE_BRIGHT_ALPHA: f32 = 0.80;
+const PULSE_BRIGHT_ALPHA: f32 = 0.90;
 
 pub(crate) struct BlockflowVisualization {
     blocks: Vec<FlowBlock>,
@@ -290,6 +291,7 @@ impl BlockflowVisualization {
         let total_blocks = self.blocks.len();
         let total_tps = state.network.actual_tps;
         let tps_boost = ((total_tps as f32 / 1000.0).clamp(1.0, 2.0) - 1.0) * 0.5 + 1.0;
+        let speed_scale = (self.smoothed_speed / BASE_SCROLL_SPEED).max(1.0);
 
         let entry_lead = self.smoothed_speed * ENTRY_LEAD_SECS;
 
@@ -350,7 +352,7 @@ impl BlockflowVisualization {
                 }
 
                 let effect_age_ms = block.first_visible_time
-                    .map(|t| now.duration_since(t).as_millis())
+                    .map(|t| (now.duration_since(t).as_millis() as f32 * speed_scale) as u128)
                     .unwrap_or(0);
 
                 let bar_rect = egui::Rect::from_min_size(
@@ -373,7 +375,8 @@ impl BlockflowVisualization {
                     );
                 }
 
-                let age_ms = block.birth_time.elapsed().as_millis();
+                let age_ms =
+                    (block.birth_time.elapsed().as_millis() as f32 * speed_scale) as u128;
                 let fill_color = interior_color(block.color_idx);
                 let border_col = border_color_blended(age_ms);
 
@@ -510,16 +513,30 @@ impl BlockflowVisualization {
             );
             painter.rect_filled(label_bg, 0.0, colors::PANEL_BG);
             painter.text(
-                egui::pos2(rect.left() + 8.0, row_y + scaled_bar_h * 0.5),
+                egui::pos2(rect.left() + 20.0, row_y + scaled_bar_h * 0.5),
                 egui::Align2::LEFT_CENTER,
-                format!("ZONE {zone_id}  \u{25B8}"),
+                format!("Z{zone_id}"),
                 egui::FontId::proportional(11.0 * self.camera.zoom.sqrt()),
                 egui::Color32::WHITE,
             );
         }
 
-        let overlay_pos = rect.left_top() + egui::vec2(12.0, 8.0);
-        let overlay_w = rect.width() - 24.0;
+        let fade_strip = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + LABEL_WIDTH, rect.top() + ROW_TOP_MARGIN),
+            egui::pos2(
+                rect.left() + LABEL_WIDTH + LABEL_FADE_WIDTH,
+                rect.bottom(),
+            ),
+        );
+        draw_gradient_rect(
+            &painter,
+            fade_strip,
+            colors::PANEL_BG,
+            with_alpha(colors::PANEL_BG, 0),
+        );
+
+        let overlay_pos = rect.left_top() + egui::vec2(8.0, 8.0);
+        let overlay_w = rect.width() - 16.0;
         egui::Area::new(egui::Id::new("blockflow_overlay"))
             .fixed_pos(overlay_pos)
             .interactable(true)
@@ -530,7 +547,7 @@ impl BlockflowVisualization {
                     overlay_frame().show(ui, |ui| {
                         ui.label(
                             egui::RichText::new(format!(
-                                "BLOCKFLOW  \u{2022}  {:>2} ZONES  \u{2022}  {:>5} BLOCKS  \u{2022}  {:>6.1} TPS",
+                                "BLOCKFLOW  \u{2022}  {} ZONES  \u{2022}  {} BLOCKS  \u{2022}  {:.1} TPS",
                                 zone_count, total_blocks, total_tps,
                             ))
                             .strong()
