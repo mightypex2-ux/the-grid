@@ -22,8 +22,10 @@ pub(crate) struct ManagedNode {
 
 /// Build ZodeConfigs and launch all nodes for the given preset.
 ///
-/// Node 0 starts first; we capture its listen address (including peer ID)
-/// from the `LogEvent::Started` broadcast so subsequent nodes can bootstrap.
+/// Every node's listen address is captured from `LogEvent::Started` and
+/// passed to subsequently-started nodes as bootstrap peers. After all
+/// nodes are up, a full-mesh dial ensures direct connectivity between
+/// every pair, eliminating the star-topology bottleneck.
 pub(crate) fn launch_network(
     preset: &NetworkPreset,
     max_block_size: usize,
@@ -77,14 +79,14 @@ pub(crate) fn launch_network(
     let _ = std::fs::create_dir_all(&base_dir);
 
     let mut managed_nodes = Vec::with_capacity(validator_count);
-    let mut bootstrap_addr: Option<String> = None;
+    let mut listen_addrs: Vec<String> = Vec::with_capacity(validator_count);
 
     for i in 0..validator_count {
         let kp = keypairs[i].clone();
         let vid = validators[i].validator_id;
         let zephyr_json = zephyr_json.clone();
         let base_dir = base_dir.clone();
-        let boot = bootstrap_addr.clone();
+        let boot_addrs = listen_addrs.clone();
 
         let result = rt.block_on(async {
             let data_dir = base_dir.join(format!("node-{i}"));
@@ -94,13 +96,10 @@ pub(crate) fn launch_network(
                 .parse()
                 .expect("well-known constant multiaddr");
 
-            let bootstrap_peers = match boot {
-                Some(ref addr) => addr
-                    .parse::<Multiaddr>()
-                    .map(|ma| vec![ma])
-                    .unwrap_or_default(),
-                None => Vec::new(),
-            };
+            let bootstrap_peers: Vec<Multiaddr> = boot_addrs
+                .iter()
+                .filter_map(|a| a.parse::<Multiaddr>().ok())
+                .collect();
 
             let net_config = grid_net::NetworkConfig {
                 listen_addr,
@@ -149,16 +148,12 @@ pub(crate) fn launch_network(
             continue;
         };
 
-        if i == 0 {
-            let addr = rt.block_on(capture_listen_addr(&zode));
-            if let Some(a) = addr {
-                info!(addr = %a, "node 0 listen address captured for bootstrap");
-                bootstrap_addr = Some(a);
-            } else {
-                warn!(
-                    "could not capture node 0 listen address; subsequent nodes will not bootstrap"
-                );
-            }
+        let addr = rt.block_on(capture_listen_addr(&zode));
+        if let Some(a) = addr {
+            info!(node = i, addr = %a, "node listen address captured");
+            listen_addrs.push(a);
+        } else {
+            warn!(node = i, "could not capture listen address");
         }
 
         managed_nodes.push(ManagedNode {
@@ -166,6 +161,26 @@ pub(crate) fn launch_network(
             validator_id: vid,
             node_id: i,
         });
+    }
+
+    // Dial full mesh so every node is directly connected to every other.
+    for i in 0..managed_nodes.len() {
+        for j in 0..listen_addrs.len() {
+            if i == j {
+                continue;
+            }
+            let addr: Multiaddr = match listen_addrs[j].parse() {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            let zode = &managed_nodes[i].zode;
+            rt.block_on(async {
+                let mut net = zode.network().lock().await;
+                if let Err(e) = net.dial(addr) {
+                    warn!(from = i, to = j, error = %e, "full-mesh dial failed");
+                }
+            });
+        }
     }
 
     let shared_init = Arc::clone(shared);
