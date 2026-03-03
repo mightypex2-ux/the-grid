@@ -73,6 +73,7 @@ pub(crate) fn launch_network(
     let zephyr_json = serde_json::to_value(&zephyr_config).expect("ZephyrConfig always serializes");
 
     let base_dir = std::env::temp_dir().join("zephyr-orchestrator");
+    let _ = std::fs::remove_dir_all(&base_dir);
     let _ = std::fs::create_dir_all(&base_dir);
 
     let mut managed_nodes = Vec::with_capacity(validator_count);

@@ -1044,7 +1044,7 @@ async fn zone_consensus_task(
                             );
                             drop(em);
                             if let Some(ref mut eng) = engine {
-                                if eng.consecutive_timeouts() >= 3 {
+                                if eng.consecutive_timeouts() >= 2 {
                                     warn!(
                                         zone_id,
                                         consecutive_timeouts = eng.consecutive_timeouts(),
@@ -1116,10 +1116,11 @@ async fn zone_consensus_task(
                         if !abandoned_txs.is_empty() {
                             mempool.reinsert_batch(zone_id, abandoned_txs);
                         }
-                        if eng.consecutive_timeouts() >= 3 {
+                        if eng.consecutive_timeouts() >= 2 || pending_certs.len() >= 8 {
                             warn!(
                                 zone_id,
                                 consecutive_timeouts = eng.consecutive_timeouts(),
+                                pending_certs = pending_certs.len(),
                                 height = eng.height(),
                                 parent_hash = %eng.parent_hash_hex(),
                                 "zone stalled, enabling fork recovery"
@@ -1129,6 +1130,44 @@ async fn zone_consensus_task(
                         {
                             let mut rt = runtime.write();
                             rt.zone_consecutive_timeouts.insert(zone_id, eng.consecutive_timeouts());
+                        }
+                    }
+
+                    // Periodic drain of buffered certs (~every 1s at default 100ms tick).
+                    // Breaks the deadlock where a node can't drain because no cert is
+                    // applied, and no cert is applied because the drain never runs.
+                    if eng.ticks_in_round() % 10 == 0 && !pending_certs.is_empty() {
+                        let mut drained_any = true;
+                        while drained_any && !pending_certs.is_empty() {
+                            drained_any = false;
+                            let mut still_pending = Vec::new();
+                            for pc in pending_certs.drain(..) {
+                                if pc.block_hash == *eng.parent_hash() {
+                                    continue;
+                                }
+                                if eng.apply_certificate(&pc) {
+                                    {
+                                        let mut zhs = zone_head_store.lock().await;
+                                        apply_certificate_locally(
+                                            &pc,
+                                            &mut zhs,
+                                            &mut block_tx_cache,
+                                            &runtime,
+                                        );
+                                    }
+                                    cleanup_mempool_after_cert(
+                                        &pc,
+                                        &mempool,
+                                        &mut block_nullifiers,
+                                        &mut deferred_cleanups,
+                                    );
+                                    debug!(zone_id, "periodic drain: applied buffered certificate");
+                                    drained_any = true;
+                                } else {
+                                    still_pending.push(pc);
+                                }
+                            }
+                            pending_certs = still_pending;
                         }
                     }
 
