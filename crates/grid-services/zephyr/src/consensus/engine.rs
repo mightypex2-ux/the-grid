@@ -224,6 +224,17 @@ impl ZoneConsensus {
         }
         if proposal.header.parent_hash != self.parent_hash {
             if self.force_adopt_next_cert {
+                if proposal.header.height < self.height {
+                    warn!(
+                        zone_id = self.zone_id,
+                        round = self.round,
+                        proposal_height = proposal.header.height,
+                        local_height = self.height,
+                        proposal_parent = %hex::encode(&proposal.header.parent_hash[..8]),
+                        "fork recovery: rejecting proposal that would jump backward"
+                    );
+                    return None;
+                }
                 warn!(
                     zone_id = self.zone_id,
                     round = self.round,
@@ -355,14 +366,14 @@ impl ZoneConsensus {
 
         if cert.parent_hash != self.parent_hash {
             if self.force_adopt_next_cert {
-                if cert.height < self.height {
+                if cert.height + 1 < self.height {
                     warn!(
                         zone_id = self.zone_id,
                         round = self.round,
                         cert_height = cert.height,
                         local_height = self.height,
                         cert_block = %hex::encode(&cert.block_hash[..8]),
-                        "fork recovery: rejecting cert with height < local height"
+                        "fork recovery: rejecting ancient cert (would jump backward)"
                     );
                     return false;
                 }
@@ -963,6 +974,122 @@ mod tests {
         assert!(
             !zc.take_fork_recovery_used(),
             "flag should be cleared after take"
+        );
+    }
+
+    #[test]
+    fn fork_recovery_accepts_cert_one_behind() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0xAA; 32], test_config());
+
+        let normal_cert = FinalityCertificate {
+            zone_id: 0,
+            epoch: 0,
+            height: 0,
+            block_hash: [0xBB; 32],
+            parent_hash: [0xAA; 32],
+            signatures: vec![],
+        };
+        assert!(zc.apply_certificate(&normal_cert));
+        assert_eq!(zc.height(), 1);
+
+        zc.timeout_round();
+        zc.timeout_round();
+        zc.enable_fork_recovery();
+
+        let cert = FinalityCertificate {
+            zone_id: 0,
+            epoch: 0,
+            height: 0,
+            block_hash: [0xDD; 32],
+            parent_hash: [0xCC; 32],
+            signatures: vec![],
+        };
+        assert!(
+            zc.apply_certificate(&cert),
+            "cert 1-behind (cert.height+1 == local.height) should be accepted by fork recovery"
+        );
+        assert_eq!(zc.height(), 1, "height should stay at 1 after applying cert at height 0 + advance");
+    }
+
+    #[test]
+    fn fork_recovery_rejects_ancient_cert() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut zc =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0xAA; 32], test_config());
+
+        for i in 0..5u8 {
+            let cert = FinalityCertificate {
+                zone_id: 0,
+                epoch: 0,
+                height: i as u64,
+                block_hash: [0x10 + i; 32],
+                parent_hash: if i == 0 { [0xAA; 32] } else { [0x10 + i - 1; 32] },
+                signatures: vec![],
+            };
+            assert!(zc.apply_certificate(&cert));
+        }
+        assert_eq!(zc.height(), 5);
+
+        zc.timeout_round();
+        zc.timeout_round();
+        zc.enable_fork_recovery();
+
+        let ancient_cert = FinalityCertificate {
+            zone_id: 0,
+            epoch: 0,
+            height: 0,
+            block_hash: [0xFF; 32],
+            parent_hash: [0x00; 32],
+            signatures: vec![],
+        };
+        assert!(
+            !zc.apply_certificate(&ancient_cert),
+            "ancient cert (height 0 when local is 5) should be rejected"
+        );
+    }
+
+    #[test]
+    fn fork_recovery_rejects_backward_proposal() {
+        let committee = make_committee(3);
+        let leader_id = leader_for_round(&committee, 0, 0).validator_id;
+
+        let mut leader =
+            ZoneConsensus::new(0, 0, committee.clone(), leader_id, [0xBB; 32], test_config());
+        let block = match leader.propose(vec![], identity_sign).unwrap() {
+            ConsensusAction::BroadcastProposal(b) => b,
+            _ => panic!("expected proposal"),
+        };
+
+        let mut voter = ZoneConsensus::new(
+            0,
+            0,
+            committee.clone(),
+            committee[1].validator_id,
+            [0xAA; 32],
+            test_config(),
+        );
+
+        let normal_cert = FinalityCertificate {
+            zone_id: 0,
+            epoch: 0,
+            height: 0,
+            block_hash: [0xCC; 32],
+            parent_hash: [0xAA; 32],
+            signatures: vec![],
+        };
+        assert!(voter.apply_certificate(&normal_cert));
+        assert_eq!(voter.height(), 1);
+
+        voter.enable_fork_recovery();
+        assert!(
+            voter.vote_on_proposal(&block, identity_sign).is_none(),
+            "proposal at height 0 should be rejected when voter is at height 1"
         );
     }
 }
