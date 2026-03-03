@@ -1,4 +1,5 @@
-use std::time::Instant;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 
@@ -7,7 +8,7 @@ use crate::components::tokens::{self, colors, font_size, spacing};
 use crate::components::labels::field_label;
 use crate::components::section;
 use crate::helpers::{format_uptime, node_color};
-use crate::state::AppState;
+use crate::state::{AppState, RecentBlock};
 
 pub(crate) fn render_dashboard(app: &mut OrchestratorApp, ui: &mut egui::Ui, state: &AppState) {
     egui::ScrollArea::vertical()
@@ -21,7 +22,7 @@ pub(crate) fn render_dashboard(app: &mut OrchestratorApp, ui: &mut egui::Ui, sta
             ui.add_space(spacing::MD);
             render_epoch_timeline(ui, state);
             ui.add_space(spacing::MD);
-            render_activity_feed(ui, state);
+            render_activity_feed(app, ui, state);
         });
 }
 
@@ -231,31 +232,81 @@ fn render_epoch_timeline(ui: &mut egui::Ui, state: &AppState) {
     });
 }
 
-fn render_activity_feed(ui: &mut egui::Ui, state: &AppState) {
+/// Delay before auto-resuming after the pointer leaves the feed area,
+/// so brief pointer-out during scrolling doesn't flicker.
+const FEED_UNPAUSE_DELAY: Duration = Duration::from_secs(1);
+
+fn render_activity_feed(app: &mut OrchestratorApp, ui: &mut egui::Ui, state: &AppState) {
     if state.network.total_zones == 0 {
         return;
     }
 
     section(ui, "Activity Feed", |ui| {
+        if app.activity_feed_paused {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(egui_phosphor::regular::PAUSE)
+                        .size(font_size::SMALL)
+                        .color(colors::ACCENT),
+                );
+                ui.label(
+                    egui::RichText::new("Paused \u{2014} move cursor away to resume")
+                        .size(font_size::TINY)
+                        .color(colors::TEXT_MUTED),
+                );
+            });
+            ui.add_space(spacing::XS);
+        }
+
         let avail_w = ui.available_width();
         let col_w =
             (avail_w / state.network.total_zones.max(1) as f32 - spacing::SM).clamp(180.0, 320.0);
 
-        ui.horizontal_top(|ui| {
-            for zone_id in 0..state.network.total_zones {
-                render_zone_activity_column(ui, zone_id, state, col_w);
-                if zone_id + 1 < state.network.total_zones {
-                    ui.add_space(spacing::SM);
+        let feed_rect = {
+            let blocks: &VecDeque<RecentBlock> = if app.activity_feed_paused {
+                &app.frozen_blocks
+            } else {
+                &state.recent_blocks
+            };
+
+            let inner = ui.horizontal_top(|ui| {
+                for zone_id in 0..state.network.total_zones {
+                    render_zone_activity_column(ui, zone_id, blocks, col_w);
+                    if zone_id + 1 < state.network.total_zones {
+                        ui.add_space(spacing::SM);
+                    }
                 }
-            }
+            });
+            inner.response.rect
+        };
+
+        let pointer_in_feed = ui.input(|i| {
+            i.pointer
+                .hover_pos()
+                .map_or(false, |pos| feed_rect.contains(pos))
         });
+
+        if pointer_in_feed {
+            if !app.activity_feed_paused {
+                app.activity_feed_paused = true;
+                app.frozen_blocks = state.recent_blocks.clone();
+            }
+            app.feed_hover_lost = None;
+        } else if app.activity_feed_paused {
+            let lost = app.feed_hover_lost.get_or_insert_with(Instant::now);
+            if lost.elapsed() >= FEED_UNPAUSE_DELAY {
+                app.activity_feed_paused = false;
+                app.frozen_blocks.clear();
+                app.feed_hover_lost = None;
+            }
+        }
     });
 }
 
 fn render_zone_activity_column(
     ui: &mut egui::Ui,
     zone_id: u32,
-    state: &AppState,
+    blocks: &VecDeque<RecentBlock>,
     col_w: f32,
 ) {
     ui.vertical(|ui| {
@@ -277,8 +328,7 @@ fn render_zone_activity_column(
             .show(ui, |ui| {
                 ui.set_width(col_w - spacing::SM * 2.0);
 
-                let zone_blocks: Vec<_> = state
-                    .recent_blocks
+                let zone_blocks: Vec<_> = blocks
                     .iter()
                     .filter(|b| b.zone_id == zone_id)
                     .collect();

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,7 +14,7 @@ use crate::render_launch;
 use crate::render_log;
 use crate::render_nodes;
 use crate::render_topology::TopologyVisualization;
-use crate::state::{AppPhase, AppState, LogLevel, NetworkPreset, Tab};
+use crate::state::{AppPhase, AppState, LogLevel, NetworkPreset, RecentBlock, Tab};
 
 pub(crate) struct OrchestratorApp {
     pub rt: Runtime,
@@ -39,6 +40,13 @@ pub(crate) struct OrchestratorApp {
 
     pub max_block_size: usize,
     pub round_interval_ms: u64,
+
+    /// When true, the activity feed shows a frozen snapshot instead of live data.
+    pub activity_feed_paused: bool,
+    pub frozen_blocks: VecDeque<RecentBlock>,
+    /// Timestamp when the pointer left the activity feed area; used for
+    /// delayed unpause so brief pointer-out doesn't flicker.
+    pub feed_hover_lost: Option<Instant>,
 }
 
 impl OrchestratorApp {
@@ -67,6 +75,10 @@ impl OrchestratorApp {
 
             max_block_size: 512,
             round_interval_ms: 100,
+
+            activity_feed_paused: false,
+            frozen_blocks: VecDeque::new(),
+            feed_hover_lost: None,
         }
     }
 
@@ -152,6 +164,9 @@ impl OrchestratorApp {
 
         self.phase = AppPhase::Launch;
         self.launch_instant = None;
+        self.activity_feed_paused = false;
+        self.frozen_blocks.clear();
+        self.feed_hover_lost = None;
     }
 
     fn icon_texture(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
@@ -183,9 +198,10 @@ impl eframe::App for OrchestratorApp {
             false
         };
 
+        let tab = self.tab;
         let state_snapshot = self.rt.block_on(async {
             let s = self.shared.lock().await;
-            snapshot(&s)
+            snapshot(&s, tab)
         });
 
         if self.phase == AppPhase::Running {
@@ -460,7 +476,14 @@ impl OrchestratorApp {
     }
 }
 
-fn snapshot(state: &AppState) -> AppState {
+/// Build a lightweight snapshot of the shared state, only cloning data that
+/// the current `tab` actually needs.  The biggest win is skipping the
+/// potentially-10k `log_entries` clone when on Dashboard and the
+/// `recent_blocks`/`traffic_stats` clone when on Log.
+fn snapshot(state: &AppState, tab: Tab) -> AppState {
+    let need_logs = matches!(tab, Tab::Log);
+    let need_blocks = matches!(tab, Tab::Dashboard);
+
     AppState {
         phase: state.phase,
         nodes: state
@@ -486,44 +509,59 @@ fn snapshot(state: &AppState) -> AppState {
             total_peers: state.network.total_peers,
             actual_tps: state.tps_sampler.tps(),
         },
-        log_entries: state
-            .log_entries
-            .iter()
-            .map(|e| crate::state::AggregatedLogEntry {
-                node_id: e.node_id,
-                line: e.line.clone(),
-                level: e.level,
-                timestamp: e.timestamp,
-            })
-            .collect(),
+        log_entries: if need_logs {
+            state
+                .log_entries
+                .iter()
+                .map(|e| crate::state::AggregatedLogEntry {
+                    node_id: e.node_id,
+                    line: e.line.clone(),
+                    level: e.level,
+                    timestamp: e.timestamp,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
         launch_start: state.launch_start,
         auto_traffic: state.auto_traffic,
         traffic_rate: state.traffic_rate,
-        traffic_stats: crate::state::TrafficStats {
-            total_submitted: state.traffic_stats.total_submitted,
-            recent: state
-                .traffic_stats
-                .recent
-                .iter()
-                .map(|r| crate::state::RecentTransaction {
-                    nullifier_hex: r.nullifier_hex.clone(),
-                    zone_id: r.zone_id,
-                    timestamp: r.timestamp,
-                })
-                .collect(),
+        traffic_stats: if need_blocks {
+            crate::state::TrafficStats {
+                total_submitted: state.traffic_stats.total_submitted,
+                recent: state
+                    .traffic_stats
+                    .recent
+                    .iter()
+                    .map(|r| crate::state::RecentTransaction {
+                        nullifier_hex: r.nullifier_hex.clone(),
+                        zone_id: r.zone_id,
+                        timestamp: r.timestamp,
+                    })
+                    .collect(),
+            }
+        } else {
+            crate::state::TrafficStats {
+                total_submitted: state.traffic_stats.total_submitted,
+                recent: VecDeque::new(),
+            }
         },
         tps_sampler: crate::state::TpsSampler::default(),
-        recent_blocks: state
-            .recent_blocks
-            .iter()
-            .map(|b| crate::state::RecentBlock {
-                zone_id: b.zone_id,
-                block_hash_hex: b.block_hash_hex.clone(),
-                height: b.height,
-                timestamp: b.timestamp,
-                tx_nullifiers: b.tx_nullifiers.clone(),
-            })
-            .collect(),
+        recent_blocks: if need_blocks {
+            state
+                .recent_blocks
+                .iter()
+                .map(|b| crate::state::RecentBlock {
+                    zone_id: b.zone_id,
+                    block_hash_hex: b.block_hash_hex.clone(),
+                    height: b.height,
+                    timestamp: b.timestamp,
+                    tx_nullifiers: b.tx_nullifiers.clone(),
+                })
+                .collect()
+        } else {
+            VecDeque::new()
+        },
         blocks_seen: state.blocks_seen,
     }
 }

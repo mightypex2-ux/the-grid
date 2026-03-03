@@ -94,7 +94,7 @@ impl NetworkPreset {
     pub fn committee_size(&self) -> usize {
         match self {
             Self::Minimal => 3,
-            Self::Standard => 3,
+            Self::Standard => 5,
             Self::Large => 5,
             Self::Custom { committee_size, .. } => *committee_size,
         }
@@ -189,6 +189,7 @@ pub(crate) struct RecentTransaction {
 }
 
 /// A finalized block for the activity feed.
+#[derive(Clone)]
 pub(crate) struct RecentBlock {
     pub zone_id: u32,
     pub block_hash_hex: String,
