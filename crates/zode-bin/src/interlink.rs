@@ -22,7 +22,7 @@ use crate::components::{
     error_label, failed_icon, field_label, info_grid, kv_row, section, std_button, text_input,
     verified_icon,
 };
-use crate::helpers::{format_timestamp_ms, shorten_zid};
+use crate::helpers::{day_index, format_day_label, format_timestamp_ms, shorten_zid};
 use crate::state::{DisplayMessage, InterlinkState, InterlinkUpdate, SignatureStatus};
 
 fn derive_test_sector_key() -> SectorKey {
@@ -789,7 +789,15 @@ fn render_interlink_messages(app: &mut ZodeApp, ui: &mut egui::Ui) {
                         .italics(),
                 );
             } else {
+                let mut last_day: Option<u32> = None;
                 for msg in &il.messages {
+                    if msg.timestamp_ms > 0 {
+                        let d = day_index(msg.timestamp_ms);
+                        if last_day != Some(d) {
+                            render_day_separator(ui, &format_day_label(msg.timestamp_ms));
+                            last_day = Some(d);
+                        }
+                    }
                     render_single_message(ui, msg);
                 }
             }
@@ -837,6 +845,14 @@ fn do_load_history(app: &mut ZodeApp) {
             prepend_earliest: Some(new_earliest),
         });
     });
+}
+
+fn render_day_separator(ui: &mut egui::Ui, label: &str) {
+    ui.add_space(4.0);
+    ui.vertical_centered(|ui| {
+        ui.label(egui::RichText::new(format!("── {label} ──")).weak().small());
+    });
+    ui.add_space(2.0);
 }
 
 fn render_single_message(ui: &mut egui::Ui, msg: &DisplayMessage) {
