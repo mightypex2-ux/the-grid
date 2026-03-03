@@ -34,8 +34,8 @@ const MICRO_JITTER_SECS: f32 = 0.06;
 const ENTRY_LEAD_SECS: f32 = 0.5;
 const COLOR_BLEND_MS: f32 = 150.0;
 
-const PROPOSED_THRESHOLD_MS: u128 = 500;
-const VOTING_THRESHOLD_MS: u128 = 1000;
+const PROPOSED_THRESHOLD_MS: u128 = 2000;
+const VOTING_THRESHOLD_MS: u128 = 4000;
 
 const PULSE_FILL_SECS: f32 = 0.35;
 const PULSE_DRAIN_SECS: f32 = 0.35;
@@ -58,6 +58,7 @@ struct FlowBlock {
     height: u64,
     tx_count: usize,
     birth_scroll_pos: f32,
+    birth_time: Instant,
     #[allow(dead_code)]
     block_hash_hex: String,
 }
@@ -140,6 +141,7 @@ impl BlockflowVisualization {
                         height: block.height,
                         tx_count: block.tx_count,
                         birth_scroll_pos: bsp,
+                        birth_time: Instant::now(),
                         block_hash_hex: block.block_hash_hex.clone(),
                     });
                     prev_bsp = Some(bsp);
@@ -178,6 +180,7 @@ impl BlockflowVisualization {
                     height: block.height,
                     tx_count: block.tx_count,
                     birth_scroll_pos: actual_bsp,
+                    birth_time: Instant::now(),
                     block_hash_hex: block.block_hash_hex.clone(),
                 });
             }
@@ -340,9 +343,7 @@ impl BlockflowVisualization {
                     );
                 }
 
-                let visual_age_secs =
-                    (x_offset + entry_lead) / self.smoothed_speed.max(1.0);
-                let age_ms = (visual_age_secs.max(0.0) * 1000.0) as u128;
+                let age_ms = block.birth_time.elapsed().as_millis();
                 let blended_color = status_color_blended(age_ms);
 
                 let bg_alpha = (BLOCK_BG_ALPHA * 255.0 * alpha_mul) as u8;
