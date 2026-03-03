@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use grid_programs_zephyr::{Nullifier, SpendTransaction, ZoneId};
 
@@ -11,7 +11,7 @@ use grid_programs_zephyr::{Nullifier, SpendTransaction, ZoneId};
 pub struct Mempool {
     zone_id: ZoneId,
     queue: VecDeque<SpendTransaction>,
-    seen_nullifiers: HashMap<Nullifier, usize>,
+    seen_nullifiers: HashSet<Nullifier>,
     max_size: usize,
 }
 
@@ -20,7 +20,7 @@ impl Mempool {
         Self {
             zone_id,
             queue: VecDeque::new(),
-            seen_nullifiers: HashMap::new(),
+            seen_nullifiers: HashSet::new(),
             max_size,
         }
     }
@@ -31,11 +31,10 @@ impl Mempool {
         if self.queue.len() >= self.max_size {
             return false;
         }
-        if self.seen_nullifiers.contains_key(&spend.nullifier) {
+        if self.seen_nullifiers.contains(&spend.nullifier) {
             return false;
         }
-        self.seen_nullifiers
-            .insert(spend.nullifier.clone(), self.queue.len());
+        self.seen_nullifiers.insert(spend.nullifier.clone());
         self.queue.push_back(spend);
         true
     }
@@ -63,7 +62,7 @@ impl Mempool {
 
     /// Check if a nullifier is already in the mempool.
     pub fn contains_nullifier(&self, nullifier: &Nullifier) -> bool {
-        self.seen_nullifiers.contains_key(nullifier)
+        self.seen_nullifiers.contains(nullifier)
     }
 
     pub fn len(&self) -> usize {
@@ -80,18 +79,11 @@ impl Mempool {
 
     /// Remove all spends whose nullifiers are in the given set (after finalization).
     pub fn remove_nullifiers(&mut self, nullifiers: &[Nullifier]) {
+        let to_remove: HashSet<&Nullifier> = nullifiers.iter().collect();
         for n in nullifiers {
             self.seen_nullifiers.remove(n);
         }
-        self.queue.retain(|s| !nullifiers.contains(&s.nullifier));
-        self.reindex();
-    }
-
-    fn reindex(&mut self) {
-        self.seen_nullifiers.clear();
-        for (i, spend) in self.queue.iter().enumerate() {
-            self.seen_nullifiers.insert(spend.nullifier.clone(), i);
-        }
+        self.queue.retain(|s| !to_remove.contains(&s.nullifier));
     }
 }
 

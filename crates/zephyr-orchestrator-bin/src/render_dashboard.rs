@@ -190,15 +190,22 @@ fn render_zone_card(ui: &mut egui::Ui, zone_id: u32, state: &AppState, card_w: f
         }
     }
 
-    let mempool: usize = state
+    let node_count = state
+        .nodes
+        .iter()
+        .filter(|ns| ns.mempool_sizes.contains_key(&zone_id))
+        .count()
+        .max(1);
+    let mempool_total: usize = state
         .nodes
         .iter()
         .filter_map(|ns| ns.mempool_sizes.get(&zone_id))
         .sum();
+    let mempool_avg = mempool_total / node_count;
     painter.text(
         egui::pos2(inner.left(), inner.bottom() - 14.0),
         egui::Align2::LEFT_TOP,
-        format!("mempool: {mempool}"),
+        format!("mempool: {mempool_avg}"),
         egui::FontId::proportional(font_size::SMALL),
         colors::TEXT_SECONDARY,
     );
@@ -390,7 +397,7 @@ fn render_block_entry(ui: &mut egui::Ui, block: &crate::state::RecentBlock) {
                 );
             });
 
-            if block.tx_nullifiers.is_empty() {
+            if block.tx_count == 0 {
                 ui.label(
                     egui::RichText::new("  (empty block)")
                         .size(font_size::TINY)
@@ -411,6 +418,15 @@ fn render_block_entry(ui: &mut egui::Ui, block: &crate::state::RecentBlock) {
                                 .color(colors::TEXT_SECONDARY),
                         );
                     });
+                }
+                let hidden = block.tx_count.saturating_sub(block.tx_nullifiers.len());
+                if hidden > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("  +{hidden} more"))
+                            .size(font_size::TINY)
+                            .color(colors::TEXT_MUTED)
+                            .italics(),
+                    );
                 }
             }
         });

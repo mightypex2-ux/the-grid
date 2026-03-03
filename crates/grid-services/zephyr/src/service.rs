@@ -25,7 +25,7 @@ use crate::config::ZephyrConfig;
 use crate::consensus::{ConsensusAction, ZoneConsensus};
 use crate::epoch::EpochManager;
 use crate::gossip::ZephyrGossipHandler;
-use crate::mempool::Mempool;
+use crate::shared_mempool::SharedMempool;
 use crate::storage::zone_head::ZoneHead;
 
 /// Summary of a finalized block for the metrics / dashboard feed.
@@ -75,6 +75,7 @@ pub struct ZephyrService {
     zone_program_ids: Vec<ProgramId>,
     runtime: Arc<std::sync::RwLock<ZephyrRuntime>>,
     gossip_handler: Arc<ZephyrGossipHandler>,
+    consensus_rx: std::sync::Mutex<Option<mpsc::Receiver<(String, ZephyrZoneMessage)>>>,
     zone_rx: std::sync::Mutex<Option<mpsc::Receiver<(String, ZephyrZoneMessage)>>>,
     global_rx: std::sync::Mutex<Option<mpsc::Receiver<ZephyrGlobalMessage>>>,
 }
@@ -126,9 +127,15 @@ impl ZephyrService {
         }
 
         let global_topic = grid_core::program_topic(&global_pid);
-        let (zone_tx, zone_rx) = mpsc::channel(4096);
+        let (consensus_tx, consensus_rx) = mpsc::channel(4096);
+        let (zone_tx, zone_rx) = mpsc::channel(16_384);
         let (global_tx, global_rx) = mpsc::channel(1024);
-        let gossip_handler = Arc::new(ZephyrGossipHandler::new(global_topic, zone_tx, global_tx));
+        let gossip_handler = Arc::new(ZephyrGossipHandler::new(
+            global_topic,
+            consensus_tx,
+            zone_tx,
+            global_tx,
+        ));
 
         Ok(Self {
             descriptor: ServiceDescriptor {
@@ -154,6 +161,7 @@ impl ZephyrService {
                 blocks_produced: 0,
             })),
             gossip_handler,
+            consensus_rx: std::sync::Mutex::new(Some(consensus_rx)),
             zone_rx: std::sync::Mutex::new(Some(zone_rx)),
             global_rx: std::sync::Mutex::new(Some(global_rx)),
         })
@@ -286,6 +294,13 @@ impl Service for ZephyrService {
         }
 
         // Take channel receivers (one-time)
+        let consensus_rx = self
+            .consensus_rx
+            .lock()
+            .map_err(|e| ServiceError::Other(format!("lock poisoned: {e}")))?
+            .take()
+            .ok_or_else(|| ServiceError::Other("consensus_rx already taken".into()))?;
+
         let zone_rx = self
             .zone_rx
             .lock()
@@ -306,7 +321,7 @@ impl Service for ZephyrService {
             rt.current_epoch = 0;
         }
 
-        // Clone what we need for the spawned task
+        // Clone what we need for the spawned tasks
         let runtime = Arc::clone(&self.runtime);
         let config = self.config.clone();
         let shutdown = ctx.shutdown.clone();
@@ -314,6 +329,20 @@ impl Service for ZephyrService {
             .publish_sender()
             .ok_or_else(|| ServiceError::NotInitialized("publish channel not set".into()))?;
         let global_topic_for_task = self.global_topic();
+
+        // Shared mempool between ingest and consensus tasks
+        let mempool = SharedMempool::new();
+        for zone_id in 0..self.config.total_zones {
+            mempool.add_zone(zone_id, 65_536).await;
+        }
+
+        // Spawn the ingest task (spend submissions only)
+        tokio::spawn(ingest_loop(
+            zone_rx,
+            topic_to_zone.clone(),
+            mempool.clone(),
+            shutdown.clone(),
+        ));
 
         // Spawn the consensus task
         tokio::spawn(consensus_loop(
@@ -323,12 +352,13 @@ impl Service for ZephyrService {
             topic_to_zone,
             config,
             runtime.clone(),
-            zone_rx,
+            consensus_rx,
             global_rx,
             publish_tx.clone(),
             global_topic_for_task.clone(),
             shutdown.clone(),
             epoch_mgr,
+            mempool,
         ));
 
         info!(
@@ -414,6 +444,59 @@ impl Service for ZephyrService {
     }
 }
 
+/// Spend ingestion task -- runs concurrently with the consensus loop.
+///
+/// Receives spend submissions from gossip and inserts them into the shared
+/// mempool. This decouples high-volume transaction ingestion from
+/// latency-sensitive consensus round-trips.
+async fn ingest_loop(
+    mut zone_rx: mpsc::Receiver<(String, ZephyrZoneMessage)>,
+    topic_to_zone: HashMap<String, u32>,
+    mempool: SharedMempool,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = shutdown.cancelled() => {
+                debug!("ingest loop shutting down");
+                break;
+            }
+
+            msg = zone_rx.recv() => {
+                let Some(first) = msg else { break };
+
+                let mut batch = Vec::with_capacity(1025);
+                batch.push(first);
+                while batch.len() < 1024 {
+                    match zone_rx.try_recv() {
+                        Ok(m) => batch.push(m),
+                        Err(_) => break,
+                    }
+                }
+
+                for (topic, msg) in batch {
+                    let Some(&zone_id) = topic_to_zone.get(&topic) else {
+                        continue;
+                    };
+                    match msg {
+                        ZephyrZoneMessage::SubmitSpend(tx) => {
+                            mempool.insert(zone_id, tx).await;
+                        }
+                        ZephyrZoneMessage::SubmitSpendBatch(txs) => {
+                            for tx in txs {
+                                mempool.insert(zone_id, tx).await;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The main consensus event loop, spawned as an async task.
 #[allow(clippy::too_many_arguments)]
 async fn consensus_loop(
@@ -423,14 +506,14 @@ async fn consensus_loop(
     topic_to_zone: HashMap<String, u32>,
     config: ZephyrConfig,
     runtime: Arc<std::sync::RwLock<ZephyrRuntime>>,
-    mut zone_rx: mpsc::Receiver<(String, ZephyrZoneMessage)>,
+    mut consensus_rx: mpsc::Receiver<(String, ZephyrZoneMessage)>,
     mut global_rx: mpsc::Receiver<ZephyrGlobalMessage>,
     publish_tx: mpsc::Sender<(String, Vec<u8>)>,
     global_topic: String,
     shutdown: tokio_util::sync::CancellationToken,
     mut epoch_mgr: EpochManager,
+    mempool: SharedMempool,
 ) {
-    let mut mempools: HashMap<u32, Mempool> = HashMap::new();
     let mut consensus_engines: HashMap<u32, ZoneConsensus> = HashMap::new();
     let mut zone_head_store = ZoneHead::new();
     // block_hash -> (zone_id, list of nullifier hex strings)
@@ -445,8 +528,6 @@ async fn consensus_loop(
     }
 
     for &zone_id in &assigned_zones {
-        mempools.insert(zone_id, Mempool::new(zone_id, 65_536));
-
         let committee = sample_committee(
             epoch_mgr.randomness_seed(),
             zone_id,
@@ -534,12 +615,12 @@ async fn consensus_loop(
                                 config.clone(),
                             ),
                         );
-                        mempools.entry(zone_id).or_insert_with(|| Mempool::new(zone_id, 65_536));
+                        mempool.add_zone(zone_id, 65_536).await;
                     }
 
                     for &zone_id in &transition.lost_zones {
                         consensus_engines.remove(&zone_id);
-                        mempools.remove(&zone_id);
+                        mempool.remove_zone(zone_id).await;
                     }
 
                     assigned_zones = epoch_mgr.zones_for_validator(&my_validator_id);
@@ -571,7 +652,7 @@ async fn consensus_loop(
                 try_propose_for_zones(
                     &assigned_zones,
                     &mut consensus_engines,
-                    &mut mempools,
+                    &mempool,
                     my_validator_id,
                     &config,
                     &mut block_tx_cache,
@@ -585,9 +666,10 @@ async fn consensus_loop(
                 .await;
 
                 // Update mempool sizes in runtime
+                let sizes = mempool.zone_sizes().await;
                 if let Ok(mut rt) = runtime.write() {
-                    for (&zone_id, mp) in &mempools {
-                        rt.mempool_sizes.insert(zone_id, mp.len());
+                    for (zone_id, size) in sizes {
+                        rt.mempool_sizes.insert(zone_id, size);
                     }
                 }
             }
@@ -626,7 +708,7 @@ async fn consensus_loop(
                                         &mut block_tx_cache,
                                         &runtime,
                                     );
-                                    cleanup_mempool_after_cert(&cert, &mut mempools, &mut block_nullifiers);
+                                    cleanup_mempool_after_cert(&cert, &mempool, &mut block_nullifiers).await;
                                     debug!(zone_id = cz, "applied certificate from global topic");
                                     round_advanced = true;
                                 }
@@ -637,13 +719,13 @@ async fn consensus_loop(
                                     &mut block_tx_cache,
                                     &runtime,
                                 );
-                                cleanup_mempool_after_cert(&cert, &mut mempools, &mut block_nullifiers);
+                                cleanup_mempool_after_cert(&cert, &mempool, &mut block_nullifiers).await;
                             }
                             if round_advanced {
                                 try_propose_for_zones(
                                     &assigned_zones,
                                     &mut consensus_engines,
-                                    &mut mempools,
+                                    &mempool,
                                     my_validator_id,
                                     &config,
                                     &mut block_tx_cache,
@@ -664,44 +746,28 @@ async fn consensus_loop(
                 }
             }
 
-            msg = zone_rx.recv() => {
+            // Proposals and votes on a dedicated channel -- processed
+            // before spend ingestion so consensus round-trips are never
+            // delayed by high-volume transaction traffic.
+            msg = consensus_rx.recv() => {
                 let Some(first) = msg else { break };
 
-                let mut batch = Vec::with_capacity(257);
+                let mut batch = Vec::with_capacity(129);
                 batch.push(first);
-                while batch.len() < 256 {
-                    match zone_rx.try_recv() {
+                while batch.len() < 128 {
+                    match consensus_rx.try_recv() {
                         Ok(m) => batch.push(m),
                         Err(_) => break,
                     }
                 }
 
-                batch.sort_by_key(|(_, m)| match m {
-                    ZephyrZoneMessage::Proposal(_) => 0,
-                    ZephyrZoneMessage::Vote(_) => 1,
-                    ZephyrZoneMessage::Reject(_) => 2,
-                    ZephyrZoneMessage::SubmitSpend(_) | ZephyrZoneMessage::SubmitSpendBatch(_) => 3,
-                });
-
                 for (topic, msg) in batch {
                     let Some(&zone_id) = topic_to_zone.get(&topic) else {
-                        warn!(%topic, "received message for unknown zone topic");
+                        warn!(%topic, "received consensus message for unknown zone topic");
                         continue;
                     };
 
                     match msg {
-                        ZephyrZoneMessage::SubmitSpend(tx) => {
-                            if let Some(mp) = mempools.get_mut(&zone_id) {
-                                mp.insert(tx);
-                            }
-                        }
-                        ZephyrZoneMessage::SubmitSpendBatch(txs) => {
-                            if let Some(mp) = mempools.get_mut(&zone_id) {
-                                for tx in txs {
-                                    mp.insert(tx);
-                                }
-                            }
-                        }
                         ZephyrZoneMessage::Proposal(proposal) => {
                             cache_block_txs(&mut block_tx_cache, &mut block_nullifiers, zone_id, &proposal);
                             let Some(engine) = consensus_engines.get_mut(&zone_id) else {
@@ -724,7 +790,7 @@ async fn consensus_loop(
                                             &mut block_tx_cache,
                                             &runtime,
                                         );
-                                        cleanup_mempool_after_cert(cert, &mut mempools, &mut block_nullifiers);
+                                        cleanup_mempool_after_cert(cert, &mempool, &mut block_nullifiers).await;
                                         cert_produced = true;
                                     }
                                     publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx, &block_tx_cache).await;
@@ -734,7 +800,7 @@ async fn consensus_loop(
                                 try_propose_for_zones(
                                     &assigned_zones,
                                     &mut consensus_engines,
-                                    &mut mempools,
+                                    &mempool,
                                     my_validator_id,
                                     &config,
                                     &mut block_tx_cache,
@@ -749,6 +815,7 @@ async fn consensus_loop(
                             }
                         }
                         ZephyrZoneMessage::Reject(_) => {}
+                        _ => {}
                     }
                 }
             }
@@ -782,15 +849,13 @@ fn cache_block_txs(
     nullifier_cache.insert(block.block_hash, (zone_id, full_nullifiers));
 }
 
-fn cleanup_mempool_after_cert(
+async fn cleanup_mempool_after_cert(
     cert: &FinalityCertificate,
-    mempools: &mut HashMap<u32, Mempool>,
+    mempool: &SharedMempool,
     block_nullifiers: &mut HashMap<[u8; 32], (u32, Vec<Nullifier>)>,
 ) {
     if let Some((zone_id, nullifiers)) = block_nullifiers.remove(&cert.block_hash) {
-        if let Some(mp) = mempools.get_mut(&zone_id) {
-            mp.remove_nullifiers(&nullifiers);
-        }
+        mempool.remove_nullifiers(zone_id, &nullifiers).await;
     }
 }
 
@@ -881,8 +946,8 @@ async fn publish_action(
         }
     };
 
-    if publish_tx.try_send((topic, data)).is_err() {
-        warn!("publish channel full or closed");
+    if publish_tx.send((topic, data)).await.is_err() {
+        warn!("publish channel closed");
     }
 }
 
@@ -894,7 +959,7 @@ async fn publish_action(
 async fn try_propose_for_zones(
     assigned_zones: &[u32],
     consensus_engines: &mut HashMap<u32, ZoneConsensus>,
-    mempools: &mut HashMap<u32, Mempool>,
+    mempool: &SharedMempool,
     my_validator_id: [u8; 32],
     config: &ZephyrConfig,
     block_tx_cache: &mut HashMap<[u8; 32], (u32, Vec<String>)>,
@@ -915,10 +980,7 @@ async fn try_propose_for_zones(
         let spends = if engine.has_pending_proposal() {
             vec![]
         } else {
-            mempools
-                .get(&zone_id)
-                .map(|mp| mp.peek(config.max_block_size))
-                .unwrap_or_default()
+            mempool.peek(zone_id, config.max_block_size).await
         };
         let vid = my_validator_id;
         if let Some(action) = engine.propose(spends, |data| hmac_sign(&vid, data)) {
@@ -946,7 +1008,7 @@ async fn try_propose_for_zones(
                                     block_tx_cache,
                                     runtime,
                                 );
-                                cleanup_mempool_after_cert(cert, mempools, block_nullifiers);
+                                cleanup_mempool_after_cert(cert, mempool, block_nullifiers).await;
                             }
                             publish_action(
                                 &cert_action,

@@ -9,6 +9,7 @@ pub mod mempool;
 pub mod proof;
 pub mod routing;
 pub mod service;
+pub mod shared_mempool;
 pub mod storage;
 
 pub use config::ZephyrConfig;
