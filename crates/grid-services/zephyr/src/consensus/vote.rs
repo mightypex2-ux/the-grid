@@ -1,5 +1,6 @@
 use grid_programs_zephyr::{BlockVote, CertSignature, EpochId, FinalityCertificate, ZoneId};
 use std::collections::HashMap;
+use tracing::debug;
 
 /// Check if a quorum has been reached for a block hash.
 pub fn quorum_reached(vote_count: usize, quorum_threshold: usize) -> bool {
@@ -35,17 +36,45 @@ impl CertificateBuilder {
         parent_hash: [u8; 32],
     ) -> Option<FinalityCertificate> {
         if vote.zone_id != self.zone_id || vote.epoch != self.epoch {
+            debug!(
+                zone_id = self.zone_id,
+                vote_zone = vote.zone_id,
+                vote_epoch = vote.epoch,
+                local_epoch = self.epoch,
+                voter = %hex::encode(&vote.voter_id[..8]),
+                "cert_builder: dropping vote with zone/epoch mismatch"
+            );
             return None;
         }
 
+        let block_hash = vote.block_hash;
+        let voter_id = vote.voter_id;
         let entry = self.votes.entry(vote.block_hash).or_default();
         if entry.iter().any(|v| v.voter_id == vote.voter_id) {
+            debug!(
+                zone_id = self.zone_id,
+                voter = %hex::encode(&voter_id[..8]),
+                block_hash = %hex::encode(&block_hash[..8]),
+                "cert_builder: ignoring duplicate vote"
+            );
             return None;
         }
 
         entry.push(vote.clone());
+        let count = entry.len();
 
-        if entry.len() == self.quorum_threshold {
+        debug!(
+            zone_id = self.zone_id,
+            voter = %hex::encode(&voter_id[..8]),
+            block_hash = %hex::encode(&block_hash[..8]),
+            votes = count,
+            quorum = self.quorum_threshold,
+            "cert_builder: vote accepted ({}/{})",
+            count,
+            self.quorum_threshold,
+        );
+
+        if count == self.quorum_threshold {
             let signatures = entry
                 .iter()
                 .map(|v| CertSignature {
@@ -72,6 +101,11 @@ impl CertificateBuilder {
 
     pub fn has_quorum(&self, block_hash: &[u8; 32]) -> bool {
         quorum_reached(self.vote_count(block_hash), self.quorum_threshold)
+    }
+
+    /// Number of distinct block hashes with at least one vote.
+    pub fn pending_count(&self) -> usize {
+        self.votes.len()
     }
 
     /// Discard all accumulated votes (called when the round advances).

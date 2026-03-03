@@ -1,6 +1,7 @@
 use grid_programs_zephyr::{
     Block, BlockVote, EpochId, FinalityCertificate, SpendTransaction, ValidatorInfo, ZoneId,
 };
+use tracing::{debug, warn};
 
 use super::block::{build_block, BlockParams};
 use super::leader::leader_for_round;
@@ -139,6 +140,14 @@ impl ZoneConsensus {
 
         if let Some(ref block) = self.pending_proposal {
             if self.rebroadcast_count >= MAX_PROPOSAL_REBROADCASTS {
+                debug!(
+                    zone_id = self.zone_id,
+                    round = self.round,
+                    block_hash = %hex::encode(&block.block_hash[..8]),
+                    votes = self.cert_builder.vote_count(&block.block_hash),
+                    quorum = self.config.quorum_threshold,
+                    "proposal rebroadcast limit reached, waiting for quorum or timeout"
+                );
                 return None;
             }
             self.rebroadcast_count += 1;
@@ -187,9 +196,25 @@ impl ZoneConsensus {
         sign_fn: impl FnOnce(&[u8]) -> Vec<u8>,
     ) -> Option<ConsensusAction> {
         if proposal.header.zone_id != self.zone_id || proposal.header.epoch != self.epoch {
+            warn!(
+                zone_id = self.zone_id,
+                round = self.round,
+                proposal_zone = proposal.header.zone_id,
+                proposal_epoch = proposal.header.epoch,
+                local_epoch = self.epoch,
+                "rejecting proposal: zone/epoch mismatch"
+            );
             return None;
         }
         if proposal.header.parent_hash != self.parent_hash {
+            warn!(
+                zone_id = self.zone_id,
+                round = self.round,
+                proposal_parent = %hex::encode(&proposal.header.parent_hash[..8]),
+                local_parent = %hex::encode(&self.parent_hash[..8]),
+                height = self.height,
+                "rejecting proposal: parent_hash mismatch (chain divergence)"
+            );
             return None;
         }
         if !self
@@ -197,6 +222,12 @@ impl ZoneConsensus {
             .iter()
             .any(|v| v.validator_id == proposal.header.proposer_id)
         {
+            warn!(
+                zone_id = self.zone_id,
+                round = self.round,
+                proposer = %hex::encode(&proposal.header.proposer_id[..8]),
+                "rejecting proposal: proposer not in committee"
+            );
             return None;
         }
 
@@ -219,6 +250,13 @@ impl ZoneConsensus {
             .iter()
             .any(|v| v.validator_id == vote.voter_id)
         {
+            warn!(
+                zone_id = self.zone_id,
+                round = self.round,
+                voter = %hex::encode(&vote.voter_id[..8]),
+                block_hash = %hex::encode(&vote.block_hash[..8]),
+                "dropping vote: voter not in committee"
+            );
             return None;
         }
 
@@ -227,9 +265,13 @@ impl ZoneConsensus {
         }
 
         if let Some(cert) = self.cert_builder.add_vote(vote, self.parent_hash) {
-            // Guard against double-advancement: if apply_certificate already
-            // moved us forward for this block, parent_hash == cert.block_hash.
             if cert.block_hash == self.parent_hash {
+                debug!(
+                    zone_id = self.zone_id,
+                    round = self.round,
+                    block_hash = %hex::encode(&cert.block_hash[..8]),
+                    "ignoring quorum cert: block already applied (double-advancement guard)"
+                );
                 return None;
             }
             self.advance_round(cert.block_hash);
@@ -242,10 +284,27 @@ impl ZoneConsensus {
     /// Apply a received certificate (e.g. from the global topic).
     pub fn apply_certificate(&mut self, cert: &FinalityCertificate) -> bool {
         if cert.zone_id != self.zone_id || cert.epoch != self.epoch {
+            debug!(
+                zone_id = self.zone_id,
+                round = self.round,
+                cert_zone = cert.zone_id,
+                cert_epoch = cert.epoch,
+                local_epoch = self.epoch,
+                "skipping certificate: zone/epoch mismatch"
+            );
             return false;
         }
 
         if cert.parent_hash != self.parent_hash {
+            debug!(
+                zone_id = self.zone_id,
+                round = self.round,
+                cert_parent = %hex::encode(&cert.parent_hash[..8]),
+                local_parent = %hex::encode(&self.parent_hash[..8]),
+                cert_block = %hex::encode(&cert.block_hash[..8]),
+                height = self.height,
+                "deferring certificate: parent_hash mismatch"
+            );
             return false;
         }
 
@@ -276,6 +335,33 @@ impl ZoneConsensus {
 
     pub fn consecutive_timeouts(&self) -> u32 {
         self.consecutive_timeouts
+    }
+
+    pub fn ticks_in_round(&self) -> u32 {
+        self.ticks_in_round
+    }
+
+    pub fn leader_id(&self) -> [u8; 32] {
+        leader_for_round(&self.committee, self.epoch, self.round).validator_id
+    }
+
+    pub fn pending_proposal_hash(&self) -> Option<[u8; 32]> {
+        self.pending_proposal.as_ref().map(|b| b.block_hash)
+    }
+
+    pub fn vote_count_for_pending(&self) -> usize {
+        match self.pending_proposal.as_ref() {
+            Some(b) => self.cert_builder.vote_count(&b.block_hash),
+            None => 0,
+        }
+    }
+
+    pub fn parent_hash_hex(&self) -> String {
+        hex::encode(&self.parent_hash[..8])
+    }
+
+    pub fn committee_size(&self) -> usize {
+        self.committee.len()
     }
 
     fn advance_round(&mut self, new_parent_hash: [u8; 32]) {

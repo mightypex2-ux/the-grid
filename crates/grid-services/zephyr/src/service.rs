@@ -567,8 +567,20 @@ async fn consensus_dispatcher(
                     continue;
                 };
                 if let Some(tx) = zone_consensus_txs.get(&zone_id) {
-                    if let Err(e) = tx.try_send(zmsg) {
-                        warn!(zone_id, "zone consensus channel full, dropping: {e}");
+                    let msg_type = match &zmsg {
+                        ZephyrZoneMessage::Proposal(_) => "Proposal",
+                        ZephyrZoneMessage::Vote(_) => "Vote",
+                        ZephyrZoneMessage::Reject(_) => "Reject",
+                        ZephyrZoneMessage::SubmitSpend(_) => "SubmitSpend",
+                        ZephyrZoneMessage::SubmitSpendBatch(_) => "SubmitSpendBatch",
+                    };
+                    if let Err(_) = tx.try_send(zmsg) {
+                        warn!(
+                            zone_id,
+                            msg_type,
+                            capacity = tx.capacity(),
+                            "zone consensus channel full, dropping message"
+                        );
                     }
                 }
             }
@@ -580,7 +592,11 @@ async fn consensus_dispatcher(
                         let zone_id = cert.zone_id;
                         if let Some(tx) = zone_global_txs.get(&zone_id) {
                             if let Err(e) = tx.try_send(gmsg) {
-                                warn!(zone_id, "zone global channel full, dropping: {e}");
+                                warn!(
+                                    zone_id,
+                                    capacity = tx.capacity(),
+                                    "zone global channel full, dropping certificate: {e}"
+                                );
                             }
                         }
                     }
@@ -878,7 +894,24 @@ async fn zone_consensus_task(
                                         }
                                     }
                                 } else if pending_certs.len() < 32 {
+                                    debug!(
+                                        zone_id,
+                                        cert_block = %hex::encode(&cert.block_hash[..8]),
+                                        cert_parent = %hex::encode(&cert.parent_hash[..8]),
+                                        local_parent = %eng.parent_hash_hex(),
+                                        buffered = pending_certs.len() + 1,
+                                        "buffering out-of-order certificate"
+                                    );
                                     pending_certs.push(cert.clone());
+                                } else {
+                                    warn!(
+                                        zone_id,
+                                        cert_block = %hex::encode(&cert.block_hash[..8]),
+                                        cert_parent = %hex::encode(&cert.parent_hash[..8]),
+                                        local_parent = %eng.parent_hash_hex(),
+                                        buffered = pending_certs.len(),
+                                        "pending cert buffer full, dropping certificate"
+                                    );
                                 }
                             } else {
                                 {
@@ -1001,10 +1034,22 @@ async fn zone_consensus_task(
                 if let Some(ref mut eng) = engine {
                     eng.tick();
                     if eng.is_round_timed_out(config.round_timeout_ticks) {
+                        let effective_timeout = config.round_timeout_ticks
+                            * (1 + eng.consecutive_timeouts().min(3));
                         warn!(
                             zone_id,
                             round = eng.round(),
                             height = eng.height(),
+                            consecutive_timeouts = eng.consecutive_timeouts(),
+                            effective_timeout_ticks = effective_timeout,
+                            is_leader = eng.is_leader(),
+                            leader = %hex::encode(&eng.leader_id()[..8]),
+                            parent_hash = %eng.parent_hash_hex(),
+                            has_pending_proposal = eng.has_pending_proposal(),
+                            votes_for_pending = eng.vote_count_for_pending(),
+                            committee_size = eng.committee_size(),
+                            quorum = config.quorum_threshold,
+                            pending_certs = pending_certs.len(),
                             "round timed out without quorum, rotating leader"
                         );
                         let abandoned_txs = eng.timeout_round();
@@ -1015,6 +1060,26 @@ async fn zone_consensus_task(
                             let mut rt = runtime.write();
                             rt.zone_consecutive_timeouts.insert(zone_id, eng.consecutive_timeouts());
                         }
+                    }
+
+                    // Periodic health summary during stalls (every ~10s at default 100ms tick)
+                    if eng.consecutive_timeouts() > 0 && eng.ticks_in_round() % 100 == 0 {
+                        info!(
+                            zone_id,
+                            round = eng.round(),
+                            height = eng.height(),
+                            epoch = eng.epoch(),
+                            consecutive_timeouts = eng.consecutive_timeouts(),
+                            ticks_in_round = eng.ticks_in_round(),
+                            is_leader = eng.is_leader(),
+                            leader = %hex::encode(&eng.leader_id()[..8]),
+                            has_pending_proposal = eng.has_pending_proposal(),
+                            votes_for_pending = eng.vote_count_for_pending(),
+                            parent_hash = %eng.parent_hash_hex(),
+                            pending_certs = pending_certs.len(),
+                            mempool_len = mempool.len(zone_id),
+                            "zone stall health check"
+                        );
                     }
 
                     try_propose_for_zone(
