@@ -59,6 +59,7 @@ struct FlowBlock {
     birth_time: Instant,
     #[allow(dead_code)]
     block_hash_hex: String,
+    color_idx: u8,
 }
 
 struct Camera {
@@ -134,6 +135,7 @@ impl BlockflowVisualization {
                         None => self.scroll_pos - phase_offset,
                         Some(prev) => prev - prev_width - BLOCK_GAP - gap_jitter,
                     };
+                    let cidx = (pseudo_rand(block.zone_id as u64, block.height) * 3.0) as u8;
                     self.blocks.push(FlowBlock {
                         zone_id: block.zone_id,
                         height: block.height,
@@ -141,6 +143,7 @@ impl BlockflowVisualization {
                         birth_scroll_pos: bsp,
                         birth_time: Instant::now(),
                         block_hash_hex: block.block_hash_hex.clone(),
+                        color_idx: cidx,
                     });
                     prev_bsp = Some(bsp);
                     prev_width = bar_w;
@@ -173,6 +176,7 @@ impl BlockflowVisualization {
                 let actual_bsp = desired_bsp.max(min_bsp);
                 zone_head.insert(block.zone_id, actual_bsp);
 
+                let cidx = (pseudo_rand(block.zone_id as u64, block.height) * 3.0) as u8;
                 self.blocks.push(FlowBlock {
                     zone_id: block.zone_id,
                     height: block.height,
@@ -180,6 +184,7 @@ impl BlockflowVisualization {
                     birth_scroll_pos: actual_bsp,
                     birth_time: Instant::now(),
                     block_hash_hex: block.block_hash_hex.clone(),
+                    color_idx: cidx,
                 });
             }
         }
@@ -340,7 +345,8 @@ impl BlockflowVisualization {
                 }
 
                 let age_ms = block.birth_time.elapsed().as_millis();
-                let blended_color = status_color_blended(age_ms);
+                let fill_color = interior_color(block.color_idx);
+                let border_col = border_color_blended(age_ms);
 
                 let bg_alpha = (BLOCK_BG_ALPHA * 255.0 * alpha_mul) as u8;
                 let solid_w = scaled_w * (1.0 - FADE_ZONE_FRAC);
@@ -353,7 +359,7 @@ impl BlockflowVisualization {
                 painter.rect_filled(
                     solid_rect,
                     0.0,
-                    with_alpha(blended_color, bg_alpha),
+                    with_alpha(fill_color, bg_alpha),
                 );
 
                 let fade_rect = egui::Rect::from_min_size(
@@ -363,12 +369,12 @@ impl BlockflowVisualization {
                 draw_gradient_rect(
                     &painter,
                     fade_rect,
-                    with_alpha(blended_color, bg_alpha),
-                    with_alpha(blended_color, 0),
+                    with_alpha(fill_color, bg_alpha),
+                    with_alpha(fill_color, 0),
                 );
 
                 if age_ms >= VOTING_THRESHOLD_MS {
-                    let glow_color = colors::BLOCK_CERTIFIED;
+                    let glow_color = fill_color;
                     let certified_age = age_ms.saturating_sub(VOTING_THRESHOLD_MS);
                     let glow_t =
                         (certified_age as f32 / 1000.0 / GLOW_FADE_IN_SECS).min(1.0);
@@ -402,7 +408,7 @@ impl BlockflowVisualization {
                     let certified_secs = certified_age as f32 / 1000.0;
                     let total_pulse = PULSE_FILL_SECS + PULSE_DRAIN_SECS;
                     if certified_secs < total_pulse {
-                        let pulse_color = lerp_color(glow_color, egui::Color32::WHITE, 0.5);
+                        let pulse_color = lerp_color(fill_color, egui::Color32::WHITE, 0.45);
                         let edge_w = (scaled_w * PULSE_EDGE_FRAC).max(4.0);
                         let bright =
                             with_alpha(pulse_color, (PULSE_BRIGHT_ALPHA * 255.0 * alpha_mul) as u8);
@@ -459,7 +465,7 @@ impl BlockflowVisualization {
                     2.0,
                     egui::Stroke::new(
                         BORDER_STROKE,
-                        with_alpha(blended_color, (BORDER_ALPHA * 255.0 * alpha_mul) as u8),
+                        with_alpha(border_col, (BORDER_ALPHA * 255.0 * alpha_mul) as u8),
                     ),
                     egui::StrokeKind::Inside,
                 );
@@ -534,23 +540,31 @@ impl BlockflowVisualization {
     }
 }
 
-fn status_color_blended(age_ms: u128) -> egui::Color32 {
+fn border_color_blended(age_ms: u128) -> egui::Color32 {
     let age = age_ms as f32;
     let proposed = PROPOSED_THRESHOLD_MS as f32;
     let voting = VOTING_THRESHOLD_MS as f32;
 
     if age < proposed {
-        colors::BLOCK_PROPOSED
+        colors::BORDER_NEW
     } else if age < proposed + COLOR_BLEND_MS {
         let t = (age - proposed) / COLOR_BLEND_MS;
-        lerp_color(colors::BLOCK_PROPOSED, colors::BLOCK_VOTING, t)
+        lerp_color(colors::BORDER_NEW, colors::BORDER_IN_PROGRESS, t)
     } else if age < voting {
-        colors::BLOCK_VOTING
+        colors::BORDER_IN_PROGRESS
     } else if age < voting + COLOR_BLEND_MS {
         let t = (age - voting) / COLOR_BLEND_MS;
-        lerp_color(colors::BLOCK_VOTING, colors::BLOCK_CERTIFIED, t)
+        lerp_color(colors::BORDER_IN_PROGRESS, colors::BORDER_FINALIZED, t)
     } else {
-        colors::BLOCK_CERTIFIED
+        colors::BORDER_FINALIZED
+    }
+}
+
+fn interior_color(idx: u8) -> egui::Color32 {
+    match idx % 3 {
+        0 => colors::BLOCK_BLUE,
+        1 => colors::BLOCK_ORANGE,
+        _ => colors::BLOCK_GREEN,
     }
 }
 

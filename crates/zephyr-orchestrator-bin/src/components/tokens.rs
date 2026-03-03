@@ -49,6 +49,14 @@ pub mod colors {
     pub const BLOCK_PROPOSED: Color32 = Color32::from_rgb(90, 158, 172);
     pub const BLOCK_VOTING: Color32 = Color32::from_rgb(188, 150, 70);
     pub const BLOCK_CERTIFIED: Color32 = Color32::from_rgb(68, 163, 112);
+
+    pub const BORDER_NEW: Color32 = Color32::from_rgb(60, 60, 65);
+    pub const BORDER_IN_PROGRESS: Color32 = Color32::from_rgb(200, 200, 205);
+    pub const BORDER_FINALIZED: Color32 = Color32::from_rgb(80, 200, 120);
+
+    pub const BLOCK_BLUE: Color32 = Color32::from_rgb(70, 130, 160);
+    pub const BLOCK_ORANGE: Color32 = Color32::from_rgb(190, 140, 60);
+    pub const BLOCK_GREEN: Color32 = Color32::from_rgb(75, 160, 100);
 }
 
 #[allow(dead_code)]
