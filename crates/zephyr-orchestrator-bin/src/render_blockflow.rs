@@ -25,7 +25,8 @@ const LABEL_WIDTH: f32 = 36.0;
 const LABEL_FADE_WIDTH: f32 = 28.0;
 const BLOCK_GAP: f32 = 6.0;
 const MIN_SCROLL_SPEED: f32 = 600.0;
-const MAX_SCROLL_SPEED: f32 = 3500.0;
+const MAX_SCROLL_SPEED: f32 = 1400.0;
+const TPS_SPEED_CAP: f32 = 1000.0;
 const TARGET_LEAD_SECS: f32 = 1.5;
 const SPEED_UP_RATE: f32 = 4.0;
 const SLOW_DOWN_RATE: f32 = 2.0;
@@ -238,9 +239,11 @@ impl BlockflowVisualization {
         let max_lead = self.blocks.iter()
             .map(|b| (b.birth_scroll_pos - self.scroll_pos).max(0.0))
             .fold(0.0f32, f32::max);
+        let tps_frac = (state.network.actual_tps as f32 / TPS_SPEED_CAP).clamp(0.0, 1.0);
+        let tps_ceiling = MIN_SCROLL_SPEED + (MAX_SCROLL_SPEED - MIN_SCROLL_SPEED) * tps_frac;
         let target_speed = (max_lead / TARGET_LEAD_SECS)
             .max(MIN_SCROLL_SPEED)
-            .min(MAX_SCROLL_SPEED);
+            .min(tps_ceiling);
         let rate = if target_speed > self.smoothed_speed {
             SPEED_UP_RATE
         } else {
