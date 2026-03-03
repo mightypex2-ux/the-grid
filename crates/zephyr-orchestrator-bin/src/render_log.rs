@@ -50,12 +50,20 @@ pub(crate) fn render_log(ui: &mut egui::Ui, state: &AppState, level_filter: &mut
         )
         .show_inside(ui, |ui| {
             section(ui, "Aggregated Log", |ui| {
+                let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+
+                let active_filter: Option<LogLevel> = *level_filter;
+                let total_rows = match active_filter {
+                    Some(f) => state.log_entries.iter().filter(|e| e.level == f).count(),
+                    None => state.log_entries.len(),
+                };
+
                 egui::ScrollArea::vertical()
                     .id_salt("log_scroll")
                     .auto_shrink([false; 2])
                     .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        if state.log_entries.is_empty() {
+                    .show_rows(ui, row_height, total_rows, |ui, visible| {
+                        if total_rows == 0 {
                             ui.label(
                                 egui::RichText::new("Waiting for log events...")
                                     .color(colors::TEXT_MUTED),
@@ -63,40 +71,58 @@ pub(crate) fn render_log(ui: &mut egui::Ui, state: &AppState, level_filter: &mut
                             return;
                         }
 
-                        for entry in &state.log_entries {
-                            if let Some(filter) = level_filter {
-                                if entry.level != *filter {
-                                    continue;
+                        match active_filter {
+                            None => {
+                                for i in visible {
+                                    if let Some(entry) = state.log_entries.get(i) {
+                                        render_log_row(ui, entry);
+                                    }
                                 }
                             }
-
-                            let color = node_color(entry.node_id);
-                            let level_col = log_level_color(entry.level);
-
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("[Node {}]", entry.node_id))
-                                        .monospace()
-                                        .size(font_size::BODY)
-                                        .color(color),
-                                );
-                                ui.label(
-                                    egui::RichText::new(entry.level.label())
-                                        .monospace()
-                                        .size(font_size::BODY)
-                                        .color(level_col),
-                                );
-                                ui.label(
-                                    egui::RichText::new(&entry.line)
-                                        .monospace()
-                                        .size(font_size::BODY)
-                                        .color(colors::LOG_NORMAL),
-                                );
-                            });
+                            Some(f) => {
+                                let mut logical = 0usize;
+                                for entry in &state.log_entries {
+                                    if entry.level != f {
+                                        continue;
+                                    }
+                                    if logical >= visible.end {
+                                        break;
+                                    }
+                                    if logical >= visible.start {
+                                        render_log_row(ui, entry);
+                                    }
+                                    logical += 1;
+                                }
+                            }
                         }
                     });
             });
         });
+}
+
+fn render_log_row(ui: &mut egui::Ui, entry: &crate::state::AggregatedLogEntry) {
+    let color = node_color(entry.node_id);
+    let level_col = log_level_color(entry.level);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("[Node {}]", entry.node_id))
+                .monospace()
+                .size(font_size::BODY)
+                .color(color),
+        );
+        ui.label(
+            egui::RichText::new(entry.level.label())
+                .monospace()
+                .size(font_size::BODY)
+                .color(level_col),
+        );
+        ui.label(
+            egui::RichText::new(&entry.line)
+                .monospace()
+                .size(font_size::BODY)
+                .color(colors::LOG_NORMAL),
+        );
+    });
 }
 
 fn log_level_color(level: LogLevel) -> egui::Color32 {

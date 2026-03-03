@@ -321,7 +321,7 @@ pub(crate) fn spawn_status_pollers(
                                             .to_owned();
                                         let height =
                                             b.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
-                                        let tx_nullifiers = b
+                                        let all_nullifiers: Vec<String> = b
                                             .get("tx_nullifiers")
                                             .and_then(|v| v.as_array())
                                             .map(|arr| {
@@ -332,16 +332,24 @@ pub(crate) fn spawn_status_pollers(
                                                     .collect()
                                             })
                                             .unwrap_or_default();
+                                        let tx_count = all_nullifiers.len();
+                                        let cap = crate::state::MAX_DISPLAY_NULLIFIERS;
+                                        let tx_nullifiers = if all_nullifiers.len() > cap {
+                                            all_nullifiers.into_iter().take(cap).collect()
+                                        } else {
+                                            all_nullifiers
+                                        };
                                         state.recent_blocks.push_back(crate::state::RecentBlock {
                                             zone_id,
                                             block_hash_hex,
                                             height,
                                             timestamp: std::time::Instant::now(),
                                             tx_nullifiers,
+                                            tx_count,
                                         });
                                     }
                                     state.blocks_seen = total_produced;
-                                    while state.recent_blocks.len() > 200 {
+                                    while state.recent_blocks.len() > 50 {
                                         state.recent_blocks.pop_front();
                                     }
                                 }
@@ -362,7 +370,13 @@ pub(crate) fn spawn_status_pollers(
         .collect()
 }
 
+const LOG_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+const LOG_BATCH_CAP: usize = 64;
+
 /// Spawn a log listener for each node that pushes events into shared state.
+///
+/// Events are buffered locally and flushed in batches (every 100 ms or 64
+/// events) to reduce mutex contention at high TPS.
 pub(crate) fn spawn_log_listeners(
     nodes: &[ManagedNode],
     shared: Arc<Mutex<AppState>>,
@@ -375,23 +389,52 @@ pub(crate) fn spawn_log_listeners(
             let node_id = mn.node_id;
             let shared = Arc::clone(&shared);
             rt.spawn(async move {
-                while let Ok(event) = rx.recv().await {
-                    let (line, level) = classify_event(&event);
-                    let entry = AggregatedLogEntry {
-                        node_id,
-                        line,
-                        level,
-                        timestamp: std::time::Instant::now(),
-                    };
-                    let mut state = shared.lock().await;
-                    if state.log_entries.len() > 10_000 {
-                        state.log_entries.drain(0..5_000);
+                let mut buf: Vec<AggregatedLogEntry> = Vec::with_capacity(LOG_BATCH_CAP);
+                let mut flush_deadline = tokio::time::Instant::now() + LOG_FLUSH_INTERVAL;
+
+                loop {
+                    tokio::select! {
+                        result = rx.recv() => {
+                            match result {
+                                Ok(event) => {
+                                    let (line, level) = classify_event(&event);
+                                    buf.push(AggregatedLogEntry {
+                                        node_id,
+                                        line,
+                                        level,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                    if buf.len() >= LOG_BATCH_CAP {
+                                        flush_logs(&shared, &mut buf).await;
+                                        flush_deadline = tokio::time::Instant::now() + LOG_FLUSH_INTERVAL;
+                                    }
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(_) => break,
+                            }
+                        }
+                        _ = tokio::time::sleep_until(flush_deadline) => {
+                            if !buf.is_empty() {
+                                flush_logs(&shared, &mut buf).await;
+                            }
+                            flush_deadline = tokio::time::Instant::now() + LOG_FLUSH_INTERVAL;
+                        }
                     }
-                    state.log_entries.push(entry);
+                }
+                if !buf.is_empty() {
+                    flush_logs(&shared, &mut buf).await;
                 }
             })
         })
         .collect()
+}
+
+async fn flush_logs(shared: &Arc<Mutex<AppState>>, buf: &mut Vec<AggregatedLogEntry>) {
+    let mut state = shared.lock().await;
+    if state.log_entries.len() > 10_000 {
+        state.log_entries.drain(0..5_000);
+    }
+    state.log_entries.append(buf);
 }
 
 fn classify_event(event: &LogEvent) -> (String, LogLevel) {

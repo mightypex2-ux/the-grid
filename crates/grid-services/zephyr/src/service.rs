@@ -128,7 +128,7 @@ impl ZephyrService {
 
         let global_topic = grid_core::program_topic(&global_pid);
         let (consensus_tx, consensus_rx) = mpsc::channel(4096);
-        let (zone_tx, zone_rx) = mpsc::channel(16_384);
+        let (zone_tx, zone_rx) = mpsc::channel(65_536);
         let (global_tx, global_rx) = mpsc::channel(1024);
         let gossip_handler = Arc::new(ZephyrGossipHandler::new(
             global_topic,
@@ -476,21 +476,24 @@ async fn ingest_loop(
                     }
                 }
 
+                let mut zone_buckets: HashMap<u32, Vec<grid_programs_zephyr::SpendTransaction>> =
+                    HashMap::new();
                 for (topic, msg) in batch {
                     let Some(&zone_id) = topic_to_zone.get(&topic) else {
                         continue;
                     };
                     match msg {
                         ZephyrZoneMessage::SubmitSpend(tx) => {
-                            mempool.insert(zone_id, tx).await;
+                            zone_buckets.entry(zone_id).or_default().push(tx);
                         }
                         ZephyrZoneMessage::SubmitSpendBatch(txs) => {
-                            for tx in txs {
-                                mempool.insert(zone_id, tx).await;
-                            }
+                            zone_buckets.entry(zone_id).or_default().extend(txs);
                         }
                         _ => {}
                     }
+                }
+                for (zone_id, txs) in zone_buckets {
+                    mempool.insert_batch(zone_id, txs).await;
                 }
             }
         }
@@ -520,6 +523,10 @@ async fn consensus_loop(
     let mut block_tx_cache: HashMap<[u8; 32], (u32, Vec<String>)> = HashMap::new();
     // block_hash -> full nullifiers (for mempool cleanup after finalization)
     let mut block_nullifiers: HashMap<[u8; 32], (u32, Vec<Nullifier>)> = HashMap::new();
+    // Deferred cleanups: when a certificate arrives before its proposal,
+    // we can't clean the mempool yet (block_nullifiers hasn't been populated).
+    // Store the block_hash -> zone_id here and resolve once the proposal lands.
+    let mut deferred_cleanups: HashMap<[u8; 32], u32> = HashMap::new();
 
     // Build zone topic lookup (zone_id -> topic string)
     let mut zone_to_topic: HashMap<u32, String> = HashMap::new();
@@ -662,6 +669,7 @@ async fn consensus_loop(
                     &publish_tx,
                     &mut zone_head_store,
                     &runtime,
+                    &mut deferred_cleanups,
                 )
                 .await;
 
@@ -674,81 +682,11 @@ async fn consensus_loop(
                 }
             }
 
-            // Global messages (certificates) are processed before zone
-            // messages so that round-advancing certificates are never
-            // starved by the high-volume spend/vote stream on zone_rx.
-            msg = global_rx.recv() => {
-                let Some(first) = msg else { break };
-
-                let mut global_batch = Vec::with_capacity(33);
-                global_batch.push(first);
-                while global_batch.len() < 32 {
-                    match global_rx.try_recv() {
-                        Ok(m) => global_batch.push(m),
-                        Err(_) => break,
-                    }
-                }
-
-                for msg in global_batch {
-                    match msg {
-                        ZephyrGlobalMessage::Certificate { cert, tx_nullifiers } => {
-                            if !tx_nullifiers.is_empty() {
-                                block_tx_cache
-                                    .entry(cert.block_hash)
-                                    .or_insert_with(|| (cert.zone_id, tx_nullifiers));
-                            }
-
-                            let cz = cert.zone_id;
-                            let mut round_advanced = false;
-                            if let Some(engine) = consensus_engines.get_mut(&cz) {
-                                if engine.apply_certificate(&cert) {
-                                    apply_certificate_locally(
-                                        &cert,
-                                        &mut zone_head_store,
-                                        &mut block_tx_cache,
-                                        &runtime,
-                                    );
-                                    cleanup_mempool_after_cert(&cert, &mempool, &mut block_nullifiers).await;
-                                    debug!(zone_id = cz, "applied certificate from global topic");
-                                    round_advanced = true;
-                                }
-                            } else {
-                                apply_certificate_locally(
-                                    &cert,
-                                    &mut zone_head_store,
-                                    &mut block_tx_cache,
-                                    &runtime,
-                                );
-                                cleanup_mempool_after_cert(&cert, &mempool, &mut block_nullifiers).await;
-                            }
-                            if round_advanced {
-                                try_propose_for_zones(
-                                    &assigned_zones,
-                                    &mut consensus_engines,
-                                    &mempool,
-                                    my_validator_id,
-                                    &config,
-                                    &mut block_tx_cache,
-                                    &mut block_nullifiers,
-                                    &zone_to_topic,
-                                    &global_topic,
-                                    &publish_tx,
-                                    &mut zone_head_store,
-                                    &runtime,
-                                )
-                                .await;
-                            }
-                        }
-                        ZephyrGlobalMessage::EpochAnnounce(ann) => {
-                            debug!(epoch = ann.epoch, "received epoch announcement");
-                        }
-                    }
-                }
-            }
-
-            // Proposals and votes on a dedicated channel -- processed
-            // before spend ingestion so consensus round-trips are never
-            // delayed by high-volume transaction traffic.
+            // Proposals and votes are processed before certificates so
+            // that `block_nullifiers` is populated (from the proposal)
+            // before `cleanup_mempool_after_cert` runs (from the cert).
+            // Spends are handled by the separate `ingest_loop`, so this
+            // channel only carries low-volume consensus traffic.
             msg = consensus_rx.recv() => {
                 let Some(first) = msg else { break };
 
@@ -790,7 +728,7 @@ async fn consensus_loop(
                                             &mut block_tx_cache,
                                             &runtime,
                                         );
-                                        cleanup_mempool_after_cert(cert, &mempool, &mut block_nullifiers).await;
+                                        cleanup_mempool_after_cert(cert, &mempool, &mut block_nullifiers, &mut deferred_cleanups).await;
                                         cert_produced = true;
                                     }
                                     publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx, &block_tx_cache).await;
@@ -810,12 +748,110 @@ async fn consensus_loop(
                                     &publish_tx,
                                     &mut zone_head_store,
                                     &runtime,
+                                    &mut deferred_cleanups,
                                 )
                                 .await;
                             }
                         }
                         ZephyrZoneMessage::Reject(_) => {}
                         _ => {}
+                    }
+                }
+
+                // After processing proposals (which populate block_nullifiers),
+                // drain any deferred cleanups that were waiting for the proposal.
+                let resolved: Vec<[u8; 32]> = deferred_cleanups
+                    .keys()
+                    .filter(|h| block_nullifiers.contains_key(*h))
+                    .copied()
+                    .collect();
+                for hash in resolved {
+                    if let Some(zone_id) = deferred_cleanups.remove(&hash) {
+                        if let Some((_, nullifiers)) = block_nullifiers.remove(&hash) {
+                            mempool.remove_nullifiers(zone_id, &nullifiers).await;
+                        }
+                    }
+                }
+            }
+
+            msg = global_rx.recv() => {
+                let Some(first) = msg else { break };
+
+                let mut global_batch = Vec::with_capacity(33);
+                global_batch.push(first);
+                while global_batch.len() < 32 {
+                    match global_rx.try_recv() {
+                        Ok(m) => global_batch.push(m),
+                        Err(_) => break,
+                    }
+                }
+
+                for msg in global_batch {
+                    match msg {
+                        ZephyrGlobalMessage::Certificate { cert, tx_nullifiers } => {
+                            if !tx_nullifiers.is_empty() {
+                                block_tx_cache
+                                    .entry(cert.block_hash)
+                                    .or_insert_with(|| (cert.zone_id, tx_nullifiers));
+                            }
+
+                            let cz = cert.zone_id;
+                            let mut round_advanced = false;
+                            if let Some(engine) = consensus_engines.get_mut(&cz) {
+                                if engine.apply_certificate(&cert) {
+                                    apply_certificate_locally(
+                                        &cert,
+                                        &mut zone_head_store,
+                                        &mut block_tx_cache,
+                                        &runtime,
+                                    );
+                                    cleanup_mempool_after_cert(
+                                        &cert,
+                                        &mempool,
+                                        &mut block_nullifiers,
+                                        &mut deferred_cleanups,
+                                    )
+                                    .await;
+                                    debug!(zone_id = cz, "applied certificate from global topic");
+                                    round_advanced = true;
+                                }
+                            } else {
+                                apply_certificate_locally(
+                                    &cert,
+                                    &mut zone_head_store,
+                                    &mut block_tx_cache,
+                                    &runtime,
+                                );
+                                cleanup_mempool_after_cert(
+                                    &cert,
+                                    &mempool,
+                                    &mut block_nullifiers,
+                                    &mut deferred_cleanups,
+                                )
+                                .await;
+                            }
+                            if round_advanced {
+                                try_propose_for_zones(
+                                    &assigned_zones,
+                                    &mut consensus_engines,
+                                    &mempool,
+                                    my_validator_id,
+                                    &config,
+                                    &mut block_tx_cache,
+                                    &mut block_nullifiers,
+                                    &zone_to_topic,
+                                    &global_topic,
+                                    &publish_tx,
+                                    &mut zone_head_store,
+                                    &runtime,
+                                    &mut deferred_cleanups,
+                                )
+                                .await;
+                            }
+                        }
+                        ZephyrGlobalMessage::EpochAnnounce(ann) => {
+                            debug!(epoch = ann.epoch, "received epoch announcement");
+                        }
                     }
                 }
             }
@@ -853,9 +889,12 @@ async fn cleanup_mempool_after_cert(
     cert: &FinalityCertificate,
     mempool: &SharedMempool,
     block_nullifiers: &mut HashMap<[u8; 32], (u32, Vec<Nullifier>)>,
+    deferred_cleanups: &mut HashMap<[u8; 32], u32>,
 ) {
     if let Some((zone_id, nullifiers)) = block_nullifiers.remove(&cert.block_hash) {
         mempool.remove_nullifiers(zone_id, &nullifiers).await;
+    } else {
+        deferred_cleanups.insert(cert.block_hash, cert.zone_id);
     }
 }
 
@@ -955,6 +994,9 @@ async fn publish_action(
 ///
 /// Called on every round timer tick **and** immediately after a round advances
 /// (certificate produced or applied) to eliminate dead time between rounds.
+///
+/// Mempool peeks are issued concurrently across zones so that per-zone locks
+/// are acquired in parallel rather than sequentially.
 #[allow(clippy::too_many_arguments)]
 async fn try_propose_for_zones(
     assigned_zones: &[u32],
@@ -969,7 +1011,38 @@ async fn try_propose_for_zones(
     publish_tx: &mpsc::Sender<(String, Vec<u8>)>,
     zone_head_store: &mut ZoneHead,
     runtime: &Arc<std::sync::RwLock<ZephyrRuntime>>,
+    deferred_cleanups: &mut HashMap<[u8; 32], u32>,
 ) {
+    // Identify zones that need a fresh mempool peek (leader + no pending proposal).
+    let zones_needing_peek: Vec<u32> = assigned_zones
+        .iter()
+        .filter(|&&zid| {
+            consensus_engines
+                .get(&zid)
+                .map_or(false, |e| e.is_leader() && !e.has_pending_proposal())
+        })
+        .copied()
+        .collect();
+
+    // Fire all peeks concurrently -- with per-zone locks these run in parallel.
+    let max_block_size = config.max_block_size;
+    let mut peek_handles = Vec::with_capacity(zones_needing_peek.len());
+    for &zid in &zones_needing_peek {
+        let mp = mempool.clone();
+        peek_handles.push(tokio::spawn(
+            async move { (zid, mp.peek(zid, max_block_size).await) },
+        ));
+    }
+
+    let mut prefetched: HashMap<u32, Vec<grid_programs_zephyr::SpendTransaction>> =
+        HashMap::with_capacity(peek_handles.len());
+    for handle in peek_handles {
+        if let Ok((zid, spends)) = handle.await {
+            prefetched.insert(zid, spends);
+        }
+    }
+
+    // Process proposals using pre-fetched spends.
     for &zone_id in assigned_zones {
         let Some(engine) = consensus_engines.get_mut(&zone_id) else {
             continue;
@@ -977,11 +1050,7 @@ async fn try_propose_for_zones(
         if !engine.is_leader() {
             continue;
         }
-        let spends = if engine.has_pending_proposal() {
-            vec![]
-        } else {
-            mempool.peek(zone_id, config.max_block_size).await
-        };
+        let spends = prefetched.remove(&zone_id).unwrap_or_default();
         let vid = my_validator_id;
         if let Some(action) = engine.propose(spends, |data| hmac_sign(&vid, data)) {
             if let ConsensusAction::BroadcastProposal(ref block) = action {
@@ -1008,7 +1077,7 @@ async fn try_propose_for_zones(
                                     block_tx_cache,
                                     runtime,
                                 );
-                                cleanup_mempool_after_cert(cert, mempool, block_nullifiers).await;
+                                cleanup_mempool_after_cert(cert, mempool, block_nullifiers, deferred_cleanups).await;
                             }
                             publish_action(
                                 &cert_action,

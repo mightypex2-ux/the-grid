@@ -1,6 +1,5 @@
-use std::collections::{HashSet, VecDeque};
-
 use grid_programs_zephyr::{Nullifier, SpendTransaction, ZoneId};
+use indexmap::IndexMap;
 
 /// Per-zone mempool of candidate spend transactions.
 ///
@@ -8,10 +7,13 @@ use grid_programs_zephyr::{Nullifier, SpendTransaction, ZoneId};
 /// - At most one spend per nullifier (prevents double-spend at mempool level)
 /// - Spends are drained in FIFO order by the leader for block proposals
 /// - Maximum capacity enforced to bound memory usage
+///
+/// Backed by `IndexMap` for O(1) insert, O(1) contains, and O(1) removal
+/// by nullifier (via `swap_remove`), while preserving insertion order for
+/// `peek` and `drain`.
 pub struct Mempool {
     zone_id: ZoneId,
-    queue: VecDeque<SpendTransaction>,
-    seen_nullifiers: HashSet<Nullifier>,
+    queue: IndexMap<Nullifier, SpendTransaction>,
     max_size: usize,
 }
 
@@ -19,8 +21,7 @@ impl Mempool {
     pub fn new(zone_id: ZoneId, max_size: usize) -> Self {
         Self {
             zone_id,
-            queue: VecDeque::new(),
-            seen_nullifiers: HashSet::new(),
+            queue: IndexMap::new(),
             max_size,
         }
     }
@@ -31,12 +32,23 @@ impl Mempool {
         if self.queue.len() >= self.max_size {
             return false;
         }
-        if self.seen_nullifiers.contains(&spend.nullifier) {
+        if self.queue.contains_key(&spend.nullifier) {
             return false;
         }
-        self.seen_nullifiers.insert(spend.nullifier.clone());
-        self.queue.push_back(spend);
+        self.queue.insert(spend.nullifier.clone(), spend);
         true
+    }
+
+    /// Insert a batch of spends, acquiring no additional locks.
+    /// Returns the number of successfully inserted spends.
+    pub fn insert_batch(&mut self, spends: Vec<SpendTransaction>) -> usize {
+        let mut inserted = 0;
+        for spend in spends {
+            if self.insert(spend) {
+                inserted += 1;
+            }
+        }
+        inserted
     }
 
     /// Drain up to `max` spends from the mempool (FIFO order).
@@ -44,8 +56,7 @@ impl Mempool {
         let count = max.min(self.queue.len());
         let mut result = Vec::with_capacity(count);
         for _ in 0..count {
-            if let Some(spend) = self.queue.pop_front() {
-                self.seen_nullifiers.remove(&spend.nullifier);
+            if let Some((_nullifier, spend)) = self.queue.shift_remove_index(0) {
                 result.push(spend);
             }
         }
@@ -57,12 +68,12 @@ impl Mempool {
     /// Used by the leader to build a proposal; the actual removal happens
     /// later via `remove_nullifiers` once the block is certified.
     pub fn peek(&self, max: usize) -> Vec<SpendTransaction> {
-        self.queue.iter().take(max).cloned().collect()
+        self.queue.values().take(max).cloned().collect()
     }
 
     /// Check if a nullifier is already in the mempool.
     pub fn contains_nullifier(&self, nullifier: &Nullifier) -> bool {
-        self.seen_nullifiers.contains(nullifier)
+        self.queue.contains_key(nullifier)
     }
 
     pub fn len(&self) -> usize {
@@ -78,12 +89,14 @@ impl Mempool {
     }
 
     /// Remove all spends whose nullifiers are in the given set (after finalization).
+    ///
+    /// Uses `swap_remove` for O(1) per nullifier. This reorders the tail of
+    /// the map but that is acceptable since block proposal ordering within a
+    /// block is not consensus-critical.
     pub fn remove_nullifiers(&mut self, nullifiers: &[Nullifier]) {
-        let to_remove: HashSet<&Nullifier> = nullifiers.iter().collect();
         for n in nullifiers {
-            self.seen_nullifiers.remove(n);
+            self.queue.swap_remove(n);
         }
-        self.queue.retain(|s| !to_remove.contains(&s.nullifier));
     }
 }
 

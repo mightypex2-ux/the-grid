@@ -43,6 +43,16 @@ impl SharedMempool {
         }
     }
 
+    /// Insert a batch of spends into a single zone, acquiring the zone lock once.
+    pub async fn insert_batch(&self, zone_id: ZoneId, txs: Vec<SpendTransaction>) -> usize {
+        let map = self.inner.read().await;
+        if let Some(mp) = map.get(&zone_id) {
+            mp.lock().await.insert_batch(txs)
+        } else {
+            0
+        }
+    }
+
     pub async fn peek(&self, zone_id: ZoneId, max: usize) -> Vec<SpendTransaction> {
         let map = self.inner.read().await;
         if let Some(mp) = map.get(&zone_id) {

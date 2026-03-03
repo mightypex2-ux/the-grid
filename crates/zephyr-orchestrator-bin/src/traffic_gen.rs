@@ -76,7 +76,6 @@ pub(crate) fn spawn_traffic_generator(
             }
 
             let mut submitted: u64 = 0;
-            let node_idx = seq as usize % nodes.len();
             for (zone_id, txs) in zone_batches {
                 let count = txs.len() as u64;
                 let msg = ZephyrZoneMessage::SubmitSpendBatch(txs);
@@ -88,7 +87,8 @@ pub(crate) fn spawn_traffic_generator(
                     }
                 };
                 let topic = &zone_topics[zone_id % zone_topics.len()];
-                nodes[node_idx % nodes.len()].publish(topic.clone(), data);
+                let node_idx = (seq as usize + zone_id) % nodes.len();
+                nodes[node_idx].publish(topic.clone(), data);
                 submitted += count;
             }
 

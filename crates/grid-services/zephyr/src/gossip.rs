@@ -87,7 +87,9 @@ impl ServiceGossipHandler for ZephyrGossipHandler {
                     match msg {
                         ZephyrZoneMessage::SubmitSpend(_)
                         | ZephyrZoneMessage::SubmitSpendBatch(_) => {
-                            let _ = self.zone_message_tx.try_send((topic.to_owned(), msg));
+                            if let Err(e) = self.zone_message_tx.try_send((topic.to_owned(), msg)) {
+                                warn!("zone_tx full, dropping spend: {e}");
+                            }
                         }
                         _ => {
                             if self
