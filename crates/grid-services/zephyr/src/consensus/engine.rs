@@ -94,6 +94,12 @@ impl ZoneConsensus {
         self.ticks_in_round >= timeout_ticks
     }
 
+    /// Reset the round timeout counter (called when consensus activity is
+    /// observed, e.g. receiving a valid proposal).
+    pub fn reset_timeout(&mut self) {
+        self.ticks_in_round = 0;
+    }
+
     /// Advance to the next round without a finalized block.  Rotates the
     /// leader while preserving `parent_hash` and `height` (no block was
     /// committed).
@@ -205,6 +211,11 @@ impl ZoneConsensus {
         {
             return None;
         }
+
+        // A committee member produced a vote — consensus is progressing.
+        // Reset the timeout so we don't discard accumulated votes while
+        // quorum is still being assembled.
+        self.ticks_in_round = 0;
 
         if let Some(cert) = self.cert_builder.add_vote(vote, self.parent_hash) {
             // Guard against double-advancement: if apply_certificate already

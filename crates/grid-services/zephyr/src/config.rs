@@ -64,7 +64,7 @@ fn default_max_block_size() -> usize {
     512
 }
 fn default_round_timeout_ticks() -> u32 {
-    10
+    50
 }
 
 impl Default for ZephyrConfig {

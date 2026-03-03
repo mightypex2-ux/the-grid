@@ -704,11 +704,12 @@ async fn consensus_loop(
                         }
                         ZephyrZoneMessage::Proposal(proposal) => {
                             cache_block_txs(&mut block_tx_cache, &mut block_nullifiers, zone_id, &proposal);
-                            let Some(engine) = consensus_engines.get(&zone_id) else {
+                            let Some(engine) = consensus_engines.get_mut(&zone_id) else {
                                 continue;
                             };
                             let vid = my_validator_id;
                             if let Some(action) = engine.vote_on_proposal(&proposal, |data| hmac_sign(&vid, data)) {
+                                engine.reset_timeout();
                                 publish_action(&action, &zone_to_topic, zone_id, &global_topic, &publish_tx, &block_tx_cache).await;
                             }
                         }
@@ -915,8 +916,8 @@ async fn try_propose_for_zones(
             vec![]
         } else {
             mempools
-                .get_mut(&zone_id)
-                .map(|mp| mp.drain(config.max_block_size))
+                .get(&zone_id)
+                .map(|mp| mp.peek(config.max_block_size))
                 .unwrap_or_default()
         };
         let vid = my_validator_id;

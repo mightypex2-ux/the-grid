@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
 use crate::components::tokens::{colors, font_size, spacing};
 use crate::components::{danger_button, status_bar_frame, title_bar_frame, title_bar_icon};
@@ -19,6 +19,9 @@ use crate::state::{AppPhase, AppState, LogLevel, NetworkPreset, RecentBlock, Tab
 pub(crate) struct OrchestratorApp {
     pub rt: Runtime,
     pub shared: Arc<Mutex<AppState>>,
+    snapshot_tx: Arc<watch::Sender<Arc<AppState>>>,
+    snapshot_rx: watch::Receiver<Arc<AppState>>,
+    snapshot_handle: Option<tokio::task::JoinHandle<()>>,
     pub managed_nodes: Vec<ManagedNode>,
     pub poller_handles: Vec<tokio::task::JoinHandle<()>>,
     pub log_handles: Vec<tokio::task::JoinHandle<()>>,
@@ -51,9 +54,13 @@ pub(crate) struct OrchestratorApp {
 
 impl OrchestratorApp {
     pub fn new(rt: Runtime) -> Self {
+        let (snapshot_tx, snapshot_rx) = watch::channel(Arc::new(AppState::default()));
         Self {
             rt,
             shared: Arc::new(Mutex::new(AppState::default())),
+            snapshot_tx: Arc::new(snapshot_tx),
+            snapshot_rx,
+            snapshot_handle: None,
             managed_nodes: Vec::new(),
             poller_handles: Vec::new(),
             log_handles: Vec::new(),
@@ -125,6 +132,26 @@ impl OrchestratorApp {
         self.poller_handles = pollers;
         self.log_handles = listeners;
         self.traffic_handle = Some(traffic);
+
+        let pub_shared = Arc::clone(&self.shared);
+        let pub_tx = Arc::clone(&self.snapshot_tx);
+        self.snapshot_handle = Some(self.rt.spawn(async move {
+            {
+                let state = pub_shared.lock().await;
+                let _ = pub_tx.send(Arc::new(snapshot(&state)));
+            }
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let snap = {
+                    let state = pub_shared.lock().await;
+                    snapshot(&state)
+                };
+                if pub_tx.send(Arc::new(snap)).is_err() {
+                    break;
+                }
+            }
+        }));
+
         self.phase = AppPhase::Running;
         self.launching = false;
         self.launch_instant = Some(Instant::now());
@@ -144,6 +171,9 @@ impl OrchestratorApp {
 
     fn do_shutdown(&mut self) {
         self.phase = AppPhase::ShuttingDown;
+        if let Some(h) = self.snapshot_handle.take() {
+            h.abort();
+        }
         if let Some(h) = self.traffic_handle.take() {
             h.abort();
         }
