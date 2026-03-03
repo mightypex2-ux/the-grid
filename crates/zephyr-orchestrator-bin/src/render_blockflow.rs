@@ -535,16 +535,9 @@ impl BlockflowVisualization {
         }
     }
 
-    fn handle_pan_zoom(&mut self, resp: &egui::Response, ui: &egui::Ui) {
+    fn handle_pan_zoom(&mut self, resp: &egui::Response, _ui: &egui::Ui) {
         if resp.dragged() {
             self.camera.offset += resp.drag_delta() / self.camera.zoom;
-        }
-        if resp.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                let factor = 1.0 + scroll * 0.003;
-                self.camera.zoom = (self.camera.zoom * factor).clamp(0.3, 4.0);
-            }
         }
     }
 }
