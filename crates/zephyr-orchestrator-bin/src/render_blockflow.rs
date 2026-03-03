@@ -14,7 +14,8 @@ const BAR_WIDTH_PER_TX: f32 = 3.0;
 const ROW_HEIGHT: f32 = 28.0;
 const ROW_TOP_MARGIN: f32 = 36.0;
 const BORDER_STROKE: f32 = 1.2;
-const SUBTLE_BG_ALPHA: f32 = 0.06;
+const BORDER_ALPHA: f32 = 0.50;
+const BLOCK_BG_ALPHA: f32 = 0.09;
 const GLOW_FILL_ALPHA: f32 = 0.35;
 const GLOW_TAIL_LENGTH: f32 = 80.0;
 const GLOW_TAIL_MIN_ALPHA: f32 = 0.04;
@@ -349,7 +350,7 @@ impl BlockflowVisualization {
                     .map_or(0, |d| d.as_millis());
                 let blended_color = status_color_blended(age_ms);
 
-                let bg_alpha = (SUBTLE_BG_ALPHA * 255.0 * alpha_mul) as u8;
+                let bg_alpha = (BLOCK_BG_ALPHA * 255.0 * alpha_mul) as u8;
                 let solid_w = scaled_w * (1.0 - FADE_ZONE_FRAC);
                 let fade_w = scaled_w * FADE_ZONE_FRAC;
 
@@ -375,7 +376,7 @@ impl BlockflowVisualization {
                 );
 
                 if age_ms >= VOTING_THRESHOLD_MS {
-                    let glow_color = colors::NEON_GREEN;
+                    let glow_color = colors::BLOCK_CERTIFIED;
                     let certified_age = age_ms.saturating_sub(VOTING_THRESHOLD_MS);
                     let glow_t =
                         (certified_age as f32 / 1000.0 / GLOW_FADE_IN_SECS).min(1.0);
@@ -464,7 +465,7 @@ impl BlockflowVisualization {
                     2.0,
                     egui::Stroke::new(
                         BORDER_STROKE,
-                        with_alpha(blended_color, (255.0 * alpha_mul) as u8),
+                        with_alpha(blended_color, (BORDER_ALPHA * 255.0 * alpha_mul) as u8),
                     ),
                     egui::StrokeKind::Inside,
                 );
@@ -552,17 +553,17 @@ fn status_color_blended(age_ms: u128) -> egui::Color32 {
     let voting = VOTING_THRESHOLD_MS as f32;
 
     if age < proposed {
-        colors::NEON_CYAN
+        colors::BLOCK_PROPOSED
     } else if age < proposed + COLOR_BLEND_MS {
         let t = (age - proposed) / COLOR_BLEND_MS;
-        lerp_color(colors::NEON_CYAN, colors::NEON_AMBER, t)
+        lerp_color(colors::BLOCK_PROPOSED, colors::BLOCK_VOTING, t)
     } else if age < voting {
-        colors::NEON_AMBER
+        colors::BLOCK_VOTING
     } else if age < voting + COLOR_BLEND_MS {
         let t = (age - voting) / COLOR_BLEND_MS;
-        lerp_color(colors::NEON_AMBER, colors::NEON_GREEN, t)
+        lerp_color(colors::BLOCK_VOTING, colors::BLOCK_CERTIFIED, t)
     } else {
-        colors::NEON_GREEN
+        colors::BLOCK_CERTIFIED
     }
 }
 

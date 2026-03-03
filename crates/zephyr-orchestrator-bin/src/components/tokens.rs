@@ -45,6 +45,10 @@ pub mod colors {
     pub const NEON_AMBER: Color32 = Color32::from_rgb(255, 179, 0);
     pub const NEON_GREEN: Color32 = Color32::from_rgb(0, 230, 118);
     pub const NEON_CONNECTOR: Color32 = Color32::from_rgb(64, 64, 80);
+
+    pub const BLOCK_PROPOSED: Color32 = Color32::from_rgb(90, 158, 172);
+    pub const BLOCK_VOTING: Color32 = Color32::from_rgb(188, 150, 70);
+    pub const BLOCK_CERTIFIED: Color32 = Color32::from_rgb(68, 163, 112);
 }
 
 #[allow(dead_code)]
