@@ -79,7 +79,7 @@ fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state:
             );
 
             let mut rate = app.traffic_rate;
-            let slider = egui::Slider::new(&mut rate, 0.1..=25_000.0)
+            let slider = egui::Slider::new(&mut rate, 0.1..=1_000_000.0)
                 .logarithmic(true)
                 .text("tx/s");
             if ui.add(slider).changed() {
@@ -98,9 +98,11 @@ fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state:
 
             ui.add_space(spacing::LG);
 
-            for preset in [1_000.0_f32, 2_500.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0] {
+            for preset in [1_000.0_f32, 2_500.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0] {
                 let label = if preset == 2_500.0 {
                     "2.5k".to_string()
+                } else if preset >= 1_000_000.0 {
+                    format!("{}m", preset as u32 / 1_000_000)
                 } else if preset >= 1_000.0 {
                     format!("{}k", preset as u32 / 1_000)
                 } else {
