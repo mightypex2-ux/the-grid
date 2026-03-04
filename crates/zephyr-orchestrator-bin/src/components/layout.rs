@@ -124,5 +124,5 @@ pub(crate) fn status_bar_frame() -> egui::Frame {
             spacing::LG as i8,
             spacing::SM as i8,
         ))
-        .stroke(egui::Stroke::NONE)
+        .stroke(egui::Stroke::new(1.0, colors::BORDER))
 }
