@@ -9,7 +9,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use grid_core::ProgramId;
 use grid_programs_zephyr::{
-    FinalityCertificate, Nullifier, ValidatorInfo, ZephyrConsensusDescriptor,
+    Block, FinalityCertificate, Nullifier, ValidatorInfo, ZephyrConsensusDescriptor,
     ZephyrConsensusMessage, ZephyrGlobalDescriptor, ZephyrGlobalMessage, ZephyrSpendDescriptor,
     ZephyrValidatorDescriptor, ZephyrZoneDescriptor, ZephyrZoneMessage,
 };
@@ -667,6 +667,7 @@ async fn zone_consensus_task(
     let mut block_nullifiers: HashMap<[u8; 32], (u32, Vec<Nullifier>)> = HashMap::new();
     let mut deferred_cleanups: HashMap<[u8; 32], u32> = HashMap::new();
     let mut pending_certs: Vec<FinalityCertificate> = Vec::new();
+    let mut last_buffered_proposal: Option<Block> = None;
     let mut last_known_epoch: u64 = 0;
 
     if initially_assigned {
@@ -785,6 +786,18 @@ async fn zone_consensus_task(
                                             );
                                         }
                                     }
+                                } else if proposal.header.parent_hash != *eng.parent_hash()
+                                    && proposal.header.epoch == eng.epoch()
+                                    && proposal.header.height >= eng.height()
+                                {
+                                    debug!(
+                                        zone_id,
+                                        proposal_parent = %hex::encode(&proposal.header.parent_hash[..8]),
+                                        local_parent = %eng.parent_hash_hex(),
+                                        height = proposal.header.height,
+                                        "buffering proposal for retry after cert"
+                                    );
+                                    last_buffered_proposal = Some(proposal);
                                 }
                             }
                         }
@@ -821,26 +834,8 @@ async fn zone_consensus_task(
                                     );
                                 }
                             }
-                            if cert_produced {
-                                if let Some(ref mut eng) = engine {
-                                    try_propose_for_zone(
-                                        zone_id,
-                                        eng,
-                                        &mempool,
-                                        my_validator_id,
-                                        &config,
-                                        &mut block_tx_cache,
-                                        &mut block_nullifiers,
-                                        &consensus_topic,
-                                        &global_topic,
-                                        &publish_tx,
-                                        &zone_head_store,
-                                        &runtime,
-                                        &mut deferred_cleanups,
-                                    )
-                                    .await;
-                                }
-                            }
+                            // Proposal deferred to round timer tick to let cert propagate first.
+                            let _ = cert_produced;
                         }
                         ZephyrConsensusMessage::Reject(_) => {}
                     }
@@ -1036,22 +1031,26 @@ async fn zone_consensus_task(
                                 );
                             }
 
+                            // Proposal deferred to round timer tick to let cert propagate first.
+                            let _ = round_advanced;
+
                             if round_advanced {
                                 if let Some(ref mut eng) = engine {
-                                    try_propose_for_zone(
-                                        zone_id,
+                                    retry_buffered_proposal(
+                                        &mut last_buffered_proposal,
                                         eng,
-                                        &mempool,
+                                        zone_id,
                                         my_validator_id,
-                                        &config,
-                                        &mut block_tx_cache,
-                                        &mut block_nullifiers,
+                                        &mut pending_certs,
                                         &consensus_topic,
                                         &global_topic,
                                         &publish_tx,
-                                        &zone_head_store,
-                                        &runtime,
+                                        &mut block_tx_cache,
+                                        &mut block_nullifiers,
                                         &mut deferred_cleanups,
+                                        &zone_head_store,
+                                        &mempool,
+                                        &runtime,
                                     )
                                     .await;
                                 }
@@ -1262,6 +1261,24 @@ async fn zone_consensus_task(
                             }
                             pending_certs = still_pending;
                         }
+
+                        retry_buffered_proposal(
+                            &mut last_buffered_proposal,
+                            eng,
+                            zone_id,
+                            my_validator_id,
+                            &mut pending_certs,
+                            &consensus_topic,
+                            &global_topic,
+                            &publish_tx,
+                            &mut block_tx_cache,
+                            &mut block_nullifiers,
+                            &mut deferred_cleanups,
+                            &zone_head_store,
+                            &mempool,
+                            &runtime,
+                        )
+                        .await;
                     }
 
                     // Periodic health summary during stalls (every ~10s at default 100ms tick)
@@ -1401,6 +1418,76 @@ fn apply_certificate_locally(
     rt.zone_last_advance.insert(cert.zone_id, std::time::Instant::now());
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn retry_buffered_proposal(
+    last_buffered_proposal: &mut Option<Block>,
+    eng: &mut ZoneConsensus,
+    zone_id: u32,
+    my_validator_id: [u8; 32],
+    pending_certs: &mut Vec<FinalityCertificate>,
+    consensus_topic: &str,
+    global_topic: &str,
+    publish_tx: &mpsc::Sender<(String, Vec<u8>)>,
+    block_tx_cache: &mut HashMap<[u8; 32], (u32, Vec<String>)>,
+    block_nullifiers: &mut HashMap<[u8; 32], (u32, Vec<Nullifier>)>,
+    deferred_cleanups: &mut HashMap<[u8; 32], u32>,
+    zone_head_store: &Arc<tokio::sync::Mutex<ZoneHead>>,
+    mempool: &SharedMempool,
+    runtime: &Arc<parking_lot::RwLock<ZephyrRuntime>>,
+) {
+    let proposal = match last_buffered_proposal.take() {
+        Some(p) => p,
+        None => return,
+    };
+
+    if proposal.header.height < eng.height() {
+        debug!(
+            zone_id,
+            proposal_height = proposal.header.height,
+            local_height = eng.height(),
+            "discarding stale buffered proposal"
+        );
+        return;
+    }
+
+    if proposal.header.parent_hash != *eng.parent_hash() {
+        *last_buffered_proposal = Some(proposal);
+        return;
+    }
+
+    debug!(
+        zone_id,
+        block_hash = %hex::encode(&proposal.block_hash[..8]),
+        height = proposal.header.height,
+        "retrying buffered proposal after cert catch-up"
+    );
+
+    let vid = my_validator_id;
+    if let Some(action) = eng.vote_on_proposal(&proposal, |data| hmac_sign(&vid, data)) {
+        eng.reset_timeout();
+        if eng.take_fork_recovery_used() {
+            let dropped = pending_certs.len();
+            pending_certs.clear();
+            if dropped > 0 {
+                info!(zone_id, dropped, "cleared pending certs after fork recovery (retry)");
+            }
+        }
+        publish_action(&action, consensus_topic, global_topic, publish_tx, block_tx_cache);
+        if let ConsensusAction::BroadcastVote(vote) = action {
+            if let Some(cert_action) = eng.receive_vote(vote) {
+                if let ConsensusAction::BroadcastCertificate(ref cert) = cert_action {
+                    {
+                        let mut zhs = zone_head_store.lock().await;
+                        apply_certificate_locally(cert, &mut zhs, block_tx_cache, runtime);
+                    }
+                    cleanup_mempool_after_cert(cert, mempool, block_nullifiers, deferred_cleanups);
+                }
+                publish_action(&cert_action, consensus_topic, global_topic, publish_tx, block_tx_cache);
+            }
+        }
+    }
+}
+
 fn publish_action(
     action: &ConsensusAction,
     consensus_topic: &str,
@@ -1458,8 +1545,8 @@ fn publish_action(
 
 /// Attempt to propose a block for a single zone where this node is leader.
 ///
-/// Called on every round timer tick **and** immediately after a round advances
-/// (certificate produced or applied) to eliminate dead time between rounds.
+/// Called on every round timer tick. Proposals are paced to the timer to give
+/// certificates time to propagate before the next proposal goes out.
 #[allow(clippy::too_many_arguments)]
 async fn try_propose_for_zone(
     zone_id: u32,
