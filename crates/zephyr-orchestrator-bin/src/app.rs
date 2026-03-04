@@ -7,7 +7,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{watch, Mutex};
 
 use crate::components::tokens::{colors, font_size, spacing};
-use crate::components::{danger_button, status_bar_frame, title_bar_frame, title_bar_icon};
+use crate::components::{status_bar_frame, title_bar_frame, title_bar_icon};
 use crate::node_manager::{self, ManagedNode};
 use crate::render_dashboard;
 use crate::render_launch;
@@ -390,10 +390,12 @@ impl OrchestratorApp {
                         ui.add_space(spacing::SM);
 
                         if self.phase == AppPhase::Running {
-                            if danger_button(ui, "Shutdown") {
+                            if title_bar_icon(ui, egui_phosphor::regular::POWER, false)
+                                .on_hover_text("Shutdown")
+                                .clicked()
+                            {
                                 self.do_shutdown();
                             }
-                            ui.add_space(spacing::MD);
                         }
                     });
                 });
