@@ -31,14 +31,14 @@ pub(crate) fn build_swarm(
     };
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(1))
+        .heartbeat_interval(Duration::from_millis(500))
         .validation_mode(gossipsub::ValidationMode::Permissive)
         .max_transmit_size(2 * 1024 * 1024)
         .connection_handler_queue_len(25_000)
-        .mesh_n(3)
-        .mesh_n_low(2)
-        .mesh_n_high(6)
-        .gossip_lazy(3)
+        .mesh_n(6)
+        .mesh_n_low(4)
+        .mesh_n_high(12)
+        .gossip_lazy(6)
         .message_id_fn(message_id_fn)
         .build()
         .map_err(|e| NetworkError::Config(format!("{e}")))?;
