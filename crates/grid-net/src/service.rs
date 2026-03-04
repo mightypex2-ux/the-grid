@@ -580,11 +580,20 @@ impl NetworkService {
                 None
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                warn!(
-                    peer_id = ?peer_id,
-                    error = %error,
-                    "outgoing connection failed"
-                );
+                let is_wrong_peer = matches!(error, DialError::WrongPeerId { .. });
+                if is_wrong_peer {
+                    debug!(
+                        peer_id = ?peer_id,
+                        error = %error,
+                        "outgoing connection failed (wrong peer id, auto-correcting)"
+                    );
+                } else {
+                    warn!(
+                        peer_id = ?peer_id,
+                        error = %error,
+                        "outgoing connection failed"
+                    );
+                }
                 let error_string = error.to_string();
                 if self.pending_discovery_dials > 0 {
                     self.pending_discovery_dials -= 1;
@@ -617,7 +626,36 @@ impl NetworkService {
                                     self.swarm
                                         .behaviour_mut()
                                         .kademlia
-                                        .add_address(&obtained, normalized);
+                                        .add_address(&obtained, normalized.clone());
+                                }
+                                // Proactively dial the actual peer at this address
+                                // instead of waiting for the next discovery round.
+                                if !self.swarm.is_connected(&obtained)
+                                    && !self
+                                        .dial_backoff
+                                        .get(&obtained)
+                                        .is_some_and(|&t| Instant::now() < t)
+                                {
+                                    let opts = DialOpts::peer_id(obtained)
+                                        .addresses(vec![normalized])
+                                        .build();
+                                    match self.swarm.dial(opts) {
+                                        Ok(()) => {
+                                            self.pending_discovery_dials += 1;
+                                            debug!(
+                                                %obtained,
+                                                %address,
+                                                "proactively dialing corrected peer"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            debug!(
+                                                %obtained,
+                                                error = %e,
+                                                "failed to proactively dial corrected peer"
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             info!(

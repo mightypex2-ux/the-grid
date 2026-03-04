@@ -210,14 +210,25 @@ impl ZodeApp {
                         info!(error = %e, "interlink catch-up deferred, waiting for peers");
                     }
                 }
+                // Wait for either a new peer connection or a periodic retry.
+                // The timer prevents the task from stalling indefinitely when
+                // all initial dials fail and WrongPeerId corrections haven't
+                // triggered PeerConnected events yet.
                 loop {
-                    match event_rx.recv().await {
-                        Ok(zode::LogEvent::PeerConnected(_)) => {
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    tokio::select! {
+                        event = event_rx.recv() => {
+                            match event {
+                                Ok(zode::LogEvent::PeerConnected(_)) => {
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    break;
+                                }
+                                Err(_) => return,
+                                _ => continue,
+                            }
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => {
                             break;
                         }
-                        Err(_) => return,
-                        _ => continue,
                     }
                 }
             }
