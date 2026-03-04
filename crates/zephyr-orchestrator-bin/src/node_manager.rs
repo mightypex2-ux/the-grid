@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use grid_net::{Keypair, Multiaddr};
+use grid_net::{Keypair, Multiaddr, ZodeId};
 use grid_programs_zephyr::ValidatorInfo;
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
@@ -79,13 +79,15 @@ pub(crate) async fn launch_network(
     let _ = std::fs::create_dir_all(&base_dir);
 
     let mut managed_nodes: Vec<ManagedNode> = Vec::with_capacity(validator_count);
-    let mut addr_by_node: HashMap<usize, String> = HashMap::new();
+    let mut addr_by_node: HashMap<usize, (String, ZodeId)> = HashMap::new();
 
     // ── Phase 1: start the first node to get a bootstrap address ──────
     if let Some((zode, addr)) = start_node(0, &keypairs[0], &zephyr_json, &base_dir, &[]).await {
+        let peer_id = keypairs[0].public().to_peer_id();
         if let Some(ref a) = addr {
-            info!(node = 0, addr = %a, "node listen address captured");
-            addr_by_node.insert(0, a.clone());
+            let full_addr = format!("{a}/p2p/{peer_id}");
+            info!(node = 0, addr = %full_addr, "node listen address captured");
+            addr_by_node.insert(0, (full_addr, peer_id));
         } else {
             warn!(node = 0, "could not capture listen address");
         }
@@ -98,7 +100,10 @@ pub(crate) async fn launch_network(
 
     // ── Phase 2: start remaining nodes concurrently ───────────────────
     if validator_count > 1 {
-        let bootstrap: Vec<String> = addr_by_node.values().cloned().collect();
+        let bootstrap: Vec<String> = addr_by_node
+            .values()
+            .map(|(addr, _)| addr.clone())
+            .collect();
         let mut set = tokio::task::JoinSet::new();
 
         for i in 1..validator_count {
@@ -124,9 +129,11 @@ pub(crate) async fn launch_network(
         batch.sort_by_key(|(i, ..)| *i);
 
         for (i, vid, zode, addr) in batch {
+            let peer_id = keypairs[i].public().to_peer_id();
             if let Some(ref a) = addr {
-                info!(node = i, addr = %a, "node listen address captured");
-                addr_by_node.insert(i, a.clone());
+                let full_addr = format!("{a}/p2p/{peer_id}");
+                info!(node = i, addr = %full_addr, "node listen address captured");
+                addr_by_node.insert(i, (full_addr, peer_id));
             } else {
                 warn!(node = i, "could not capture listen address");
             }
@@ -140,21 +147,27 @@ pub(crate) async fn launch_network(
 
     // ── Phase 3: concurrent full-mesh dial ────────────────────────────
     {
+        let local_peer_ids: HashMap<usize, ZodeId> = managed_nodes
+            .iter()
+            .map(|mn| (mn.node_id, keypairs[mn.node_id].public().to_peer_id()))
+            .collect();
+
         let mut dial_set = tokio::task::JoinSet::new();
         for mn in &managed_nodes {
             let zode = Arc::clone(&mn.zode);
             let src = mn.node_id;
-            let targets: Vec<(usize, Multiaddr)> = addr_by_node
+            let src_peer_id = local_peer_ids[&src];
+            let targets: Vec<Multiaddr> = addr_by_node
                 .iter()
-                .filter(|(id, _)| **id != src)
-                .filter_map(|(id, a)| a.parse::<Multiaddr>().ok().map(|ma| (*id, ma)))
+                .filter(|(_, (_, pid))| *pid != src_peer_id)
+                .filter_map(|(_, (a, _))| a.parse::<Multiaddr>().ok())
                 .collect();
 
             dial_set.spawn(async move {
-                for (dst, addr) in targets {
+                for addr in targets {
                     let mut net = zode.network().lock().await;
                     if let Err(e) = net.dial(addr) {
-                        warn!(from = src, to = dst, error = %e, "full-mesh dial failed");
+                        warn!(from = src, error = %e, "full-mesh dial failed");
                     }
                 }
             });
@@ -233,7 +246,12 @@ async fn start_node(
     match Zode::start(config).await {
         Ok(z) => {
             let zode = Arc::new(z);
-            let addr = capture_listen_addr(&zode).await;
+            let sync_addrs = zode.network().lock().await.listen_addresses();
+            let addr = if let Some(first) = sync_addrs.into_iter().next() {
+                Some(first.to_string())
+            } else {
+                capture_listen_addr(&zode).await
+            };
             Some((zode, addr))
         }
         Err(e) => {
