@@ -7,7 +7,7 @@ use crate::app::OrchestratorApp;
 use crate::components::tokens::{self, colors, font_size, spacing};
 use crate::components::labels::field_label;
 use crate::components::section;
-use crate::helpers::{format_uptime, node_color};
+use crate::helpers::{fmt_float_comma, fmt_int_comma, format_uptime, node_color};
 use crate::state::{AppState, RecentBlock};
 
 pub(crate) fn render_dashboard(app: &mut OrchestratorApp, ui: &mut egui::Ui, state: &AppState) {
@@ -43,12 +43,12 @@ fn render_stats_bar(ui: &mut egui::Ui, state: &AppState, launch_instant: Option<
                 ui.end_row();
 
                 field_label(ui, "Certificates");
-                ui.label(format!("{}", state.network.certificates_produced));
+                ui.label(fmt_int_comma(state.network.certificates_produced));
                 field_label(ui, "Spends Processed");
-                ui.label(format!("{}", state.network.spends_processed));
+                ui.label(fmt_int_comma(state.network.spends_processed));
                 field_label(ui, "Actual TPS");
                 ui.label(
-                    egui::RichText::new(format!("{:.0}", state.network.actual_tps))
+                    egui::RichText::new(fmt_float_comma(state.network.actual_tps, 0))
                         .color(colors::ACCENT)
                         .strong(),
                 );
@@ -90,57 +90,58 @@ fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state:
             ui.add_space(spacing::LG);
 
             ui.label(
-                egui::RichText::new(format!("Actual: {:.0} tx/s", _state.network.actual_tps))
+                egui::RichText::new(format!("Actual: {} tx/s", fmt_float_comma(_state.network.actual_tps, 0)))
                     .size(font_size::SMALL)
                     .color(colors::ACCENT)
                     .strong(),
             );
 
-            ui.add_space(spacing::LG);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                const PRESETS: [f32; 10] = [1_000.0, 2_500.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0];
+                for &preset in PRESETS.iter().rev() {
+                    let label = if preset == 2_500.0 {
+                        "2.5k".to_string()
+                    } else if preset >= 1_000_000.0 {
+                        format!("{}m", preset as u32 / 1_000_000)
+                    } else if preset >= 1_000.0 {
+                        format!("{}k", preset as u32 / 1_000)
+                    } else {
+                        format!("{}", preset as u32)
+                    };
+                    let active = (app.traffic_rate - preset).abs() < 0.5;
+                    let size = egui::vec2(tokens::WIDGET_HEIGHT, tokens::WIDGET_HEIGHT);
 
-            for preset in [1_000.0_f32, 2_500.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0] {
-                let label = if preset == 2_500.0 {
-                    "2.5k".to_string()
-                } else if preset >= 1_000_000.0 {
-                    format!("{}m", preset as u32 / 1_000_000)
-                } else if preset >= 1_000.0 {
-                    format!("{}k", preset as u32 / 1_000)
-                } else {
-                    format!("{}", preset as u32)
-                };
-                let active = (app.traffic_rate - preset).abs() < 0.5;
-                let size = egui::vec2(tokens::WIDGET_HEIGHT, tokens::WIDGET_HEIGHT);
+                    let wv = &mut ui.visuals_mut().widgets;
+                    let saved = (
+                        wv.inactive.weak_bg_fill,
+                        wv.hovered.weak_bg_fill,
+                        wv.active.weak_bg_fill,
+                    );
+                    wv.inactive.weak_bg_fill =
+                        if active { colors::SURFACE_RAISED } else { egui::Color32::BLACK };
+                    wv.hovered.weak_bg_fill = colors::SURFACE_INTERACTIVE;
+                    wv.active.weak_bg_fill = colors::BORDER;
 
-                let wv = &mut ui.visuals_mut().widgets;
-                let saved = (
-                    wv.inactive.weak_bg_fill,
-                    wv.hovered.weak_bg_fill,
-                    wv.active.weak_bg_fill,
-                );
-                wv.inactive.weak_bg_fill =
-                    if active { colors::SURFACE_RAISED } else { egui::Color32::BLACK };
-                wv.hovered.weak_bg_fill = colors::SURFACE_INTERACTIVE;
-                wv.active.weak_bg_fill = colors::BORDER;
+                    let btn = egui::Button::new(
+                        egui::RichText::new(&label)
+                            .size(font_size::TINY)
+                            .color(if active { colors::ACCENT } else { egui::Color32::WHITE }),
+                    )
+                    .stroke(tokens::default_stroke())
+                    .corner_radius(0.0)
+                    .min_size(size);
 
-                let btn = egui::Button::new(
-                    egui::RichText::new(&label)
-                        .size(font_size::TINY)
-                        .color(if active { colors::ACCENT } else { egui::Color32::WHITE }),
-                )
-                .stroke(tokens::default_stroke())
-                .corner_radius(0.0)
-                .min_size(size);
+                    if ui.add(btn).clicked() {
+                        app.traffic_rate = preset;
+                        app.sync_traffic_to_shared();
+                    }
 
-                if ui.add(btn).clicked() {
-                    app.traffic_rate = preset;
-                    app.sync_traffic_to_shared();
+                    let wv = &mut ui.visuals_mut().widgets;
+                    wv.inactive.weak_bg_fill = saved.0;
+                    wv.hovered.weak_bg_fill = saved.1;
+                    wv.active.weak_bg_fill = saved.2;
                 }
-
-                let wv = &mut ui.visuals_mut().widgets;
-                wv.inactive.weak_bg_fill = saved.0;
-                wv.hovered.weak_bg_fill = saved.1;
-                wv.active.weak_bg_fill = saved.2;
-            }
+            });
         });
 
         ui.add_space(spacing::SM);
@@ -153,11 +154,11 @@ fn render_traffic_controls(app: &mut OrchestratorApp, ui: &mut egui::Ui, _state:
 
             ui.label(
                 egui::RichText::new(format!(
-                    "Block size: {}  |  Round: {} ms  |  Ceiling: {:.0} tx/s ({:.0}/zone \u{00d7} {} zones)",
-                    app.max_block_size,
-                    app.round_interval_ms,
-                    total_tps,
-                    tps_per_zone,
+                    "Block size: {}  |  Round: {} ms  |  Ceiling: {} tx/s ({}/zone \u{00d7} {} zones)",
+                    fmt_int_comma(app.max_block_size as u64),
+                    fmt_int_comma(app.round_interval_ms),
+                    fmt_float_comma(total_tps, 0),
+                    fmt_float_comma(tps_per_zone, 0),
                     total_zones,
                 ))
                 .size(font_size::SMALL)

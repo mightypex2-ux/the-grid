@@ -28,6 +28,32 @@ pub(crate) fn format_uptime(secs: u64) -> String {
     format!("{h:02}:{m:02}:{s:02}")
 }
 
+/// Format an integer with thousand-separator commas (e.g. 9625 → "9,625").
+pub(crate) fn fmt_int_comma(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    result
+}
+
+/// Format a float with thousand-separator commas on the integer part
+/// and `decimals` fractional digits (e.g. 9625.9 → "9,625.9" with 1 decimal).
+pub(crate) fn fmt_float_comma(v: f64, decimals: usize) -> String {
+    let int_part = v.abs() as u64;
+    let sign = if v < 0.0 { "-" } else { "" };
+    if decimals == 0 {
+        format!("{sign}{}", fmt_int_comma(int_part))
+    } else {
+        let frac = format!("{:.*}", decimals, v.abs().fract());
+        format!("{sign}{}{}", fmt_int_comma(int_part), &frac[1..])
+    }
+}
+
 /// Palette of distinct colors for nodes.
 pub(crate) fn node_color(index: usize) -> eframe::egui::Color32 {
     use eframe::egui::Color32;

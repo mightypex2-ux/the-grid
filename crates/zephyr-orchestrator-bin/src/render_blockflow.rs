@@ -5,6 +5,7 @@ use eframe::egui;
 
 use crate::components::tokens::{colors, font_size};
 use crate::components::overlay_frame;
+use crate::helpers::{fmt_float_comma, fmt_int_comma};
 use crate::state::AppState;
 
 const BAR_HEIGHT: f32 = 10.0;
@@ -539,8 +540,8 @@ impl BlockflowVisualization {
                     overlay_frame().show(ui, |ui| {
                         ui.label(
                             egui::RichText::new(format!(
-                                "BLOCKFLOW  \u{2022}  {} ZONES  \u{2022}  {} BLOCKS  \u{2022}  {:.1} TPS",
-                                zone_count, total_blocks, total_tps,
+                                "BLOCKFLOW  \u{2022}  {} ZONES  \u{2022}  {} BLOCKS  \u{2022}  {} TPS",
+                                zone_count, fmt_int_comma(total_blocks as u64), fmt_float_comma(total_tps, 1),
                             ))
                             .strong()
                             .size(font_size::HEADING)
