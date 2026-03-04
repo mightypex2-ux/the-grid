@@ -27,18 +27,20 @@ use crate::config::ZephyrConfig;
 use crate::consensus::{ConsensusAction, ZoneConsensus};
 use crate::epoch::EpochManager;
 use crate::gossip::ZephyrGossipHandler;
+use crate::publishing::{
+    apply_certificate_locally, cache_block_txs, cleanup_mempool_after_cert, publish_action,
+};
 use crate::shared_mempool::SharedMempool;
 
 /// Summary of a finalized block for the metrics / dashboard feed.
-struct BlockSummary {
-    zone_id: u32,
-    block_hash_hex: String,
-    height: u64,
-    tx_nullifiers: Vec<String>,
+pub(crate) struct BlockSummary {
+    pub(crate) zone_id: u32,
+    pub(crate) block_hash_hex: String,
+    pub(crate) height: u64,
+    pub(crate) tx_nullifiers: Vec<String>,
 }
 
-const MAX_RECENT_BLOCKS: usize = 100;
-const MAX_BLOCK_TX_CACHE: usize = 200;
+pub(crate) const MAX_RECENT_BLOCKS: usize = 100;
 
 /// Live metrics snapshot shared between the consensus task and HTTP handlers.
 pub(crate) struct ZephyrRuntime {
@@ -49,11 +51,11 @@ pub(crate) struct ZephyrRuntime {
     pub spends_processed: u64,
     pub mempool_sizes: HashMap<u32, usize>,
     pub assigned_zones: Vec<u32>,
-    zone_heights: HashMap<u32, u64>,
-    recent_blocks: VecDeque<BlockSummary>,
-    blocks_produced: u64,
-    zone_consecutive_timeouts: HashMap<u32, u32>,
-    zone_last_advance: HashMap<u32, std::time::Instant>,
+    pub(crate) zone_heights: HashMap<u32, u64>,
+    pub(crate) recent_blocks: VecDeque<BlockSummary>,
+    pub(crate) blocks_produced: u64,
+    pub(crate) zone_consecutive_timeouts: HashMap<u32, u32>,
+    pub(crate) zone_last_advance: HashMap<u32, std::time::Instant>,
 }
 
 /// Shared state handed to HTTP route handlers.
@@ -1301,88 +1303,6 @@ async fn zone_consensus_task(
     }
 }
 
-fn cache_block_txs(
-    cache: &mut HashMap<[u8; 32], (u32, Vec<String>)>,
-    nullifier_cache: &mut HashMap<[u8; 32], (u32, Vec<Nullifier>)>,
-    zone_id: u32,
-    block: &grid_programs_zephyr::Block,
-) {
-    if cache.len() >= MAX_BLOCK_TX_CACHE {
-        let keys: Vec<[u8; 32]> = cache.keys().take(MAX_BLOCK_TX_CACHE / 4).copied().collect();
-        for k in &keys {
-            cache.remove(k);
-            nullifier_cache.remove(k);
-        }
-    }
-    let full_nullifiers: Vec<Nullifier> = block
-        .transactions
-        .iter()
-        .map(|tx| tx.nullifier.clone())
-        .collect();
-    let hex_nullifiers: Vec<String> = full_nullifiers
-        .iter()
-        .map(|n| hex::encode(&n.0[..8]))
-        .collect();
-    cache.insert(block.block_hash, (zone_id, hex_nullifiers));
-    nullifier_cache.insert(block.block_hash, (zone_id, full_nullifiers));
-}
-
-fn cleanup_mempool_after_cert(
-    cert: &FinalityCertificate,
-    mempool: &SharedMempool,
-    block_nullifiers: &mut HashMap<[u8; 32], (u32, Vec<Nullifier>)>,
-    deferred_cleanups: &mut HashMap<[u8; 32], u32>,
-) {
-    if let Some((zone_id, nullifiers)) = block_nullifiers.remove(&cert.block_hash) {
-        mempool.remove_nullifiers(zone_id, &nullifiers);
-    } else {
-        deferred_cleanups.insert(cert.block_hash, cert.zone_id);
-    }
-}
-
-fn apply_certificate_locally(
-    cert: &FinalityCertificate,
-    zone_head_store: &DashMap<u32, [u8; 32]>,
-    block_tx_cache: &mut HashMap<[u8; 32], (u32, Vec<String>)>,
-    runtime: &Arc<parking_lot::RwLock<ZephyrRuntime>>,
-) {
-    zone_head_store.insert(cert.zone_id, cert.block_hash);
-    let tx_nullifiers = block_tx_cache
-        .get(&cert.block_hash)
-        .map(|(_, n)| n.clone())
-        .unwrap_or_default();
-    let spend_count = tx_nullifiers.len() as u64;
-    let mut rt = runtime.write();
-    rt.zone_heads.insert(cert.zone_id, cert.block_hash);
-    rt.certificates_produced += 1;
-    rt.spends_processed += spend_count;
-
-    let height = rt.zone_heights.entry(cert.zone_id).or_insert(0);
-    *height += 1;
-    let block_height = *height;
-
-    info!(
-        zone_id = cert.zone_id,
-        height = block_height,
-        spend_count,
-        block_hash = %hex::encode(&cert.block_hash[..8]),
-        "certificate applied, block finalized"
-    );
-
-    rt.recent_blocks.push_back(BlockSummary {
-        zone_id: cert.zone_id,
-        block_hash_hex: hex::encode(&cert.block_hash[..8]),
-        height: block_height,
-        tx_nullifiers,
-    });
-    rt.blocks_produced += 1;
-    if rt.recent_blocks.len() > MAX_RECENT_BLOCKS {
-        rt.recent_blocks.pop_front();
-    }
-    rt.zone_consecutive_timeouts.insert(cert.zone_id, 0);
-    rt.zone_last_advance.insert(cert.zone_id, std::time::Instant::now());
-}
-
 #[allow(clippy::too_many_arguments)]
 fn retry_buffered_proposal(
     last_buffered_proposal: &mut Option<Block>,
@@ -1441,61 +1361,6 @@ fn retry_buffered_proposal(
                 publish_action(&cert_action, consensus_topic, global_topic, publish_tx, block_tx_cache);
             }
         }
-    }
-}
-
-fn publish_action(
-    action: &ConsensusAction,
-    consensus_topic: &str,
-    global_topic: &str,
-    publish_tx: &mpsc::Sender<(String, Vec<u8>)>,
-    block_tx_cache: &HashMap<[u8; 32], (u32, Vec<String>)>,
-) {
-    let (topic, data) = match action {
-        ConsensusAction::BroadcastProposal(p) => {
-            let msg = ZephyrConsensusMessage::Proposal(p.clone());
-            let data = match grid_core::encode_canonical(&msg) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(error = %e, "failed to encode proposal");
-                    return;
-                }
-            };
-            (consensus_topic.to_owned(), data)
-        }
-        ConsensusAction::BroadcastVote(v) => {
-            let msg = ZephyrConsensusMessage::Vote(v.clone());
-            let data = match grid_core::encode_canonical(&msg) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(error = %e, "failed to encode vote");
-                    return;
-                }
-            };
-            (consensus_topic.to_owned(), data)
-        }
-        ConsensusAction::BroadcastCertificate(c) => {
-            let tx_nullifiers = block_tx_cache
-                .get(&c.block_hash)
-                .map(|(_, n)| n.clone())
-                .unwrap_or_default();
-            let msg = ZephyrGlobalMessage::Certificate {
-                cert: c.clone(),
-                tx_nullifiers,
-            };
-            let data = match grid_core::encode_canonical(&msg) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(error = %e, "failed to encode certificate");
-                    return;
-                }
-            };
-            (global_topic.to_owned(), data)
-        }
-    };
-
-    if let Err(e) = publish_tx.try_send((topic, data)) {
-        warn!(error = %e, "publish channel full or closed, consensus message delayed");
     }
 }
 

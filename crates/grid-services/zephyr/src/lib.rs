@@ -7,6 +7,7 @@ pub mod epoch;
 pub mod gossip;
 pub mod mempool;
 pub mod proof;
+pub mod publishing;
 pub mod routing;
 pub mod service;
 pub mod shared_mempool;
