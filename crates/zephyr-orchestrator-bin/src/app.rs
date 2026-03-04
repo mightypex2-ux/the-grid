@@ -35,6 +35,9 @@ pub(crate) struct OrchestratorApp {
     pub launch_error: Option<String>,
     pub launch_instant: Option<Instant>,
 
+    /// Receives the result of the background launch task.
+    launch_rx: Option<tokio::sync::oneshot::Receiver<Vec<ManagedNode>>>,
+
     pub topology: TopologyVisualization,
     pub blockflow: BlockflowVisualization,
     pub icon_texture: Option<egui::TextureHandle>,
@@ -74,6 +77,7 @@ impl OrchestratorApp {
             launching: false,
             launch_error: None,
             launch_instant: None,
+            launch_rx: None,
 
             topology: TopologyVisualization::default(),
             blockflow: BlockflowVisualization::default(),
@@ -95,19 +99,53 @@ impl OrchestratorApp {
     pub fn do_launch(&mut self) {
         self.launching = true;
         self.launch_error = None;
-        let nodes = node_manager::launch_network(
-            &self.selected_preset,
-            self.max_block_size,
-            self.round_interval_ms,
-            &self.rt,
-            &self.shared,
-        );
-        if nodes.is_empty() {
-            self.launch_error = Some("Failed to start any nodes".to_string());
-            self.launching = false;
-            return;
-        }
 
+        let preset = self.selected_preset.clone();
+        let max_block_size = self.max_block_size;
+        let round_interval_ms = self.round_interval_ms;
+        let shared = Arc::clone(&self.shared);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.launch_rx = Some(rx);
+
+        self.rt.spawn(async move {
+            let nodes = node_manager::launch_network(
+                preset,
+                max_block_size,
+                round_interval_ms,
+                shared,
+            )
+            .await;
+            let _ = tx.send(nodes);
+        });
+    }
+
+    /// Called from `update()` to check whether the background launch has
+    /// finished and, if so, wire up pollers / listeners / traffic.
+    fn poll_launch(&mut self) {
+        let Some(rx) = self.launch_rx.as_mut() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(nodes) => {
+                self.launch_rx = None;
+                if nodes.is_empty() {
+                    self.launch_error = Some("Failed to start any nodes".to_string());
+                    self.launching = false;
+                    return;
+                }
+                self.finish_launch(nodes);
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                self.launch_rx = None;
+                self.launch_error = Some("Launch task failed unexpectedly".to_string());
+                self.launching = false;
+            }
+        }
+    }
+
+    fn finish_launch(&mut self, nodes: Vec<ManagedNode>) {
         let pollers =
             node_manager::spawn_status_pollers(&nodes, Arc::clone(&self.shared), &self.rt);
         let listeners =
@@ -223,6 +261,11 @@ impl OrchestratorApp {
 impl eframe::App for OrchestratorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let _ = self.icon_texture(ctx);
+
+        if self.launching {
+            self.poll_launch();
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         let on_resize_edge = if !maximized {

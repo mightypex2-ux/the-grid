@@ -20,18 +20,17 @@ pub(crate) struct ManagedNode {
     pub node_id: usize,
 }
 
-/// Build ZodeConfigs and launch all nodes for the given preset.
+/// Launch all nodes for the given preset asynchronously.
 ///
-/// Every node's listen address is captured from `LogEvent::Started` and
-/// passed to subsequently-started nodes as bootstrap peers. After all
-/// nodes are up, a full-mesh dial ensures direct connectivity between
-/// every pair, eliminating the star-topology bottleneck.
-pub(crate) fn launch_network(
-    preset: &NetworkPreset,
+/// Starts the first node to obtain a bootstrap address, then spawns all
+/// remaining nodes concurrently via [`tokio::task::JoinSet`].  After
+/// every node is up, a concurrent full-mesh dial ensures direct
+/// connectivity between every pair.
+pub(crate) async fn launch_network(
+    preset: NetworkPreset,
     max_block_size: usize,
     round_interval_ms: u64,
-    rt: &Runtime,
-    shared: &Arc<Mutex<AppState>>,
+    shared: Arc<Mutex<AppState>>,
 ) -> Vec<ManagedNode> {
     let validator_count = preset.validators();
     let total_zones = preset.zones();
@@ -72,129 +71,176 @@ pub(crate) fn launch_network(
         self_validate: false,
     };
 
-    let zephyr_json = serde_json::to_value(&zephyr_config).expect("ZephyrConfig always serializes");
+    let zephyr_json =
+        serde_json::to_value(&zephyr_config).expect("ZephyrConfig always serializes");
 
     let base_dir = std::env::temp_dir().join("zephyr-orchestrator");
     let _ = std::fs::remove_dir_all(&base_dir);
     let _ = std::fs::create_dir_all(&base_dir);
 
-    let mut managed_nodes = Vec::with_capacity(validator_count);
-    let mut listen_addrs: Vec<String> = Vec::with_capacity(validator_count);
+    let mut managed_nodes: Vec<ManagedNode> = Vec::with_capacity(validator_count);
+    let mut addr_by_node: HashMap<usize, String> = HashMap::new();
 
-    for i in 0..validator_count {
-        let kp = keypairs[i].clone();
-        let vid = validators[i].validator_id;
-        let zephyr_json = zephyr_json.clone();
-        let base_dir = base_dir.clone();
-        let boot_addrs = listen_addrs.clone();
-
-        let result = rt.block_on(async {
-            let data_dir = base_dir.join(format!("node-{i}"));
-            let _ = std::fs::create_dir_all(&data_dir);
-
-            let listen_addr: Multiaddr = "/ip4/127.0.0.1/udp/0/quic-v1"
-                .parse()
-                .expect("well-known constant multiaddr");
-
-            let bootstrap_peers: Vec<Multiaddr> = boot_addrs
-                .iter()
-                .filter_map(|a| a.parse::<Multiaddr>().ok())
-                .collect();
-
-            let net_config = grid_net::NetworkConfig {
-                listen_addr,
-                keypair: Some(kp),
-                bootstrap_peers,
-                discovery: grid_net::DiscoveryConfig {
-                    allow_private_addresses: true,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-
-            let storage_config = grid_storage::StorageConfig::new(data_dir);
-
-            let mut service_configs = HashMap::new();
-            service_configs.insert("ZEPHYR".to_string(), zephyr_json);
-
-            let config = zode::ZodeConfig {
-                storage: storage_config,
-                default_programs: zode::DefaultProgramsConfig {
-                    zid: false,
-                    interlink: false,
-                },
-                topics: HashSet::new(),
-                sector_limits: zode::SectorLimitsConfig::default(),
-                sector_filter: zode::SectorFilter::default(),
-                network: net_config,
-                rpc: zode::RpcConfig {
-                    enabled: false,
-                    ..Default::default()
-                },
-                services: zode::ServiceRegistryConfig::default(),
-                service_configs,
-            };
-
-            match Zode::start(config).await {
-                Ok(z) => Ok(Arc::new(z)),
-                Err(e) => {
-                    error!(node = i, error = %e, "failed to start node");
-                    Err(e)
-                }
-            }
-        });
-
-        let Ok(zode) = result else {
-            continue;
-        };
-
-        let addr = rt.block_on(capture_listen_addr(&zode));
-        if let Some(a) = addr {
-            info!(node = i, addr = %a, "node listen address captured");
-            listen_addrs.push(a);
+    // ── Phase 1: start the first node to get a bootstrap address ──────
+    if let Some((zode, addr)) = start_node(0, &keypairs[0], &zephyr_json, &base_dir, &[]).await {
+        if let Some(ref a) = addr {
+            info!(node = 0, addr = %a, "node listen address captured");
+            addr_by_node.insert(0, a.clone());
         } else {
-            warn!(node = i, "could not capture listen address");
+            warn!(node = 0, "could not capture listen address");
         }
-
         managed_nodes.push(ManagedNode {
             zode,
-            validator_id: vid,
-            node_id: i,
+            validator_id: validators[0].validator_id,
+            node_id: 0,
         });
     }
 
-    // Dial full mesh so every node is directly connected to every other.
-    for i in 0..managed_nodes.len() {
-        for j in 0..listen_addrs.len() {
-            if i == j {
-                continue;
+    // ── Phase 2: start remaining nodes concurrently ───────────────────
+    if validator_count > 1 {
+        let bootstrap: Vec<String> = addr_by_node.values().cloned().collect();
+        let mut set = tokio::task::JoinSet::new();
+
+        for i in 1..validator_count {
+            let kp = keypairs[i].clone();
+            let vid = validators[i].validator_id;
+            let zj = zephyr_json.clone();
+            let bd = base_dir.clone();
+            let boot = bootstrap.clone();
+
+            set.spawn(async move {
+                start_node(i, &kp, &zj, &bd, &boot)
+                    .await
+                    .map(|(zode, addr)| (i, vid, zode, addr))
+            });
+        }
+
+        let mut batch: Vec<(usize, [u8; 32], Arc<Zode>, Option<String>)> = Vec::new();
+        while let Some(res) = set.join_next().await {
+            if let Ok(Some(tuple)) = res {
+                batch.push(tuple);
             }
-            let addr: Multiaddr = match listen_addrs[j].parse() {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-            let zode = &managed_nodes[i].zode;
-            rt.block_on(async {
-                let mut net = zode.network().lock().await;
-                if let Err(e) = net.dial(addr) {
-                    warn!(from = i, to = j, error = %e, "full-mesh dial failed");
-                }
+        }
+        batch.sort_by_key(|(i, ..)| *i);
+
+        for (i, vid, zode, addr) in batch {
+            if let Some(ref a) = addr {
+                info!(node = i, addr = %a, "node listen address captured");
+                addr_by_node.insert(i, a.clone());
+            } else {
+                warn!(node = i, "could not capture listen address");
+            }
+            managed_nodes.push(ManagedNode {
+                zode,
+                validator_id: vid,
+                node_id: i,
             });
         }
     }
 
-    let shared_init = Arc::clone(shared);
-    let node_count = managed_nodes.len();
-    rt.block_on(async {
-        let mut state = shared_init.lock().await;
+    // ── Phase 3: concurrent full-mesh dial ────────────────────────────
+    {
+        let mut dial_set = tokio::task::JoinSet::new();
+        for mn in &managed_nodes {
+            let zode = Arc::clone(&mn.zode);
+            let src = mn.node_id;
+            let targets: Vec<(usize, Multiaddr)> = addr_by_node
+                .iter()
+                .filter(|(id, _)| **id != src)
+                .filter_map(|(id, a)| a.parse::<Multiaddr>().ok().map(|ma| (*id, ma)))
+                .collect();
+
+            dial_set.spawn(async move {
+                for (dst, addr) in targets {
+                    let mut net = zode.network().lock().await;
+                    if let Err(e) = net.dial(addr) {
+                        warn!(from = src, to = dst, error = %e, "full-mesh dial failed");
+                    }
+                }
+            });
+        }
+        while dial_set.join_next().await.is_some() {}
+    }
+
+    // ── Phase 4: seed shared state ────────────────────────────────────
+    {
+        let node_count = managed_nodes.len();
+        let mut state = shared.lock().await;
         state.network = NetworkSnapshot {
             total_zones,
             ..Default::default()
         };
         state.nodes = (0..node_count).map(NodeState::new).collect();
-    });
+    }
 
     managed_nodes
+}
+
+/// Start a single node and capture its listen address.
+async fn start_node(
+    i: usize,
+    kp: &Keypair,
+    zephyr_json: &serde_json::Value,
+    base_dir: &std::path::Path,
+    boot_addrs: &[String],
+) -> Option<(Arc<Zode>, Option<String>)> {
+    let data_dir = base_dir.join(format!("node-{i}"));
+    let _ = std::fs::create_dir_all(&data_dir);
+
+    let listen_addr: Multiaddr = "/ip4/127.0.0.1/udp/0/quic-v1"
+        .parse()
+        .expect("well-known constant multiaddr");
+
+    let bootstrap_peers: Vec<Multiaddr> = boot_addrs
+        .iter()
+        .filter_map(|a| a.parse::<Multiaddr>().ok())
+        .collect();
+
+    let net_config = grid_net::NetworkConfig {
+        listen_addr,
+        keypair: Some(kp.clone()),
+        bootstrap_peers,
+        discovery: grid_net::DiscoveryConfig {
+            allow_private_addresses: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let storage_config = grid_storage::StorageConfig::new(data_dir);
+
+    let mut service_configs = HashMap::new();
+    service_configs.insert("ZEPHYR".to_string(), zephyr_json.clone());
+
+    let config = zode::ZodeConfig {
+        storage: storage_config,
+        default_programs: zode::DefaultProgramsConfig {
+            zid: false,
+            interlink: false,
+        },
+        topics: HashSet::new(),
+        sector_limits: zode::SectorLimitsConfig::default(),
+        sector_filter: zode::SectorFilter::default(),
+        network: net_config,
+        rpc: zode::RpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        services: zode::ServiceRegistryConfig::default(),
+        service_configs,
+    };
+
+    match Zode::start(config).await {
+        Ok(z) => {
+            let zode = Arc::new(z);
+            let addr = capture_listen_addr(&zode).await;
+            Some((zode, addr))
+        }
+        Err(e) => {
+            error!(node = i, error = %e, "failed to start node");
+            None
+        }
+    }
 }
 
 /// Wait up to 5 seconds for the `LogEvent::Started` event from a Zode
@@ -503,12 +549,16 @@ fn classify_event(event: &LogEvent) -> (String, LogLevel) {
     (line, level)
 }
 
-/// Gracefully shut down all nodes.
+/// Gracefully shut down all nodes concurrently.
 pub(crate) fn shutdown_all(nodes: &[ManagedNode], rt: &Runtime) {
-    for mn in nodes {
-        let zode = Arc::clone(&mn.zode);
-        rt.block_on(async move {
-            zode.shutdown().await;
-        });
-    }
+    rt.block_on(async {
+        let mut set = tokio::task::JoinSet::new();
+        for mn in nodes {
+            let zode = Arc::clone(&mn.zode);
+            set.spawn(async move {
+                zode.shutdown().await;
+            });
+        }
+        while set.join_next().await.is_some() {}
+    });
 }
