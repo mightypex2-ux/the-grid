@@ -750,13 +750,7 @@ async fn zone_consensus_task(
                                     eng.vote_on_proposal(&proposal, |data| hmac_sign(&vid, data))
                                 {
                                     eng.reset_timeout();
-                                    if eng.take_fork_recovery_used() {
-                                        let dropped = pending_certs.len();
-                                        pending_certs.clear();
-                                        if dropped > 0 {
-                                            info!(zone_id, dropped, "cleared pending certs after fork recovery (proposal)");
-                                        }
-                                    }
+                                    let _ = eng.take_fork_recovery_used();
                                     publish_action(
                                         &action,
                                         &consensus_topic,
@@ -882,7 +876,7 @@ async fn zone_consensus_task(
                             let mut round_advanced = false;
                             if let Some(ref mut eng) = engine {
                                 if eng.apply_certificate(&cert) {
-                                    let fork_recovery_fired = eng.take_fork_recovery_used();
+                                    let _ = eng.take_fork_recovery_used();
                                     apply_certificate_locally(
                                         &cert,
                                         &zone_head_store,
@@ -898,16 +892,12 @@ async fn zone_consensus_task(
                                     debug!(zone_id, "applied certificate from global topic");
                                     round_advanced = true;
 
-                                    if fork_recovery_fired {
-                                        let dropped = pending_certs.len();
-                                        pending_certs.clear();
-                                        if dropped > 0 {
-                                            info!(zone_id, dropped, "cleared pending certs after fork recovery (cert)");
-                                        }
-                                    }
+                                    // Fork recovery may have fired; pending_certs are
+                                    // preserved so the drain loop below can chain through them.
 
                                     // Drain buffered certs that may now be applicable,
                                     // and discard any that are now stale.
+                                    pending_certs.sort_by_key(|c| c.height);
                                     while !pending_certs.is_empty() {
                                         let before = pending_certs.len();
                                         let mut still_pending = Vec::new();
@@ -920,7 +910,7 @@ async fn zone_consensus_task(
                                                 );
                                                 continue;
                                             }
-                                            if pc.height <= eng.height() {
+                                            if pc.height < eng.height() {
                                                 debug!(
                                                     zone_id,
                                                     cert_height = pc.height,
@@ -931,14 +921,7 @@ async fn zone_consensus_task(
                                                 continue;
                                             }
                                             if eng.apply_certificate(&pc) {
-                                                if eng.take_fork_recovery_used() {
-                                                    let dropped = still_pending.len();
-                                                    still_pending.clear();
-                                                    if dropped > 0 {
-                                                        info!(zone_id, dropped, "cleared pending certs after fork recovery mid-drain");
-                                                    }
-                                                    break;
-                                                }
+                                                let _ = eng.take_fork_recovery_used();
                                                 apply_certificate_locally(
                                                     &pc,
                                                     &zone_head_store,
@@ -1110,13 +1093,7 @@ async fn zone_consensus_task(
                                         parent_hash = %eng.parent_hash_hex(),
                                         "zone stalled at epoch boundary, enabling fork recovery"
                                     );
-                                    if eng.enable_fork_recovery() {
-                                        let dropped = pending_certs.len();
-                                        pending_certs.clear();
-                                        if dropped > 0 {
-                                            info!(zone_id, dropped, "cleared pending certs for fork recovery");
-                                        }
-                                    }
+                                    eng.enable_fork_recovery();
                                 }
                                 eng.advance_to_epoch(current_epoch, committee);
                                 pending_certs.retain(|c| c.epoch + 1 >= current_epoch);
@@ -1196,11 +1173,6 @@ async fn zone_consensus_task(
                                     mempool = mempool.len(zone_id),
                                     "zone stalled, enabling fork recovery"
                                 );
-                                let dropped = pending_certs.len();
-                                pending_certs.clear();
-                                if dropped > 0 {
-                                    info!(zone_id, dropped, "cleared pending certs for fork recovery");
-                                }
                             }
                         }
                         {
@@ -1214,6 +1186,7 @@ async fn zone_consensus_task(
                     // applied, and no cert is applied because the drain never runs.
                     if eng.ticks_in_round() % 10 == 0 && !pending_certs.is_empty() {
                         let mut drained_any = true;
+                        pending_certs.sort_by_key(|c| c.height);
                         while drained_any && !pending_certs.is_empty() {
                             drained_any = false;
                             let mut still_pending = Vec::new();
@@ -1221,7 +1194,7 @@ async fn zone_consensus_task(
                                 if pc.block_hash == *eng.parent_hash() {
                                     continue;
                                 }
-                                if pc.height <= eng.height() {
+                                if pc.height < eng.height() {
                                     debug!(
                                         zone_id,
                                         cert_height = pc.height,
@@ -1232,14 +1205,7 @@ async fn zone_consensus_task(
                                     continue;
                                 }
                                 if eng.apply_certificate(&pc) {
-                                    if eng.take_fork_recovery_used() {
-                                        let dropped = still_pending.len();
-                                        still_pending.clear();
-                                        if dropped > 0 {
-                                            info!(zone_id, dropped, "cleared pending certs after fork recovery in periodic drain");
-                                        }
-                                        break;
-                                    }
+                                    let _ = eng.take_fork_recovery_used();
                                     apply_certificate_locally(
                                         &pc,
                                         &zone_head_store,
@@ -1421,7 +1387,7 @@ fn retry_buffered_proposal(
     eng: &mut ZoneConsensus,
     zone_id: u32,
     my_validator_id: [u8; 32],
-    pending_certs: &mut Vec<FinalityCertificate>,
+    _pending_certs: &mut Vec<FinalityCertificate>,
     consensus_topic: &str,
     global_topic: &str,
     publish_tx: &mpsc::Sender<(String, Vec<u8>)>,
@@ -1462,13 +1428,7 @@ fn retry_buffered_proposal(
     let vid = my_validator_id;
     if let Some(action) = eng.vote_on_proposal(&proposal, |data| hmac_sign(&vid, data)) {
         eng.reset_timeout();
-        if eng.take_fork_recovery_used() {
-            let dropped = pending_certs.len();
-            pending_certs.clear();
-            if dropped > 0 {
-                info!(zone_id, dropped, "cleared pending certs after fork recovery (retry)");
-            }
-        }
+        let _ = eng.take_fork_recovery_used();
         publish_action(&action, consensus_topic, global_topic, publish_tx, block_tx_cache);
         if let ConsensusAction::BroadcastVote(vote) = action {
             if let Some(cert_action) = eng.receive_vote(vote) {
