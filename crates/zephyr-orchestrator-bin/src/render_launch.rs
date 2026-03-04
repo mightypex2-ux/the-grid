@@ -209,7 +209,7 @@ fn render_custom_inputs(ui: &mut egui::Ui, preset: &mut NetworkPreset) {
 
             ui.label("VALIDATORS");
             let mut v = *validators as i32;
-            int_input(ui, "validators", &mut v, 2..=20);
+            int_input(ui, "validators", &mut v, 2..=100);
             *validators = v.max(2) as usize;
 
             ui.add_space(spacing::MD);
