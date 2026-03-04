@@ -172,7 +172,7 @@ fn render_throughput_inputs(ui: &mut egui::Ui, max_block_size: &mut usize, round
                 .color(colors::TEXT_SECONDARY),
         );
         let mut bs = *max_block_size as i32;
-        ui.add(egui::DragValue::new(&mut bs).range(1..=4096));
+        int_input(ui, "max_block_size", &mut bs, 1..=4096);
         *max_block_size = bs.max(1) as usize;
 
         ui.add_space(spacing::MD);
@@ -183,7 +183,7 @@ fn render_throughput_inputs(ui: &mut egui::Ui, max_block_size: &mut usize, round
                 .color(colors::TEXT_SECONDARY),
         );
         let mut ri = *round_interval_ms as i32;
-        ui.add(egui::DragValue::new(&mut ri).range(10..=5000));
+        int_input(ui, "round_interval_ms", &mut ri, 10..=5000);
         *round_interval_ms = ri.max(10) as u64;
 
         ui.add_space(spacing::MD);
@@ -208,17 +208,44 @@ fn render_custom_inputs(ui: &mut egui::Ui, preset: &mut NetworkPreset) {
             ui.spacing_mut().item_spacing.x = spacing::SM;
 
             ui.label("VALIDATORS");
-            ui.add(egui::DragValue::new(validators).range(2..=20));
+            let mut v = *validators as i32;
+            int_input(ui, "validators", &mut v, 2..=20);
+            *validators = v.max(2) as usize;
 
             ui.add_space(spacing::MD);
             ui.label("ZONES");
-            let mut z_val = *zones as i32;
-            ui.add(egui::DragValue::new(&mut z_val).range(1..=16));
-            *zones = z_val.max(1) as u32;
+            let mut z = *zones as i32;
+            int_input(ui, "zones", &mut z, 1..=16);
+            *zones = z.max(1) as u32;
 
             ui.add_space(spacing::MD);
             ui.label("COMMITTEE SIZE");
-            ui.add(egui::DragValue::new(committee_size).range(1..=*validators));
+            let mut c = *committee_size as i32;
+            int_input(ui, "committee_size", &mut c, 1..=(*validators as i32));
+            *committee_size = c.max(1) as usize;
         });
     }
+}
+
+fn int_input(ui: &mut egui::Ui, salt: &str, value: &mut i32, range: std::ops::RangeInclusive<i32>) {
+    let id = ui.id().with(salt);
+    let mut buf: String = ui
+        .data(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| value.to_string());
+
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut buf)
+            .desired_width(44.0)
+            .horizontal_align(egui::Align::Center),
+    );
+
+    if let Ok(n) = buf.parse::<i32>() {
+        *value = n.clamp(*range.start(), *range.end());
+    }
+
+    if !resp.has_focus() {
+        buf = value.to_string();
+    }
+
+    ui.data_mut(|d| d.insert_temp(id, buf));
 }
