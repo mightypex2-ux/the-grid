@@ -46,6 +46,8 @@ pub(crate) struct ZodeApp {
     pub detail_selection: Option<DetailSelection>,
     pub detail_closing: bool,
     detail_panel_anim: PanelAnim,
+    /// When true, persist the current ZODE keypair to the vault on next frame (once zode is ready).
+    pub pending_keypair_persist: bool,
 }
 
 /// Tracks a smoothstep animation between two width values.
@@ -145,6 +147,7 @@ impl ZodeApp {
             detail_selection: None,
             detail_closing: false,
             detail_panel_anim: PanelAnim::default(),
+            pending_keypair_persist: false,
         }
     }
 
@@ -309,6 +312,17 @@ impl ZodeApp {
                         self.boot_zode_with_keypair(Some(kp));
                     } else {
                         self.boot_zode();
+                        // Vault had no keypair; persist the new one immediately so next restart keeps identity.
+                        match crate::identity::persist_keypair_to_vault(self) {
+                            Ok(()) => {
+                                self.identity_state.save_status = Some("ZODE key saved to vault.".into());
+                            }
+                            Err(e) => {
+                                tracing::warn!("persist keypair to vault: {e}");
+                                self.identity_state.save_status = Some(format!("Could not save key to vault: {e}. Will retry; use Identity → Update Vault if needed."));
+                                self.pending_keypair_persist = true;
+                            }
+                        }
                     }
                     self.phase = AppPhase::Revealing;
                     self.reveal_start = None;
@@ -1038,6 +1052,21 @@ impl ZodeApp {
 
 impl eframe::App for ZodeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Deferred: persist ZODE keypair to vault once the node is running (so identity survives restart).
+        // Only clear the flag on success so a failed vault update is retried on subsequent frames.
+        if self.pending_keypair_persist && self.zode.is_some() {
+            match crate::identity::persist_keypair_to_vault(self) {
+                Ok(()) => {
+                    self.pending_keypair_persist = false;
+                    self.identity_state.save_status = Some("ZODE key saved to vault.".into());
+                }
+                Err(e) => {
+                    tracing::warn!("persist keypair to vault: {e}");
+                    self.identity_state.save_status = Some(format!("Could not save key to vault: {e}. Will retry; use Identity → Update Vault if it keeps failing."));
+                }
+            }
+        }
+
         let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         let on_resize_edge = if !maximized {
             Self::handle_resize_edges(ctx)

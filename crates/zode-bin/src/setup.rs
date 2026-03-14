@@ -288,6 +288,17 @@ impl ZodeApp {
                 self.boot_zode_with_keypair(None);
                 self.phase = AppPhase::Revealing;
                 self.reveal_start = None;
+                // Persist keypair immediately so identity survives even if the app closes before next frame.
+                match identity::persist_keypair_to_vault(self) {
+                    Ok(()) => {
+                        self.identity_state.save_status = Some("ZODE key saved to vault.".into());
+                    }
+                    Err(e) => {
+                        tracing::warn!("persist keypair to vault: {e}");
+                        self.identity_state.save_status = Some(format!("Keypair not saved yet: {e}. Will retry; use Identity → Update Vault if it keeps failing."));
+                        self.pending_keypair_persist = true;
+                    }
+                }
             }
             Err(e) => {
                 self.identity_state.error = Some(format!("Profile creation failed: {e}"));

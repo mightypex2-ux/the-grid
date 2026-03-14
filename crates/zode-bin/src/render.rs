@@ -193,7 +193,7 @@ fn render_peers_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
     section(ui, "Bootstrap Peers", |ui| {
         hint_label(
             ui,
-            "Multiaddrs of other ZODE nodes to connect to on startup.",
+            "Multiaddrs of other ZODE nodes to connect to on startup. Used for initial connection and Kademlia bootstrap to discover more peers.",
         );
         ui.add_space(spacing::MD);
         editable_list(
@@ -289,6 +289,10 @@ fn render_discovery_settings(app: &mut ZodeApp, ui: &mut egui::Ui) {
                 ui.checkbox(
                     &mut app.settings.kademlia_server_mode,
                     "Server mode (respond to DHT queries from other zodes)",
+                );
+                ui.checkbox(
+                    &mut app.settings.allow_private_addresses,
+                    "Allow private/LAN addresses (discover peers on same network)",
                 );
                 ui.horizontal(|ui| {
                     field_label(ui, "Random walk interval (seconds)");
@@ -532,6 +536,12 @@ pub(crate) fn render_peers(_app: &ZodeApp, ui: &mut egui::Ui, state: &StateSnaps
             ui,
             "ZODE discovery via GossipSub / bootstrap peers / Kademlia DHT.",
         );
+        if status.peer_count <= 1 && !status.connected_peers.is_empty() {
+            muted_label(
+                ui,
+                "Only one peer (likely the relay). Add more under Settings → Bootstrap Peers, or run other ZODEs on the same LAN with Allow private addresses enabled.",
+            );
+        }
         ui.add_space(spacing::MD);
 
         if status.connected_peers.is_empty() {

@@ -410,6 +410,50 @@ fn render_save_profile(app: &mut ZodeApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Persist the current ZODE libp2p keypair into the active profile's vault.
+/// Call this when the ZODE is already running/connected so the same identity
+/// is kept after restart. Returns Ok(()) if the vault was updated, or an
+/// error string if profile/password/zode is missing or update failed.
+pub(crate) fn persist_keypair_to_vault(app: &mut ZodeApp) -> Result<(), String> {
+    let profile_id = app
+        .active_profile_id
+        .as_ref()
+        .ok_or("No active profile")?;
+    let password = app
+        .session_password
+        .as_ref()
+        .ok_or("No session password")?
+        .as_str();
+    let mk = app
+        .identity_state
+        .machine_keys
+        .last()
+        .ok_or("No machine key derived")?;
+    let libp2p_bytes = app
+        .zode
+        .as_ref()
+        .map(|z| z.keypair_protobuf().to_vec())
+        .ok_or("ZODE not running")?;
+
+    let plaintext = VaultPlaintext {
+        shares: app
+            .identity_state
+            .shares
+            .iter()
+            .map(|s| s.to_hex())
+            .collect(),
+        identity_id: app.identity_state.identity_id,
+        machine_id: mk.machine_id,
+        epoch: mk.epoch,
+        capabilities: mk.capabilities.bits(),
+        libp2p_keypair: libp2p_bytes,
+    };
+
+    let base = profile::base_dir();
+    profile::update_vault(&base, profile_id, &plaintext, password)
+        .map_err(|e| format!("Vault update failed: {e}"))
+}
+
 fn save_profile_to_disk(app: &mut ZodeApp) {
     let mk = match app.identity_state.machine_keys.last() {
         Some(mk) => mk,

@@ -18,7 +18,24 @@ struct ProfilesManifest {
     profiles: Vec<ProfileMeta>,
 }
 
+/// Returns a stable absolute directory for profiles and vaults so the same
+/// data is found after restart regardless of working directory.
 pub(crate) fn base_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(local).join("Zode");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+            return PathBuf::from(xdg).join("zode");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".local").join("share").join("zode");
+        }
+    }
     PathBuf::from(".zode")
 }
 

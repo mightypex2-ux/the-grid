@@ -17,6 +17,24 @@ use crate::config::{KademliaMode, NetworkConfig};
 use crate::error::NetworkError;
 use crate::event::NetworkEvent;
 
+// #region agent log
+fn dbg_log(hypothesis_id: &str, message: &str, data: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let line = format!(
+        r#"{{"sessionId":"65fdcc","hypothesisId":"{}","location":"grid-net::service","message":"{}","data":{},"timestamp":{}}}"#,
+        hypothesis_id, message, data, ts
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug-65fdcc.log")
+        .and_then(|mut f| std::io::Write::write_all(&mut f, (line + "\n").as_bytes()));
+}
+// #endregion
+
 /// Maximum addresses stored per peer. Older entries beyond this limit are
 /// evicted to prevent stale NAT-mapped ephemeral ports from accumulating.
 const MAX_ADDRS_PER_PEER: usize = 8;
@@ -168,14 +186,18 @@ impl NetworkService {
 
         let mut kademlia_bootstrapped = false;
         if kademlia_enabled {
+            // #region agent log
             match swarm.behaviour_mut().kademlia.bootstrap() {
                 Ok(_) => {
                     kademlia_bootstrapped = true;
+                    dbg_log("H1", "init_bootstrap", r#"{"ok":true}"#);
                 }
                 Err(e) => {
+                    dbg_log("H5", "init_bootstrap_deferred", &format!(r#"{{"err":"{}"}}"#, e));
                     debug!("kademlia bootstrap deferred until first connection: {e:?}");
                 }
             }
+            // #endregion
         }
 
         Ok(Self {
@@ -485,6 +507,8 @@ impl NetworkService {
                 }
                 () = &mut sleep => {
                     if self.kademlia_enabled {
+                        // Retry bootstrap periodically until we have a DHT (e.g. relay may be slow to respond).
+                        self.try_kademlia_bootstrap();
                         self.trigger_random_walk();
                     }
                     self.tick_relay_reconnect();
@@ -796,14 +820,23 @@ impl NetworkService {
         if !self.kademlia_enabled || self.kademlia_bootstrapped {
             return;
         }
+        // #region agent log
+        dbg_log("H1", "try_bootstrap_called", "{}");
+        // #endregion
         match self.swarm.behaviour_mut().kademlia.bootstrap() {
             Ok(_) => {
                 self.kademlia_bootstrapped = true;
+                // #region agent log
+                dbg_log("H1", "bootstrap_ok", r#"{"kademlia_bootstrapped":true}"#);
+                // #endregion
                 info!("kademlia bootstrap started");
                 self.pending_relay_events
                     .push(NetworkEvent::KademliaBootstrapped);
             }
             Err(e) => {
+                // #region agent log
+                dbg_log("H1", "bootstrap_err", &format!(r#"{{"err":"{}"}}"#, e));
+                // #endregion
                 debug!("kademlia bootstrap still waiting for peers: {e:?}");
             }
         }
@@ -815,6 +848,9 @@ impl NetworkService {
     /// `discovered_peers` so they become eligible for rediscovery and
     /// retry on the next walk result.
     fn trigger_random_walk(&mut self) {
+        // #region agent log
+        dbg_log("H2", "random_walk_triggered", &format!(r#"{{"bootstrapped":{}}}"#, self.kademlia_bootstrapped));
+        // #endregion
         let random_peer = PeerId::random();
         self.swarm
             .behaviour_mut()
@@ -847,6 +883,9 @@ impl NetworkService {
     /// Kademlia's internal routing table via DHT replication.
     fn try_discovery_dial(&mut self, peer_id: &PeerId, addrs: &[Multiaddr]) {
         if self.swarm.is_connected(peer_id) {
+            // #region agent log
+            dbg_log("H4", "discovery_dial_skip", r#"{"reason":"connected"}"#);
+            // #endregion
             return;
         }
         if *peer_id == *self.swarm.local_peer_id() {
@@ -854,12 +893,18 @@ impl NetworkService {
         }
         if let Some(&retry_after) = self.dial_backoff.get(peer_id) {
             if Instant::now() < retry_after {
+                // #region agent log
+                dbg_log("H4", "discovery_dial_skip", r#"{"reason":"backoff"}"#);
+                // #endregion
                 debug!(%peer_id, "skipping discovery dial (backoff)");
                 return;
             }
             self.dial_backoff.remove(peer_id);
         }
         if self.pending_discovery_dials >= self.max_discovery_dials {
+            // #region agent log
+            dbg_log("H4", "discovery_dial_skip", &format!(r#"{{"reason":"concurrency_limit","pending":{}}}"#, self.pending_discovery_dials));
+            // #endregion
             debug!(%peer_id, "skipping discovery dial (concurrency limit)");
             return;
         }
@@ -901,10 +946,25 @@ impl NetworkService {
         }
 
         if dial_addrs.is_empty() {
+            // #region agent log
+            dbg_log("H3", "discovery_dial_skip", r#"{"reason":"no_dialable_addresses"}"#);
+            // #endregion
             debug!(%peer_id, "skipping discovery dial (no dialable addresses)");
             return;
         }
 
+        // Re-check connection state before dial (DHT may return already-connected peer, e.g. relay).
+        if self.swarm.is_connected(peer_id) {
+            // #region agent log
+            dbg_log("H4", "discovery_dial_skip", r#"{"reason":"already_connected_pre_dial"}"#);
+            // #endregion
+            debug!(%peer_id, "skipping discovery dial (already connected)");
+            return;
+        }
+
+        // #region agent log
+        dbg_log("H3", "discovery_dial_start", &format!(r#"{{"num_addrs":{}}}"#, dial_addrs.len()));
+        // #endregion
         debug!(%peer_id, num_addrs = dial_addrs.len(), "auto-dialing discovered peer");
         let opts = DialOpts::peer_id(*peer_id).addresses(dial_addrs).build();
         match self.swarm.dial(opts) {
@@ -912,7 +972,21 @@ impl NetworkService {
                 self.pending_discovery_dials += 1;
             }
             Err(e) => {
-                debug!(%peer_id, error = %e, "failed to auto-dial discovered peer");
+                let err_str = e.to_string();
+                let already_connected = err_str.contains("already connected") || err_str.contains("dial is in progress");
+                // #region agent log
+                if already_connected {
+                    dbg_log("H4", "discovery_dial_skip", r#"{"reason":"already_connected_or_dialing"}"#);
+                } else {
+                    let escaped = err_str.replace('\\', "\\\\").replace('"', "\\\"");
+                    dbg_log("H3", "discovery_dial_failed", &format!(r#"{{"err":"{}"}}"#, escaped));
+                }
+                // #endregion
+                if already_connected {
+                    debug!(%peer_id, "skipping discovery dial (already connected or dial in progress)");
+                } else {
+                    debug!(%peer_id, error = %e, "failed to auto-dial discovered peer");
+                }
             }
         }
     }
@@ -1186,6 +1260,9 @@ impl NetworkService {
     }
 
     fn handle_closest_peers(&mut self, ok: kad::GetClosestPeersOk) -> Option<NetworkEvent> {
+        // #region agent log
+        dbg_log("H2", "closest_peers_result", &format!(r#"{{"num_peers":{}}}"#, ok.peers.len()));
+        // #endregion
         debug!(
             num_peers = ok.peers.len(),
             peers = ?ok.peers.iter().map(|p| (&p.peer_id, &p.addrs)).collect::<Vec<_>>(),

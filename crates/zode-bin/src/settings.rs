@@ -32,6 +32,9 @@ pub(crate) struct PersistedSettings {
     pub kademlia_server_mode: bool,
     #[serde(default = "default_random_walk")]
     pub random_walk_interval_secs: u64,
+    /// Allow dialing private/LAN addresses (e.g. 192.168.x.x) for discovery.
+    #[serde(default = "default_true")]
+    pub allow_private_addresses: bool,
     #[serde(default)]
     pub enable_rpc: bool,
     #[serde(default = "default_rpc_bind")]
@@ -83,6 +86,7 @@ pub(crate) struct Settings {
     pub enable_kademlia: bool,
     pub kademlia_server_mode: bool,
     pub random_walk_interval_secs: u64,
+    pub allow_private_addresses: bool,
     pub enable_rpc: bool,
     pub rpc_bind_addr: String,
     pub rpc_api_key: String,
@@ -109,6 +113,7 @@ impl Default for Settings {
             enable_kademlia: true,
             kademlia_server_mode: true,
             random_walk_interval_secs: 30,
+            allow_private_addresses: true,
             enable_rpc: false,
             rpc_bind_addr: "127.0.0.1:4690".into(),
             rpc_api_key: String::new(),
@@ -132,6 +137,7 @@ impl Settings {
             enable_kademlia: self.enable_kademlia,
             kademlia_server_mode: self.kademlia_server_mode,
             random_walk_interval_secs: self.random_walk_interval_secs,
+            allow_private_addresses: self.allow_private_addresses,
             enable_rpc: self.enable_rpc,
             rpc_bind_addr: self.rpc_bind_addr.clone(),
             rpc_api_key: self.rpc_api_key.clone(),
@@ -152,6 +158,7 @@ impl Settings {
         self.enable_kademlia = p.enable_kademlia;
         self.kademlia_server_mode = p.kademlia_server_mode;
         self.random_walk_interval_secs = p.random_walk_interval_secs;
+        self.allow_private_addresses = p.allow_private_addresses;
         self.enable_rpc = p.enable_rpc;
         self.rpc_bind_addr = p.rpc_bind_addr;
         self.rpc_api_key = p.rpc_api_key;
@@ -249,6 +256,7 @@ impl Settings {
             enable_kademlia: self.enable_kademlia,
             kademlia_mode: kad_mode,
             random_walk_interval: std::time::Duration::from_secs(self.random_walk_interval_secs),
+            allow_private_addresses: self.allow_private_addresses,
             ..Default::default()
         };
 

@@ -39,6 +39,9 @@ impl DefaultProgramsConfig {
             if let Ok(pid) = ZidDescriptor::v1().program_id() {
                 set.insert(pid);
             }
+            if let Ok(pid) = ZidDescriptor::v2().program_id() {
+                set.insert(pid);
+            }
         }
         if self.interlink {
             if let Ok(pid) = InterlinkDescriptor::v2().program_id() {
